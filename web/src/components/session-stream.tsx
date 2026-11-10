@@ -1,7 +1,8 @@
-import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type RefObject } from "react";
-import { ArrowUpToLine, CornerDownLeft, History, Loader2 } from "lucide-react";
+import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type CSSProperties, type MutableRefObject, type RefObject } from "react";
+import { Icon } from "@/components/icons/icon";
 
 import { ItemView, PendingTurn, ToolGroup, groupRuns, standsAlone } from "@/components/chat-cards";
+import { StreamBlock } from "@/components/stream-block";
 import { PromptPin } from "@/components/prompt-pin";
 import { StatusDot } from "@/components/status-badge";
 import { Button } from "@/components/ui/button";
@@ -10,11 +11,12 @@ import { ChatMessageList, type ChatMessageListHandle } from "@/components/ui/cha
 import { useLocale } from "@/hooks/use-locale";
 import type { ChatFeed } from "@/hooks/use-chat-window";
 import { ASKS_SHOWN, asksAt, shownAsks } from "@/lib/ask";
-import { finished, itemsOf } from "@/lib/chat-items";
+import { finished, itemsOf, type ChatItem } from "@/lib/chat-items";
 import type { ChatStatus } from "@/lib/chat-window";
 import { dropPending, unmatched, usePending } from "@/lib/durable-pending";
 import { t, type MessageKey } from "@/lib/i18n";
-import type { Ask } from "@/lib/types";
+import { blockOfPin, isPinnable, writingItemId } from "@/lib/message-pins";
+import type { Ask, PinRow, QueuedSendRow } from "@/lib/types";
 import { AskCard, type AskCardProps } from "@/components/ask-card";
 import { pinAt, promptMap } from "@/lib/prompt-pin";
 import { recallScroll, rememberScroll } from "@/lib/scroll-memory";
@@ -149,7 +151,7 @@ function QueuedCard({ queued, sendNow }: { queued: readonly string[]; sendNow: (
             aria-label={t("chat.stream.sendNowAria")}
             onClick={onTap}
           >
-            {pending ? <Loader2 aria-hidden className="size-3.5 animate-spin" /> : <CornerDownLeft aria-hidden className="size-3.5" />}
+            {pending ? <Icon name="busy" aria-hidden className="size-3.5 animate-spin" /> : <Icon name="send-now" aria-hidden className="size-3.5" />}
             {t("chat.stream.sendNow")}
           </Button>
         )}
@@ -162,6 +164,147 @@ function QueuedCard({ queued, sendNow }: { queued: readonly string[]; sendNow: (
           {text}
         </p>
       ))}
+    </div>
+  );
+}
+
+/**
+ * What a receipt card's buttons ask of the pane view: send the box (`submit`) or empty it (`discard`)
+ * on a returned card, or drop an unconfirmed card and press nothing (`dismiss`).
+ */
+export type QueuedCardAction = "submit" | "discard" | "dismiss";
+
+type QueuedCardAct = ((requestId: string, action: QueuedCardAction) => Promise<boolean>) | null;
+
+/**
+ * THE RECEIPT QUEUE (ADR 0122): the sends Collie itself queued behind a running turn, for a harness
+ * whose log does not record its queue, in three states.
+ *
+ *   - Still waiting: one group under the same label as the journal's queue, with two short lines and
+ *     NO button. There is no Send now for a harness that names no key, and no Cancel, because Collie
+ *     cannot take a message out of the harness's queue without a dequeue key, which no profile names
+ *     yet: stopping the turn is the way back, and the card says so.
+ *   - Returned: the agent holds the text as a draft in its box, so the card says so and offers Send (a
+ *     submit of what the box holds) and Discard (the box emptied). A run of texts a Stop gave back
+ *     together is ONE card, with one Send and one Discard.
+ *   - Unconfirmed: Collie cannot tell where the message went. The card says so, and its one button,
+ *     Discard, drops the card and presses nothing.
+ *
+ * PENDING, NEVER RETRYING, like the queue card: a tap disables the card's buttons until the card goes
+ * away (the next answer drops it) or {@link SEND_NOW_PENDING_MS} pass, or the act itself failed.
+ */
+function ReceiptQueueCards({ rows, act }: { rows: readonly QueuedSendRow[]; act: QueuedCardAct }) {
+  const waiting = rows.filter((row) => row.state === "queued");
+  return (
+    <>
+      {waiting.length > 0 && (
+        <div data-slot="stream-queued-receipts" className={QUEUED_BLOCK}>
+          <div className={QUEUED_HEAD}>
+            <p className={QUEUED_LABEL}>{t("chat.stream.queued")}</p>
+          </div>
+          <p className="text-xs text-muted-foreground">{t("chat.stream.queuedWaits")}</p>
+          <p className="text-xs text-muted-foreground">{t("chat.stream.queuedTakeBack")}</p>
+          {waiting.map((row) => (
+            <p key={row.requestId} className={QUEUED_TEXT}>
+              {row.text}
+            </p>
+          ))}
+        </div>
+      )}
+      {rows.map((row) =>
+        row.state === "returned" ? (
+          <ReceiptCard key={row.requestId} row={row} act={act} slot="stream-returned" label="chat.stream.returned" why="chat.stream.returnedWhy" buttons={RETURNED_BUTTONS} />
+        ) : row.state === "unconfirmed" ? (
+          <ReceiptCard key={row.requestId} row={row} act={act} slot="stream-unconfirmed" label="chat.stream.unconfirmed" why="chat.stream.unconfirmedWhy" buttons={UNCONFIRMED_BUTTONS} />
+        ) : null,
+      )}
+    </>
+  );
+}
+
+/** One button of a receipt card: the act, its visible word, its accessible name (which starts with the word), its look. */
+interface CardButton {
+  readonly action: QueuedCardAction;
+  readonly word: MessageKey;
+  readonly aria: MessageKey;
+  readonly variant: "outline" | "ghost";
+  readonly slot: string;
+}
+
+/** Discard first and quieter, Send last and outlined: the act that sends sits at the thumb's end. */
+const RETURNED_BUTTONS: readonly CardButton[] = [
+  { action: "discard", word: "chat.stream.returnedDiscard", aria: "chat.stream.returnedDiscardAria", variant: "ghost", slot: "stream-returned-discard" },
+  { action: "submit", word: "chat.stream.returnedSend", aria: "chat.stream.returnedSendAria", variant: "outline", slot: "stream-returned-send" },
+];
+const UNCONFIRMED_BUTTONS: readonly CardButton[] = [
+  { action: "dismiss", word: "chat.stream.unconfirmedDiscard", aria: "chat.stream.unconfirmedDiscardAria", variant: "outline", slot: "stream-unconfirmed-discard" },
+];
+
+function ReceiptCard({
+  row,
+  act,
+  slot,
+  label,
+  why,
+  buttons,
+}: {
+  row: QueuedSendRow;
+  act: QueuedCardAct;
+  slot: string;
+  label: MessageKey;
+  why: MessageKey;
+  buttons: readonly CardButton[];
+}) {
+  const [pending, setPending] = useState<QueuedCardAction | null>(null);
+  useEffect(() => {
+    if (pending === null) return;
+    const timer = setTimeout(() => setPending(null), SEND_NOW_PENDING_MS);
+    return () => clearTimeout(timer);
+  }, [pending]);
+
+  const onTap = (action: QueuedCardAction) => {
+    if (pending !== null || act === null) return;
+    setPending(action);
+    // A refusal or a failed write has already told the operator why (the pane view's status line).
+    void act(row.requestId, action).then(
+      (done) => (done ? undefined : setPending(null)),
+      () => setPending(null),
+    );
+  };
+
+  return (
+    <div data-slot={slot} className={QUEUED_BLOCK}>
+      <div className={QUEUED_HEAD}>
+        <p className={QUEUED_LABEL}>{t(label)}</p>
+        {act !== null && (
+          <div className="flex items-center gap-1">
+            {buttons.map((button) => (
+              <Button
+                key={button.action}
+                type="button"
+                variant={button.variant}
+                size="sm"
+                data-slot={button.slot}
+                className={QUEUED_BUTTON}
+                disabled={pending !== null}
+                aria-busy={pending === button.action}
+                // The accessible name STARTS with the visible word (WCAG 2.5.3, Label in Name).
+                aria-label={t(button.aria)}
+                onClick={() => onTap(button.action)}
+              >
+                {pending === button.action ? (
+                  <Icon name="busy" aria-hidden className="size-3.5 animate-spin" />
+                ) : (
+                  button.action === "submit" && <Icon name="send-now" aria-hidden className="size-3.5" />
+                )}
+                {t(button.word)}
+              </Button>
+            ))}
+          </div>
+        )}
+      </div>
+      <p className="text-xs text-muted-foreground">{t(why)}</p>
+      <p className={QUEUED_TEXT}>{row.text}</p>
     </div>
   );
 }
@@ -240,7 +383,7 @@ export function SavedCopyRow({ text }: { text: string }) {
       data-slot="saved-copy"
       className="mb-3 flex items-start justify-center gap-1.5 px-2 text-center text-[11px] leading-snug text-muted-foreground"
     >
-      <History aria-hidden className="mt-px size-3 shrink-0" />
+      <Icon name="saved-copy" aria-hidden className="mt-px size-3 shrink-0" />
       <span className="text-balance">{text}</span>
     </div>
   );
@@ -325,10 +468,12 @@ export function SessionStream({
   listRef,
   savedCopy = null,
   onSendQueuedNow,
+  onReturned,
   asks,
   durable = false,
   questionPending = false,
   agent,
+  pins,
 }: {
   /** The held window plus its one control, from `useChatWindow`. */
   feed: ChatFeed;
@@ -366,6 +511,12 @@ export function SessionStream({
    */
   onSendQueuedNow?: (keys: readonly string[]) => Promise<boolean>;
   /**
+   * A receipt card's act (ADR 0122), by the card's request id: Send or Discard on a returned card,
+   * Discard on an unconfirmed one. Passed ONLY where this device may write to this pane; leave it out
+   * and the cards have no buttons. Resolves false when nothing was done.
+   */
+  onReturned?: (requestId: string, action: QueuedCardAction) => Promise<boolean>;
+  /**
    * The open asks of a pane that carries them as data (ADR 0100), and the props every card shares. Each card sits
    * under the block that shows its item, or at the tail when that item is not on screen. The list holds
    * every open ask; the first five are drawn and an "N more" button opens the rest (lib/ask.ts
@@ -388,6 +539,18 @@ export function SessionStream({
   questionPending?: boolean;
   /** The pane's agent string, named in the shared-folder line ({@link sharedFolderLine}). */
   agent?: string;
+  /**
+   * The pinned messages of this session (M90). `pinned` maps a Chat item id to its pin id, and a block in it
+   * wears the pin mark. `onActions` is the way in: the block's `⋯` and its hold open the actions sheet through
+   * it. Leave `onActions` out wherever Pin may not be offered (a shell, a read-only device, a saved copy, an
+   * older machine) and the blocks draw no way in; the marks of pins that exist still show.
+   */
+  pins?: {
+    pinned: ReadonlyMap<string, string>;
+    onActions?: (item: ChatItem) => void;
+    /** Filled with a function that scrolls to the block a pin came from, and says whether the stream holds it (M90). */
+    reveal?: MutableRefObject<((pin: Pick<PinRow, "itemId" | "anchor">) => boolean) | null>;
+  };
 }) {
   // The subscription every `t()` caller owes, plus the counter the memo below needs.
   const { revision } = useLocale();
@@ -439,6 +602,8 @@ export function SessionStream({
 
   // What the end of a durable thread says. The newest thing is the person's own when a line of theirs is waiting, or when
   // the last item is a user turn. A text still growing says it is working by itself, with its cursor.
+  // The reply a normal pane is still writing is not pinnable yet, whether or not the item says `partial`.
+  const writing = writingItemId(blocks, working);
   const newest = blocks.at(-1)?.at(-1);
   const personsNewest = lines.some((line) => line.state !== "notSent") || newest?.kind === "user";
   const growing = newest !== undefined && "partial" in newest && newest.partial === true;
@@ -619,6 +784,22 @@ export function SessionStream({
     setSeeking(null);
   }, [seeking, loadingOlder, blocks, window.hasOlder, onLoadOlder, jumpToBlock]);
 
+  // The Pins sheet's Show in Chat (M90): the block a pin came from, when this stream holds it. A block older than the
+  // loaded window is not fetched for it; the sheet says so instead.
+  const revealRef = pins?.reveal;
+  useEffect(() => {
+    if (revealRef === undefined) return;
+    revealRef.current = (target) => {
+      const index = blockOfPin(blocks, target);
+      if (index < 0) return false;
+      jumpToBlock(index);
+      return true;
+    };
+    return () => {
+      revealRef.current = null;
+    };
+  }, [revealRef, blocks, jumpToBlock]);
+
   const onPinTap = () => {
     if (pin === null) return;
     if (pin.kind === "held") jumpToBlock(pin.start);
@@ -673,7 +854,7 @@ export function SessionStream({
         <SavedCopyRow text={savedCopy} />
       ) : window.hasOlder ? (
         <button type="button" onClick={onLoadOlder} disabled={loadingOlder} className={EDGE_ROW}>
-          {loadingOlder ? <Loader2 className="size-3.5 animate-spin" /> : <ArrowUpToLine className="size-3.5" />}
+          {loadingOlder ? <Icon name="busy" className="size-3.5 animate-spin" /> : <Icon name="load-earlier" className="size-3.5" />}
           {loadingOlder ? t("chat.scrollback.loading") : t("chat.scrollback.loadOlder")}
         </button>
       ) : (
@@ -684,19 +865,28 @@ export function SessionStream({
         )
       )}
 
-      {blocks.map((group, index) => (
-        <div key={group[0]!.id} data-block data-n={group.length} className={STREAM_BLOCK}>
-          {/* A group of one is an ordinary block, EXCEPT a lone tool call while tool calls are off:
-              that one folds too, or "off" would leave every single-step turn drawn in full. An agent
-              call and a question never fold (`standsAlone`), so they are drawn either way. */}
-          {group.length === 1 && (showToolCalls || group[0]!.kind !== "tool" || standsAlone(group[0]!)) ? (
-            <ItemView item={group[0]!} />
-          ) : (
-            <ToolGroup items={group} liveOpens={showToolCalls} />
-          )}
-          {asks === undefined || askList === undefined ? null : asksAt(blocks, askList.shown, index).map((ask) => <AskCard key={ask.id} ask={ask} {...asks.card} />)}
-        </div>
-      ))}
+      {blocks.map((group, index) => {
+        // A group of one is an ordinary block, EXCEPT a lone tool call while tool calls are off:
+        // that one folds too, or "off" would leave every single-step turn drawn in full. An agent
+        // call and a question never fold (`standsAlone`), so they are drawn either way.
+        const drawn = group.length === 1 && (showToolCalls || group[0]!.kind !== "tool" || standsAlone(group[0]!));
+        // The block a pin can hang on is a single drawn item; a folded run is several, and has no one text to keep.
+        const item = drawn ? group[0]! : null;
+        const pinnable = item !== null && isPinnable(item) && item.id !== writing;
+        return (
+          <StreamBlock
+            key={group[0]!.id}
+            n={group.length}
+            item={pinnable ? item : null}
+            pinned={item !== null && pins?.pinned.has(item.id) === true}
+            onActions={pinnable ? pins?.onActions : undefined}
+            className={STREAM_BLOCK}
+          >
+            {drawn ? <ItemView item={group[0]!} /> : <ToolGroup items={group} liveOpens={showToolCalls} />}
+            {asks === undefined || askList === undefined ? null : asksAt(blocks, askList.shown, index).map((ask) => <AskCard key={ask.id} ask={ask} {...asks.card} />)}
+          </StreamBlock>
+        );
+      })}
 
       {/* The asks whose item is not on screen: older than the window, or never logged. They stand at
           the tail, where the next thing the program does will arrive, because an ask is the one block
@@ -766,6 +956,9 @@ export function SessionStream({
           "mine, not yet sent" rather than "a turn nobody answered". */}
       {window.queued.length > 0 && window.status.kind === "live" && (
         <QueuedCard queued={window.queued} sendNow={sendNow} />
+      )}
+      {window.queuedSends.length > 0 && window.status.kind === "live" && (
+        <ReceiptQueueCards rows={window.queuedSends} act={onReturned ?? null} />
       )}
 
       {/* The reading, when there is one, and only where there is nothing to read under it. A stale

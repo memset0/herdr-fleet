@@ -39,6 +39,10 @@ import type {
   CacheWatchListEntry,
   CacheWatchState,
   PaneCache,
+  PaneJob,
+  PaneSubagent,
+  PinFull,
+  PinRow,
   ServerSummary,
   SessionSummary,
   TabView,
@@ -57,6 +61,9 @@ import claudeModelPicker from "@/fixtures/panes/claude-lab--menu-model-picker-v2
 import claudeHeadsUp from "@/fixtures/panes/claude--v2302-heads-up-above-box--w142.txt?raw";
 import claudeHeadsUpDismissed from "@/fixtures/panes/claude--v2304-heads-up-dismissed--w135.txt?raw";
 import claudeHeadsUpExplained from "@/fixtures/panes/claude--v2304-heads-up-explained--w135.txt?raw";
+import claudeAuthBoxWaiting from "@/fixtures/panes/claude--v2307-auth-refresh-before-output--w61.txt?raw";
+import claudeAuthBoxFilled from "@/fixtures/panes/claude--v2307-auth-refresh-output--w61.txt?raw";
+import claudeAuthBoxLocked from "@/fixtures/panes/claude--v2309-auth-refresh-locked--w52.txt?raw";
 
 // ── The one clock ────────────────────────────────────────────────────────────────────────────────
 
@@ -542,6 +549,18 @@ export const rosterFive: ServerSummary[] = [
   },
 ];
 
+/**
+ * Two instances per host (M77): two machines, each running the Herdr TUI and Herdr core side by side,
+ * so four members read as two machines. `workshop-hc` has stopped answering, which turns its machine
+ * degraded and names the core instance as the one that is down.
+ */
+export const rosterTwoPerHost: ServerSummary[] = [
+  { ...lead, host: "lodge", mux: "tui" },
+  { id: "lodge-hc", name: "lodge-hc", isLead: false, reachable: true, protocol: "ok", lastSeenAt: TS - 3 * SEC, host: "lodge", mux: "core" },
+  { id: "workshop", name: "workshop", isLead: false, reachable: true, protocol: "ok", lastSeenAt: TS - 3 * SEC, host: "workshop", mux: "tui" },
+  { id: "workshop-hc", name: "workshop-hc", isLead: false, reachable: false, protocol: "ok", lastSeenAt: TS - 6 * MIN, host: "workshop", mux: "core" },
+];
+
 /** Nine machines — enough that the formation's V has to wrap onto a third and fourth row. */
 export const rosterNine: ServerSummary[] = [
   lead,
@@ -693,6 +712,27 @@ export const censusNine: CrewStatusResponse = {
   ts: TS,
 };
 
+/** Two instances per host, the census that pairs with {@link rosterTwoPerHost}: two machine cards. */
+export const censusTwoPerHost: CrewStatusResponse = {
+  crew: crewMeta,
+  self: crewSelf,
+  deputy: { id: "workshop", warrantGeneration: 3 },
+  members: [
+    { ...selfMember, host: "lodge", mux: "tui" },
+    member("lodge-hc", "reachable", { host: "lodge", mux: "core", address: "lodge.tail1a2b.ts.net:8794" }),
+    member("workshop", "reachable", { host: "workshop", mux: "tui", enrolledAt: TS - 120 * DAY }),
+    member("workshop-hc", "unreachable", {
+      host: "workshop",
+      mux: "core",
+      address: "workshop.tail1a2b.ts.net:8795",
+      reason: "connect ECONNREFUSED 100.71.4.9:8795",
+      linkState: "reconnecting",
+      lastSeenAt: TS - 6 * MIN,
+    }),
+  ],
+  ts: TS,
+};
+
 /**
  * The loud one: `attic` believes ANOTHER collie leads this crew, under a warrant generation higher
  * than the deputy's. Two collies both convinced they are the lead is not a transient the next poll
@@ -784,6 +824,13 @@ export const homeCrew: HomeData = {
 
 /** A three-machine crew, on the trio roster — pairs with {@link censusTrio}. */
 export const homeTrio: HomeData = { ...homeCrew, servers: rosterTrio };
+
+/** Two instances per host, pairs with {@link censusTwoPerHost}. The third machine's panes move to `lodge-hc`. */
+export const homeTwoPerHost: HomeData = {
+  ...homeCrew,
+  agents: homeCrew.agents.map((a) => (a.host === "attic" ? onHost(a, "lodge-hc") : a)),
+  servers: rosterTwoPerHost,
+};
 
 /** A nine-machine crew — pairs with {@link censusNine}. */
 export const homeNine: HomeData = { ...homeCrew, servers: rosterNine };
@@ -1125,6 +1172,42 @@ export const paneHeadsUpExplained: PaneFixture = {
   surface: { revision: 7_305, turn: "idle", modal: "none", composer: "empty" },
 };
 
+/**
+ * Claude Code 2.1.307 while `awsAuthRefresh` has not printed yet, at 61 columns: the Authentication
+ * box holds its title alone, and lifts as a waiting card.
+ */
+export const paneAuthBoxWaiting: PaneFixture = {
+  // SAFETY: `structuredClone` of an `AgentView`, a plain data record, is an `AgentView`.
+  pane: { ...structuredClone(working[0]!), paneId: `${working[0]!.paneId}-auth-box-waiting` },
+  text: claudeAuthBoxWaiting,
+  revision: 7_306,
+  surface: { revision: 7_306, turn: "idle", modal: "none", composer: "empty" },
+};
+
+/**
+ * Claude Code 2.1.307 once the login command printed its URL and device code, at 61 columns, with the
+ * URL broken mid-word at the box edge: the card shows it as one link.
+ */
+export const paneAuthBoxFilled: PaneFixture = {
+  // SAFETY: `structuredClone` of an `AgentView`, a plain data record, is an `AgentView`.
+  pane: { ...structuredClone(working[0]!), paneId: `${working[0]!.paneId}-auth-box-filled` },
+  text: claudeAuthBoxFilled,
+  revision: 7_307,
+  surface: { revision: 7_307, turn: "idle", modal: "none", composer: "empty" },
+};
+
+/**
+ * Claude Code 2.1.309 when another process already runs the login command, at 52 columns: the box
+ * holds one sentence and no link.
+ */
+export const paneAuthBoxLocked: PaneFixture = {
+  // SAFETY: `structuredClone` of an `AgentView`, a plain data record, is an `AgentView`.
+  pane: { ...structuredClone(working[0]!), paneId: `${working[0]!.paneId}-auth-box-locked` },
+  text: claudeAuthBoxLocked,
+  revision: 7_308,
+  surface: { revision: 7_308, turn: "idle", modal: "none", composer: "empty" },
+};
+
 /** A bare shell — no agent, no grammar, a ShellBadge in place of the status chip. */
 export const paneShell: PaneFixture = {
   pane: shells[0]!,
@@ -1217,3 +1300,86 @@ export const cacheWatchOff: CacheWatchState = { on: false, global: false, watcha
  *  the render it exists to be checked against. Verbatim off the mirror, the way the real notice quotes it. */
 export const noEchoPrompt =
   "Password for deploy@prod-db-03.internal.corp (sudo -u postgres psql -h 10.20.30.41 -p 5432 -d production_replica):";
+
+// ── Pinned messages (M90) ────────────────────────────────────────────────────────────────────────
+
+const PIN_LONG_REPLY = [
+  "The retry in sync.ts swallows the final error. Three things to change before you merge:",
+  "",
+  "1. Rethrow after the last attempt, so the caller sees the real failure and not an empty list.",
+  "2. The test for the empty list passes for the wrong reason: it never reaches the loader. Give it a loader that throws.",
+  "3. The changelog line is missing. One bullet under Unreleased, in the house voice.",
+  "",
+  "Everything else reads fine. The cache key now carries the session, so two panes on one conversation share a copy, and the sweep that removes a stale file is bounded at one pass a boot.",
+  "",
+  "When the three are in, run the unit gate once and then the browser leg. Do not run the leg before the gate is green: a red unit test makes the leg's first case fail for the wrong reason.",
+].join("\n");
+
+/** Three pins of one session, oldest first as the bridge's file holds them: a message, a long reply, a tool card. */
+export const messagePins: PinFull[] = [
+  {
+    id: "pin-a1",
+    itemId: "pg-user-1:0",
+    kind: "user",
+    text: "Review fix-465 before I merge it, and tell me what you would change.",
+    anchor: "Review fix-465 before I merge it, and tell me what you would change.",
+    ts: new Date(TS - 50 * MIN).toISOString(),
+    pinnedAt: TS - 48 * MIN,
+  },
+  {
+    id: "pin-a2",
+    itemId: "pg-reply-1:0",
+    kind: "reply",
+    text: PIN_LONG_REPLY,
+    anchor: PIN_LONG_REPLY.slice(0, 80),
+    ts: new Date(TS - 40 * MIN).toISOString(),
+    pinnedAt: TS - 30 * MIN,
+  },
+  {
+    id: "pin-a3",
+    itemId: "toolu_pg_01",
+    kind: "tool",
+    tool: { name: "Bash", input: "bun test cli/install-kind.test.ts" },
+    text: "bun test v1.3.0\n\ncli/install-kind.test.ts:\n(pass) the kind of a binary install\n(pass) the kind of a linked clone\n(pass) the kind of a packaged install\n\n 3 pass\n 0 fail\nRan 3 tests across 1 file. [41.00ms]",
+    anchor: "bun test v1.3.0\n\ncli/install-kind.test.ts:\n(pass) the kind of a binary install\n(pa".slice(0, 80),
+    ts: new Date(TS - 12 * MIN).toISOString(),
+    pinnedAt: TS - 5 * MIN,
+  },
+];
+
+/** The list as the bridge answers it: an excerpt and the length, no text. */
+export function messagePinRows(pins: readonly PinFull[]): PinRow[] {
+  return pins.map(({ text, ...rest }) => ({ ...rest, excerpt: text.slice(0, 400), textLength: text.length }));
+}
+
+/** `n` pins for a belt that must show a two-digit badge. Only the count and the rows' number matter there. */
+export function manyMessagePins(n: number): PinRow[] {
+  return messagePinRows(
+    Array.from({ length: n }, (_, i): PinFull => {
+      const text = `Pinned note ${String(i + 1)}`;
+      return { id: `pin-n${String(i)}`, itemId: `pg-n${String(i)}:0`, kind: "reply", text, anchor: text, pinnedAt: TS - (n - i) * MIN };
+    }),
+  );
+}
+
+/** `n` background jobs, all running, so the jobs badge counts them. */
+export function manyRunningJobs(n: number): PaneJob[] {
+  return Array.from({ length: n }, (_, i) => ({
+    id: `job-${String(i)}`,
+    label: `watch ${String(i + 1)}`,
+    command: `bun test shard-${String(i + 1)}`,
+    startedAt: new Date(TS - (i + 2) * MIN).toISOString(),
+  }));
+}
+
+/** `n` running subagents, so the agents badge counts them. */
+export function manySubagents(n: number): PaneSubagent[] {
+  return Array.from({ length: n }, (_, i) => ({
+    agentId: `agent-${String(i)}`,
+    agentType: "general-purpose",
+    model: "opus",
+    description: `Check shard ${String(i + 1)}`,
+    startedAt: new Date(TS - (i + 1) * MIN).toISOString(),
+    spawnDepth: 1,
+  }));
+}

@@ -1,5 +1,3 @@
-import { FleetTodoistProvider } from "@/components/fleet-todoist-provider";
-import { FleetRightSidebar } from "@/components/fleet-todoist";
 import { migrateTerminalPins } from "@/lib/pins";
 import { X } from "lucide-react";
 import {
@@ -606,20 +604,19 @@ function FleetNavigationShell({
   );
 
   const bindingPane = paneId === undefined ? undefined : findPane(allPanes, paneId, data.scope, data.servers, data.sessions);
-  const rightSidebar = useMemo(() => <FleetRightSidebar agents={agents} pane={bindingPane} />, [agents, bindingPane]);
+  const rightSidebar = agents;
 
   const navigation = useMemo(
     () => ({
       hierarchyOpen,
       toggleHierarchy,
       setTrigger,
-      paneSwitcher: { title: ft("fleet.todoist.sidebar"), content: rightSidebar },
+      paneSwitcher: { title: ft("fleet.navigation.agents"), content: rightSidebar },
     }),
     [hierarchyOpen, toggleHierarchy, setTrigger, rightSidebar],
   );
 
   return (
-    <FleetTodoistProvider>
     <FleetPaneTagsProvider>
     <FleetCommandsProvider
       adapters={adapters}
@@ -680,7 +677,7 @@ function FleetNavigationShell({
           collapsed={railsCollapsed}
         />
         <Rail
-          title={ft("fleet.todoist.sidebar")}
+          title={ft("fleet.navigation.agents")}
           width={preferences.right.preferredWidth}
           collapsed={railsCollapsed}
         >
@@ -792,7 +789,6 @@ function FleetNavigationShell({
       </NativeNavigationProvider>
     </FleetCommandsProvider>
     </FleetPaneTagsProvider>
-    </FleetTodoistProvider>
   );
 }
 
@@ -853,7 +849,7 @@ function Rail({
       className={cn(
         "hidden min-h-0 shrink-0 flex-col overflow-hidden bg-chrome transition-[width,opacity] duration-200 motion-reduce:transition-none",
         // Both rails stand from 80rem: maximum widths and two 4px separators leave the route
-        // 392px at 1280px. Waiting for 2xl hides Agents and Todoist on ordinary desktop windows.
+        // 392px at 1280px. Waiting for 2xl hides the agent rail on ordinary desktop windows.
         "xl:flex",
         collapsed && "pointer-events-none opacity-0",
       )}

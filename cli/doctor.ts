@@ -15,30 +15,16 @@ import { skillReport } from "./skill-install.ts";
 import { HOST, type Host } from "../bridge/host.ts";
 import { beaconReader } from "../bridge/beacon-io.ts";
 import { readBeacons, type BeaconSweepDeps } from "../bridge/beacon/reader.ts";
+import { hasStartTimeProbe } from "../bridge/beacon/liveness.ts";
 import { DEFAULT_PORT, envBool, isLoopbackBindHost, nonLoopbackBindRefusal, resolveBridgeHost } from "../bridge/config.ts";
 import { configFilePaths } from "../bridge/config-source.ts";
-import { localAuthHeader, readLocalSecret } from "../bridge/local-secret.ts";
 import type { MuxCapabilityDeclaration } from "../bridge/mux/capabilities.ts";
-import {
-  buildMuxRegistry,
-  DEFAULT_MUX,
-  factoryFor,
-  muxEndpointVar,
-  muxNames,
-  type MuxTarget,
-} from "../bridge/mux/registry.ts";
-import { TMUX_BINARY_OPTION, TMUX_MUX, TMUX_VERSION_ARGS } from "../bridge/mux/tmux/adapter.ts";
-import {
-  resolveTmuxBinary,
-  TMUX_BINARY_CANDIDATES,
-  tmuxServerArgs,
-  tmuxServerLabel,
-} from "../bridge/mux/tmux/exec.ts";
-import { ZELLIJ_BINARY_OPTION, ZELLIJ_MUX } from "../bridge/mux/zellij/adapter.ts";
+import { buildMuxRegistry, DEFAULT_MUX, factoryFor, type MuxTarget } from "../bridge/mux/registry.ts";
+import { TMUX_BINARY_OPTION } from "../bridge/mux/tmux/adapter.ts";
+import { ZELLIJ_BINARY_OPTION } from "../bridge/mux/zellij/adapter.ts";
 import { DURABLE_MUX } from "../bridge/mux/durable/adapter.ts";
+import { HERDR_CORE_MUX } from "../bridge/mux/herdr-core/adapter.ts";
 import { TERN_BINARY_OPTION } from "../bridge/mux/tern/adapter.ts";
-import { resolveZellijBinary, zellijBinaryCandidates } from "../bridge/mux/zellij/exec.ts";
-import { chooseSession, parseSessionList, ZELLIJ_LIST_SESSIONS_ARGS } from "../bridge/mux/zellij/protocol.ts";
 import { bindIsWildcard } from "../bridge/crew/config.ts";
 import { deriveMode } from "../bridge/crew/mode.ts";
 import { crewUrl, type HelloResult, type CrewFetch, type PeerOutcome } from "../bridge/crew/peer-client.ts";
@@ -58,13 +44,33 @@ import {
 import { sidName } from "../bridge/sddl.ts";
 import { DEVICES_FILENAME, isExpired, parseRegistryText } from "../bridge/pairing.ts";
 import { pairedRegistryOf } from "./pairing.ts";
+import { sameBuild } from "../bridge/version.ts";
+import {
+  parseTelemetryRecord,
+  parseTelemetryDecider,
+  TELEMETRY_DECIDERS,
+  telemetrySwitchWarning,
+  type TelemetryDecider,
+  telemetryOrigin,
+  telemetryPath,
+  telemetryState,
+} from "../bridge/telemetry.ts";
+import { asJsonBoolean, asJsonObject, asJsonString, parseJson } from "../web/src/lib/json.ts";
+import { identityHeader, readOwnSnapshot } from "./snapshot-read.ts";
 import { collieVersionBare, type CliContext } from "./context.ts";
+import { CrewOpsStore } from "../bridge/crew/ops-store.ts";
+import { crewDelta, deltaLines } from "./crew-delta.ts";
 import { aboutCrew, bad, ok, skipped, warn, type DoctorStatus, type Finding } from "./finding.ts";
-import { explicitMux, probeMuxes, refusedMux, type MuxSighting } from "./mux.ts";
+import { parseAccountWindowsSetting } from "../bridge/account-windows-setting.ts";
+import { accountWindowsDoctorLine, grokAuthPath, hasOpencodeGoEntry, opencodeAuthPath } from "../bridge/account-windows.ts";
+import { muxFinding, muxSettings, pathLinkFinding, tailscaleFindings, type MuxSettings } from "./setup-findings.ts";
 import { cacheFindings } from "./cache-findings.ts";
 import { surfaceFindings } from "./surface-findings.ts";
+import { harnessFindings, harnessReader, type ReadHarness } from "./harness-findings.ts";
+import { sendsSection } from "./send-findings.ts";
 import { durableFindings, sourcesFindings } from "./durable-findings.ts";
-import { historyFindings, type SnapshotRead } from "./history.ts";
+import { herdrCoreFindings, type HcDial } from "./herdr-core-findings.ts";
+import { historyFindings, type HistoryDeps, type SnapshotRead } from "./history.ts";
 import { EXIT, type Io } from "./io.ts";
 import {
   binaryLayout,
@@ -80,12 +86,13 @@ import {
   PACKAGED_SENTENCE,
 } from "./install-kind.ts";
 import { packageCommand } from "./package-command.ts";
-import { classifyLink, linkDir, linkPath, type LinkReader, onPath, realLinkFs, resolveLinkTarget } from "./link.ts";
+import { linkPath, type LinkReader, realLinkFs, resolveLinkTarget } from "./link.ts";
 import { classifyExe, exePathOf, type ExeEvidence } from "../bridge/exe-replaced.ts";
 import { queryTask, taskOwner, windowsPathKey } from "./task-scheduler.ts";
 import { agentLabel, collieBinary, unitName } from "./unit.ts";
 import { pidFilePath } from "./lifecycle.ts";
-import type { Ui } from "./render.ts";
+import { DEFAULT_COLUMNS, type Ui } from "./render.ts";
+import { layoutFindings } from "./doctor-layout.ts";
 import {
   failureLine,
   type MemberReach,
@@ -94,16 +101,17 @@ import {
   soloCrewHint,
   VERSION_REPORTED_SINCE,
 } from "./crew.ts";
-import { fingerprintRoot, mountName, parseRecord, parseServeStatus, rootAvailability } from "./serve.ts";
-import type { ServeMode } from "./context.ts";
+import { fingerprintRoot, handMadeDoors, mountName, parseRecord, parseServeStatus, rootAvailability } from "./serve.ts";
 import type { Exec, Files } from "./sys.ts";
 import { whistleModelFindings, type WhistleSeams } from "./stt-whistle.ts";
 import { BUILD_MARKER, currentVersionDir, listVersions, platformId, readBuildMarker } from "./update.ts";
 import { settingsHold } from "./hold-entry.ts";
 import { loadProfiles } from "../web/src/lib/surface/profile.ts";
 import {
+  certDomains,
   HTTPS_DISABLED_HINT,
-  tailnetCertDomains,
+  readTailscale,
+  TAILSCALE_PROBE_MS,
   tailnetInboundBlocked,
   tailnetName,
 } from "./tailnet.ts";
@@ -149,6 +157,11 @@ export interface DoctorDeps {
   /** Read-only use: `load()` and nothing else. */
   readonly store: TrustStore;
   /**
+   * The ops store, for `crew-candidates` (`cli/crew-delta.ts`): `load()` and nothing else. Absent
+   * reads as "no crew to compare", so the finding is omitted.
+   */
+  readonly ops?: Pick<CrewOpsStore, "load">;
+  /**
    * The injected transport — the `hello` probe and one `snapshot` READ per member, plus one GET of
    * THIS bridge's own `/api/snapshot` (the history section, issue #137). Every one of them is a
    * read, which is what keeps this verb's contract; there is no mutating route on the other end.
@@ -175,8 +188,24 @@ export interface DoctorDeps {
    * every test and every piped run sees — means the plain lines below, unchanged.
    */
   readonly ui?: Ui | null;
+  /**
+   * The width the plain lines wrap at. The edge reads it once (`terminalColumns`, `cli/render.ts`)
+   * and passes it in, so this verb reads no global. Absent means 80, which is what every pipe sees.
+   */
+  readonly columns?: number;
   /** The Whistle model check's stand-in pin, for the tests. Production leaves it. */
   readonly whistle?: WhistleSeams;
+  /**
+   * Reads each harness's binary and version for the harnesses table (`cli/harness-findings.ts`). It
+   * runs the harness's own version command, which is a read. Absent means no table, which is what
+   * the tests that are not about it see.
+   */
+  readonly harnesses?: ReadHarness;
+  /**
+   * The herdr-core dial the `hc-socket` row makes (`hello` and `server.status`). Absent means the real
+   * socket; the tests that are not about it never reach it, because they have no core socket file.
+   */
+  readonly hcDial?: HcDial;
 }
 
 // ── §8.6's window, and the shoulder before it ────────────────────────────────
@@ -219,6 +248,9 @@ export async function cmdDoctor(deps: DoctorDeps, args: readonly string[]): Prom
   // about an adapter this install does not drive.
   const chosen = muxSettings(deps);
   const declaration = muxDeclaration(chosen);
+  // A multiplexer that names its agents but not their sessions gets the session id from the hooks
+  // (herdr-core, M74 spec 04): the join is the decorator's session-only mode.
+  const sessionsFromHooks = lacksSessionRef(chosen, declaration);
   // How this Collie got here, and where its updates come from — read once, and by the same functions
   // `collie update` decides on, so the two verbs can never disagree about what they are looking at.
   const install = classifyInstall(probeInstall(deps, deps.ctx.root));
@@ -233,23 +265,35 @@ export async function cmdDoctor(deps: DoctorDeps, args: readonly string[]): Prom
     identity(deps),
     configFile(deps),
     webDist(deps),
-    pathLink(deps),
+    pathLinkFinding(deps),
     installKind(deps, install),
     versionsLayout(deps, install),
     updateSource(deps, install),
     ...quarantine(deps, install),
     herdrSocket(deps),
-    bindCheck(deps, mode, leadIsOnLoopback(data?.lead?.address ?? null)),
+    bindCheck({
+      deps,
+      mode,
+      leadOnLoopback: leadIsOnLoopback(data?.lead?.address ?? null),
+      leadLastDialledAt: runtimeMarker?.leadLastDialledAt ?? null,
+    }),
     bindWildcard(deps),
+    // The setup check's Tailscale rows (`cli/setup-findings.ts`): installed and signed in, a tailnet
+    // name with HTTPS certificates, and on Linux the operator setting. `collie start` prints the
+    // same rows when they are not fine; `mux` and `path-link` are its other two, at their own lines.
+    ...tailscaleFindings(deps),
     acl(deps),
     frontDoor(deps, mode),
     pairedDevices(deps, mode),
-    mux(deps),
+    muxFinding(deps),
+    ...(await crewCandidates(deps)),
     // A durable program has no binary or listing to ask. Six rows say which transport is configured,
     // whether its socket or its URL and token may be used, and whether the program answers, and a
     // seventh whether the lead is new enough to show its panes: only when `durable` is the
     // multiplexer this install drives.
     ...(chosen.name === DURABLE_MUX ? await durableFindings({ ctx: deps.ctx, crew: { mode, marker: runtimeMarker } }) : []),
+    // herdr-core's socket and `hc --version`, in place of the two Herdr rows `appliesToMux` drops (M74).
+    ...(chosen.name === HERDR_CORE_MUX ? await herdrCoreFindings({ env: deps.ctx.env, exec: deps.exec, files: deps.files, endpoint: chosen.endpoint, dial: deps.hcDial }) : []),
     // The programs in `sources.json` (M55): one row for the file, then one block per program, each row
     // named `<row>:<program>`. Nothing when there is no file. The `durable-lead` row comes once: with
     // the env form's rows above on a durable-only install, after these blocks otherwise.
@@ -258,10 +302,13 @@ export async function cmdDoctor(deps: DoctorDeps, args: readonly string[]): Prom
     // whether the secret folders are owner-only by their access list (M43 spec 04). No line elsewhere:
     // on POSIX the mode bits are checked where the files are read, as before.
     ...(deps.host.platform === "win32" ? [windowsTask(deps), windowsLongPaths(deps), secretsPrivate(deps)] : []),
-    beaconHooks(deps, hookEntries, declaration?.supports.agentDetection ?? true),
+    beaconHooks(deps, hookEntries, declaration?.supports.agentDetection ?? true, sessionsFromHooks),
     await beacons(deps, hookEntries.length > 0),
     skillWalkyTalky(deps),
     ...walkyRefusals(deps),
+    accountWindowsFinding(deps),
+    // Whether the anonymous install ping is on and which switch decided (M86 spec 01). Info only.
+    ...(await telemetryFindings(deps)),
     // The Whistle model (ADR 0096): one finding when the model, or the host engine that needs it, is
     // on this host, and none otherwise. A host that never heard of Whistle reads exactly as before.
     ...(await whistleModelFindings(deps)),
@@ -274,6 +321,7 @@ export async function cmdDoctor(deps: DoctorDeps, args: readonly string[]): Prom
       files: deps.files,
       snapshot: ownRead,
       host: deps.host,
+      ...sessionRefDeps(declaration, chosen, sessionsFromHooks, hookEntries.length > 0),
     })),
     // Whether the prompt-cache chip is telling the truth: every TTL's date, and the one variable
     // `doctor` can read that the bridge deliberately cannot (ADR 0041). Its own module for the same
@@ -282,6 +330,12 @@ export async function cmdDoctor(deps: DoctorDeps, args: readonly string[]): Prom
     // What the input readers saw, per harness and version, over the last seven days (M56 spec 09): a
     // summary line and one line per row, read from the bridge's own day files. A read, like the rest.
     ...surfaceFindings({ ctx: deps.ctx, files: deps.files, now: deps.now }),
+    // The binary and version of every harness with a profile, and what the profile says (1.24.1).
+    ...(deps.harnesses === undefined ? [] : await harnessFindings(deps.harnesses)),
+    // Whether sends reach each harness (M71 spec 01): the outcomes of its recent sends, read from the
+    // receipts in `<stateDir>/sends/` without a store, and three rules over them. Local: no stamp.
+    // Then the held sends still open and how often a send met a screen it could not type into (spec 02).
+    ...sendsSection({ ctx: deps.ctx, files: deps.files, now: deps.now }),
     restartPending(deps, install, runtimeMarker, await ownRead()),
     // STAMPED `crew` when it is a comparison at all (ADR 0050), while still PRINTING here, where it
     // always has. `clock` measures this machine against a member's `Date` header and its own remedy
@@ -380,6 +434,28 @@ const HERDR_ONLY_PREFIX = "integration-";
 // button off (M43 spec 08). Dropped on Windows, the same way the multiplexer scoping above drops it.
 const NOT_ON_WINDOWS = new Set(["hook-python3"]);
 
+/**
+ * `crew-candidates` (M84/04): where a multiplexer's machine list and this crew differ, the same
+ * lines `collie start` and `crew status` print. Always `ok`: it tells and never fails the doctor.
+ * Omitted (not `skipped`) when nothing differs, so an install with no such list reads as before.
+ * `--json` carries the delta itself as `data`.
+ */
+async function crewCandidates(deps: DoctorDeps): Promise<readonly Finding[]> {
+  if (deps.ops === undefined) return [];
+  const delta = await crewDelta({ exec: deps.exec, store: deps.store, ops: deps.ops, host: deps.host });
+  const lines = deltaLines(delta);
+  if (lines.length === 0) return [];
+  return [
+    {
+      ...ok("crew-candidates", lines.join("; ")),
+      data: {
+        missing: delta.missing.map((m) => ({ source: m.source, targets: [...m.targets] })),
+        forgotten: delta.forgotten.map((f) => ({ memberId: f.memberId, source: f.source })),
+      },
+    },
+  ];
+}
+
 /** Whether a check has anything to say on this host. */
 function appliesToHost(check: string, host: Host): boolean {
   return host.platform !== "win32" || !NOT_ON_WINDOWS.has(check);
@@ -401,12 +477,15 @@ async function render(
   crew: readonly Finding[],
 ): Promise<void> {
   const heading = `collie doctor — ${collieVersionBare(deps.ctx.root, (p) => deps.files.read(p))} · mode ${mode}`;
-  const crewNote = ["crew: none — this collie is not in a crew.", soloCrewHint(deps.host)];
+  // The first line, before the heading, so a person with two lanes sees which one this run read.
+  const instance = instanceLine(deps.ctx);
+  const crewNote = ["crew: none — this collie is not in a crew.", soloCrewHint(deps.host, deps.ctx.env)];
   // One findings list, two renderings. The terminal gets the columns laid out and the statuses
   // coloured; everything else gets exactly the lines below, which are what `--json`'s human twin has
   // always printed and what scripts/collie-cli.test.sh greps.
   if (deps.ui != null) {
     await deps.ui.doctor({
+      instance,
       heading,
       local,
       crewTitle: crew.length === 0 ? "crew:" : `crew: ${data?.crew?.name ?? "?"}`,
@@ -415,10 +494,12 @@ async function render(
     });
     return;
   }
+  const columns = deps.columns ?? DEFAULT_COLUMNS;
+  deps.io.out(instance);
   deps.io.out(heading);
   deps.io.out("");
   deps.io.out("local:");
-  for (const f of local) deps.io.out(line(f));
+  for (const l of layoutFindings(local, columns)) deps.io.out(l);
   deps.io.out("");
   if (crew.length === 0) {
     // One line, exactly as `crew status` does — never a column of padded `skipped` crew checks,
@@ -427,31 +508,32 @@ async function render(
     return;
   }
   deps.io.out(`crew: ${data?.crew?.name ?? "?"}`);
-  for (const f of crew) deps.io.out(line(f));
-}
-
-/** One check, one line. The status leads, the identifier is the second word, the remedy closes it. */
-function line(f: Finding): string {
-  const head = f.status === "ok" ? "✓" : `${f.status}:`;
-  // 22 = longest check id ("integration-opencode", 20 chars) + 2, so every id gets
-  // at least one space before the detail. Grow this if a longer check id lands.
-  // A detail of more than one line (the Windows `secrets-private` line puts a path on its own)
-  // continues under its first line. No other detail holds a line break.
-  const body = `  ${head.padEnd(9)}${f.check.padEnd(22)}${f.detail.replaceAll("\n", `\n${" ".repeat(33)}`)}`;
-  return f.remedy === null ? body : `${body} → ${f.remedy}`;
+  for (const l of layoutFindings(crew, columns)) deps.io.out(l);
 }
 
 // ── Local checks ─────────────────────────────────────────────────────────────
+
+/** The `collie` finding, with the instance and state directory this run read. */
+interface IdentityFinding extends Finding {
+  readonly instance: string | null;
+  readonly stateDir: string;
+}
 
 /**
  * The very first line: this Collie's own version and platform. Not a check — there is nothing to
  * pass or fail — but an operator pasting a `doctor --json` block into a GitHub issue should never
  * have to be asked "which version was this" as a follow-up question.
  */
-function identity(deps: DoctorDeps): Finding {
+function identity(deps: DoctorDeps): IdentityFinding {
   const version = collieVersionBare(deps.ctx.root, (p) => deps.files.read(p));
   const platform = platformId(process.platform, process.arch) ?? `${process.platform}-${process.arch}`;
-  return ok("collie", `v${version} · ${platform}`);
+  // `instance` and `stateDir` ride on this finding so `--json` names the state it read (1.24.1).
+  return { ...ok("collie", `v${version} · ${platform}`), instance: deps.ctx.instance, stateDir: deps.ctx.stateDir };
+}
+
+/** The first line of the human report: the instance (`COLLIE_INSTANCE`, or the default) and the state directory read. */
+function instanceLine(ctx: CliContext): string {
+  return `instance: ${ctx.instance ?? "default"} · state ${ctx.stateDir}`;
 }
 
 /**
@@ -506,46 +588,6 @@ function webDist(deps: DoctorDeps): Finding {
     return bad("web-dist", `${dist} has no index.html — a half-finished build`, "`collie build`");
   }
   return ok("web-dist", `${entries.length} entries, index.html present`);
-}
-
-/**
- * The name on PATH (`collie link`, ADR 0021). Not being linked is a perfectly good state — the verb
- * is opt-in — so it reads `ok` and merely names what would publish it. What is worth a warning is a
- * name that exists and does NOT reach this checkout: another instance's link, or something Collie
- * never published. The verdict comes from `classifyLink`, the same pure function `link` decides on,
- * so `doctor` cannot disagree with the verb about what it is looking at.
- */
-function pathLink(deps: DoctorDeps): Finding {
-  const at = linkPath(deps.ctx.home);
-  const own = publishedBinary(deps.ctx.root, deps.link, deps.host);
-  const verdict = classifyLink(deps.link.probe(at), own);
-  switch (verdict.action) {
-    case "create":
-      return ok("path-link", `not linked — \`collie link\` would publish ${at} → ${own}`);
-    case "keep": {
-      const dir = linkDir(deps.ctx.home);
-      if (!onPath(dir, deps.ctx.env.PATH)) {
-        return warn(
-          "path-link",
-          `${at} → ${own} (this checkout), but ${dir} is not on PATH — the name is published and the shell cannot find it`,
-          `add ${dir} to your shell profile's PATH`,
-        );
-      }
-      return ok("path-link", `${at} → ${own} (this checkout)`);
-    }
-    case "replace":
-      return warn(
-        "path-link",
-        `${at} → ${verdict.previous} — a DIFFERENT checkout owns the name, so a bare \`collie\` runs that one`,
-        "`collie link` here to take it over, or leave it to that instance",
-      );
-    case "refuse":
-      return warn(
-        "path-link",
-        `${at} is ${verdict.reason} — Collie will not touch it`,
-        `move it aside yourself, then \`collie link\``,
-      );
-  }
 }
 
 /**
@@ -860,19 +902,37 @@ function leadIsOnLoopback(address: string | null): boolean {
  * that same tunnel, and loopback is the right bind: ADR 0013's table names both rows. This peer
  * cannot see the lead's dial, so a tunnel that runs one way only is the lead's `member-reach` to
  * catch.
+ *
+ * Or when the lead has already dialled this listener. A peer never stores its own advertised
+ * address (only the lead holds `peers[].address`), so a member enrolled at `127.0.0.1:<port>` on the
+ * lead's own machine, joined by the lead's public name, looks like the trap from here. The runtime
+ * marker's `leadLastDialledAt` is the proof: an admitted call from the lead reached a loopback bind,
+ * so the lead shares this machine or the tunnel.
  */
-function bindCheck(deps: DoctorDeps, mode: string, leadOnLoopback: boolean): Finding {
+function bindCheck(input: {
+  readonly deps: DoctorDeps;
+  readonly mode: string;
+  readonly leadOnLoopback: boolean;
+  readonly leadLastDialledAt: number | null;
+}): Finding {
+  const { deps, mode, leadOnLoopback, leadLastDialledAt } = input;
   const host = resolvedBind(deps);
   const shown = bindIsWildcard(host) ? "0.0.0.0/:: (COLLIE_HOST empty)" : host;
   if (mode === "peer" && isLoopbackBind(host)) {
     if (leadOnLoopback) {
       return ok("bind", `${shown} (mode peer: this peer listens on loopback, and it reaches its lead on loopback too, so the lead sits on this host or at the end of a tunnel)`);
     }
+    if (leadLastDialledAt !== null) {
+      return ok(
+        "bind",
+        `COLLIE_HOST=${host} on a peer, and the lead dialled this listener at ${new Date(leadLastDialledAt).toISOString()}, so it shares this machine`,
+      );
+    }
     const suggestion = tailnetName(deps.exec) ?? "<address the lead can dial>";
     return bad(
       "bind",
       `COLLIE_HOST=${host} on a PEER — only this machine can reach the crew listener, so the lead's` +
-        " probe never lands and the member stays provisional",
+        " probe has not landed yet and the member stays provisional until it does",
       `set COLLIE_HOST=${suggestion} in ${join(deps.ctx.configDir, ".env")}, then \`collie restart\``,
     );
   }
@@ -984,66 +1044,11 @@ function acl(deps: DoctorDeps): Finding {
 }
 
 /**
- * On Windows Collie publishes no front door (M43 spec 09, docs/windows.md): the operator runs
- * `tailscale serve` by hand, so a remedy that says `collie serve` sends them to the wrong place.
- * The by-hand command lives here, once; every Windows remedy below builds on it.
- */
-const tailscaleServeByHand = (port: number): string => `\`tailscale serve --bg --set-path=/ ${port}\``;
-
-/**
- * Pairing is always on (ADR 0086): a published Collie answers no phone until one is paired. The
- * remedies that publish say so, because a door that opens onto a pair screen looks broken otherwise.
- */
-const WINDOWS_PAIR_NOW = "run `collie pair` to pair a device";
-
-const windowsPublishRemedy = (port: number): string =>
-  `run ${tailscaleServeByHand(port)} in PowerShell, then ${WINDOWS_PAIR_NOW}: until then Collie` +
-  " answers no device (docs/windows.md); or set COLLIE_SKIP_SERVE=1 if you own the ingress";
-
-const windowsHttpsDisabledHint = (port: number): string =>
-  'enable HTTPS in the admin console (https://login.tailscale.com/admin/dns, "Enable HTTPS"), then run' +
-  ` ${tailscaleServeByHand(port)} again; on a Headscale tailnet (a self-hosted Tailscale server) use` +
-  ` \`tailscale serve --bg --http=80 --set-path=/ ${port}\`; ${WINDOWS_PAIR_NOW} after you publish (docs/windows.md)`;
-
-const windowsStatusUnreadableRemedy = (port: number): string =>
-  `run \`tailscale serve status\` by hand; if no / mapping to port ${port} shows, run` +
-  ` ${tailscaleServeByHand(port)} (docs/windows.md)`;
-
-const windowsOccupiedRemedy = (port: number): string =>
-  "run `tailscale serve status` to see what owns that listener; free it, or point Collie elsewhere, then run" +
-  ` ${tailscaleServeByHand(port)} (docs/windows.md)`;
-
-/**
- * The listener of a hand-made root mount that proxies to this collie, or `null`. Two places are
- * looked at: the listener the configured serve mode names, and plain HTTP on :80, which is the form
- * docs/windows.md gives for a tailnet with no HTTPS certificates (Headscale).
- */
-function windowsHandMadeDoor(deps: DoctorDeps): number | null {
-  const status = liveServeStatus(deps);
-  if (status === null) return null;
-  const proxy = `http://127.0.0.1:${deps.ctx.port}`;
-  const configured = deps.ctx.serveMode === "http" ? deps.ctx.port : deps.ctx.servePort;
-  const candidates: [number, ServeMode][] = [
-    [configured, deps.ctx.serveMode],
-    [80, "http"],
-  ];
-  for (const [listener, protocol] of candidates) {
-    try {
-      if (rootAvailability(status, listener, protocol, proxy, deps.ctx.basePath) === "adoptable") return listener;
-    } catch {
-      return null;
-    }
-  }
-  return null;
-}
-
-/**
  * `tailscale serve` reality vs. the `tailscale-managed-handler` record. Only a mapping matching the
  * record is ours (ADR 0001); a mapping we do not own is REPORTED, never touched — and a **peer** with
  * any mapping at all is an error, because a peer publishes nothing (ADR 0013).
  */
 function frontDoor(deps: DoctorDeps, mode: string): Finding {
-  const windows = deps.host.platform === "win32";
   const skip = deps.ctx.env.COLLIE_SKIP_SERVE === "1";
   const raw = deps.files.read(deps.ctx.handlerFile);
 
@@ -1069,32 +1074,41 @@ function frontDoor(deps: DoctorDeps, mode: string): Finding {
     return skipped(
       "front-door",
       "no `tailscale` here — the published mapping cannot be read",
-      windows
-        ? `install tailscale and run ${tailscaleServeByHand(deps.ctx.port)} (docs/windows.md), or set COLLIE_SKIP_SERVE=1 if you own the ingress (docs/deployment.md Variant E)`
-        : "install tailscale and `collie serve`, or set COLLIE_SKIP_SERVE=1 if you own the ingress (docs/deployment.md Variant E)",
+      "install tailscale and `collie serve`, or set COLLIE_SKIP_SERVE=1 if you own the ingress (docs/deployment.md Variant E)",
     );
   }
-  // Windows records no mapping, so a root mount that proxies to us is the operator's own
-  // `tailscale serve`, and it is the door working as designed (docs/windows.md). Asked before the
-  // certificate question: on a Headscale tailnet the door is plain HTTP on :80 and no certificate
-  // will ever exist.
-  if (windows && raw === null && mode !== "peer") {
-    const door = windowsHandMadeDoor(deps);
-    if (door !== null) {
-      return ok(
-        "front-door",
-        `:${door} proxies to http://127.0.0.1:${deps.ctx.port}, published by hand (Collie records no mapping on Windows)`,
-      );
-    }
+  // Read the state before the certificates: a signed-out Tailscale answers `status --json` with
+  // exit 0 and no `CertDomains`, which reads as "no HTTPS" and blames the wrong thing.
+  const state = readTailscale(deps.exec);
+  if (state.kind === "down") {
+    return skipped(
+      "front-door",
+      "Tailscale is not running here, so the published mapping cannot be read yet",
+      "fix the tailscale line first, then run `collie doctor` again",
+    );
+  }
+  if (state.kind === "slow") {
+    return skipped(
+      "front-door",
+      `\`tailscale status --json\` did not answer within ${TAILSCALE_PROBE_MS / 1000} seconds, so the published mapping cannot be read yet`,
+      "run `tailscale status` by hand, then `collie doctor` again",
+    );
+  }
+  if (state.kind === "unreadable") {
+    return skipped(
+      "front-door",
+      "`tailscale status --json` did not answer readably",
+      "run it by hand, then `collie doctor` again",
+    );
   }
   // No certificates, no https door — and `tailscale serve` says so by asking a question at a
   // terminal a service has not got (#172). `collie serve` refuses on this same fact; doctor names it
   // here so the operator reads it before they type the verb.
-  if (deps.ctx.serveMode === "https" && tailnetCertDomains(deps.exec)?.length === 0) {
+  if (deps.ctx.serveMode === "https" && state.kind === "running" && certDomains(state.json)?.length === 0) {
     return warn(
       "front-door",
       "this tailnet has no HTTPS certificates, so an https front door cannot be published",
-      windows ? windowsHttpsDisabledHint(deps.ctx.port) : HTTPS_DISABLED_HINT,
+      HTTPS_DISABLED_HINT,
     );
   }
   const status = liveServeStatus(deps);
@@ -1102,9 +1116,7 @@ function frontDoor(deps: DoctorDeps, mode: string): Finding {
     return skipped(
       "front-door",
       "`tailscale serve status --json` did not answer readably",
-      windows
-        ? windowsStatusUnreadableRemedy(deps.ctx.port)
-        : "run it by hand; then `collie serve` if this collie's root mount is missing",
+      "run it by hand; then `collie serve` if this collie's root mount is missing",
     );
   }
 
@@ -1131,15 +1143,24 @@ function frontDoor(deps: DoctorDeps, mode: string): Finding {
       return warn(
         "front-door",
         `:${listener} carries a root mount Collie does not own (${availability}) — reported, never touched`,
-        windows
-          ? windowsOccupiedRemedy(deps.ctx.port)
-          : "free that listener, or point Collie elsewhere, then `collie serve`",
+        "free that listener, or point Collie elsewhere, then `collie serve`",
+      );
+    }
+    // A root that already proxies to us with no record of it: a door made by hand, which is what
+    // docs/windows.md told Windows operators to do before 2026-10-28, or one published before
+    // ownership was recorded at all. It works, and Collie cannot tear it down, because only a
+    // recorded mapping is ours (ADR 0001). The next publish adopts it (`rootAvailability`).
+    if (availability === "adoptable") {
+      return warn(
+        "front-door",
+        `:${listener} proxies to ${proxy}, but Collie has no record of this mapping (it was made by hand)`,
+        "run `collie start` once; it adopts this mapping and records it",
       );
     }
     const detail = `no Collie-managed mapping is recorded and nothing of ours is published on :${listener}`;
-    const publishRemedy = windows
-      ? windowsPublishRemedy(deps.ctx.port)
-      : "`collie serve` here (or COLLIE_SKIP_SERVE=1 if you own the ingress)";
+    const publishRemedy = "`collie serve` here (or COLLIE_SKIP_SERVE=1 if you own the ingress)";
+    const stray = handMadeDoorFinding(deps, status, listener);
+    if (stray !== null) return stray;
     return mode === "lead"
       ? bad(
           "front-door",
@@ -1178,10 +1199,10 @@ function frontDoor(deps: DoctorDeps, mode: string): Finding {
   const fingerprint = fingerprintRoot(status, record.hostPort, record.port, record.path);
   if (fingerprint === `${record.mode}|proxy:${record.proxy}`) {
     const at = record.path === "/" ? "" : ` at ${record.path}`;
-    return ok("front-door", `${record.hostPort}${at} → ${record.proxy} (recorded and live)`);
+    return handMadeDoorFinding(deps, status, record.port) ?? ok("front-door", `${record.hostPort}${at} → ${record.proxy} (recorded and live)`);
   }
   if (fingerprint === "absent") {
-    return warn(
+    return handMadeDoorFinding(deps, status, record.port) ?? warn(
       "front-door",
       `the record names ${record.hostPort}, but no root mount is published there`,
       "`collie serve` here to republish it",
@@ -1195,9 +1216,30 @@ function frontDoor(deps: DoctorDeps, mode: string): Finding {
   );
 }
 
+/**
+ * A root mount on a listener other than `ownPort` that still proxies to this Collie's loopback: a
+ * door made by hand (the old Headscale recipe used port 80). Collie never adopts it and
+ * `collie uninstall` never removes it, so it is named. Null when there is none. Callers use it only
+ * when the own door is fine or missing, so no other answer is hidden behind it.
+ */
+function handMadeDoorFinding(
+  deps: DoctorDeps,
+  status: NonNullable<ReturnType<typeof liveServeStatus>>,
+  ownPort: number,
+): Finding | null {
+  const proxy = `http://127.0.0.1:${deps.ctx.port}`;
+  const stray = handMadeDoors(status, ownPort, proxy, deps.ctx.basePath)[0];
+  if (stray === undefined) return null;
+  return warn(
+    "front-door",
+    `:${stray.listener} proxies to ${proxy}, made by hand on a port Collie does not manage; collie uninstall will not remove it`,
+    `remove it with \`tailscale serve --${stray.protocol}=${stray.listener} --set-path=${deps.ctx.basePath} off\`, then run \`collie start\`, which publishes on Collie's own port (docs/windows.md)`,
+  );
+}
+
 /** `tailscale serve status --json`, parsed — `null` for every "can't tell", as everywhere else. */
 function liveServeStatus(deps: DoctorDeps): ReturnType<typeof parseServeStatus> | null {
-  const r = deps.exec.capture("tailscale", ["serve", "status", "--json"]);
+  const r = deps.exec.capture("tailscale", ["serve", "status", "--json"], TAILSCALE_PROBE_MS);
   if (!r.found || r.code !== 0) return null;
   try {
     return parseServeStatus(r.stdout);
@@ -1219,61 +1261,10 @@ function liveServeStatus(deps: DoctorDeps): ReturnType<typeof parseServeStatus> 
  * "it did not answer".
  */
 async function ownSnapshot(deps: DoctorDeps): Promise<SnapshotRead> {
-  const host = resolvedBind(deps);
-  const dialled = bindIsWildcard(host) ? "127.0.0.1" : host;
-  const bracketed = dialled.includes(":") && !dialled.startsWith("[") ? `[${dialled}]` : dialled;
-  try {
-    const answer = await deps.fetch(`http://${bracketed}:${String(deps.ctx.port)}/api/snapshot`, {
-      signal: AbortSignal.timeout(SNAPSHOT_BUDGET_MS),
-      headers: ownReadHeaders(deps),
-    });
-    if (answer.ok) return { kind: "body", text: await answer.text() };
-    return { kind: "refused", status: answer.status };
-  } catch {
-    return { kind: "silent" };
-  }
+  // The configured login (issue #238, below) rides beside the bridge's local read credential, which
+  // `readOwnSnapshot` adds itself: reads need a pairing token now (ADR 0086) and this process holds none.
+  return readOwnSnapshot(deps, { extraHeaders: identityHeader(deps) });
 }
-
-/**
- * The identity this verb shows its own bridge, or nothing when none is configured (issue #238).
- *
- * `checkAccess` (bridge/server.ts) fails closed on a request with no `Tailscale-User-Login` while
- * `tailscale serve` is in front, because an absent header is not evidence of a local caller: a TAGGED
- * node arrives without one too. So this verb could not read its own snapshot, and reported a healthy
- * bridge as one that had not answered.
- *
- * Sending the configured login GRANTS NOTHING THAT WAS NOT ALREADY THERE. The login is an identity,
- * not a secret, and the bridge already accepts the header from any caller that reaches its port —
- * `curl -H 'Tailscale-User-Login: …' http://127.0.0.1:<port>/api/snapshot` answers 200 today, which is
- * how the reporter demonstrated the bug. The alternative, a loopback exemption, is the one thing that
- * must NOT be done: `tailscale serve` dials the bridge from loopback itself, so every tailnet request
- * would take it.
- *
- * With no login configured the header is omitted rather than invented: the bridge is then either open
- * to the tailnet (it warns about that itself at boot) or it refuses, and a refusal reads as a refusal.
- */
-function identityHeader(deps: DoctorDeps): Record<string, string> | undefined {
-  const login = deps.ctx.env.COLLIE_TRUSTED_USER ?? "";
-  return login === "" ? undefined : { "Tailscale-User-Login": login };
-}
-
-/**
- * Everything this verb shows its own bridge on a read: the configured login (issue #238, above) and
- * the bridge's local read credential (`<stateDir>/local-secret`, bridge/local-secret.ts), because
- * reads need a pairing token now (ADR 0086) and this process holds none. The credential reads only,
- * and only from this host (loopback or the host's own bound address); with no file (the bridge is
- * down, or older) nothing is sent and the bridge refuses as it did before, which `ownAnswerSentence`
- * and the history section report as a refusal.
- */
-function ownReadHeaders(deps: DoctorDeps) {
-  return {
-    ...identityHeader(deps),
-    ...localAuthHeader(readLocalSecret(deps.ctx.stateDir, (p) => deps.files.read(p))),
-  };
-}
-
-/** Long enough for a busy loopback bridge, short enough that a wedged one does not hold the verb. */
-const SNAPSHOT_BUDGET_MS = 3000;
 
 /** A thunk that runs at most once: the first caller pays, every later one shares the same promise. */
 function once<T>(run: () => Promise<T>): () => Promise<T> {
@@ -1535,77 +1526,6 @@ function clock(inCrew: boolean, probes: Map<string, PeerOutcome<HelloResult>>): 
 // multiplexer cannot leave this file quietly reporting a stale set. What is written out per mux —
 // the argv of the liveness probe — is exactly what cannot be shared: each one has its own CLI.
 
-/**
- * What decided the multiplexer this collie drives — the other half of the `mux` line since M14/03.
- *
- * `undecided` is a real state and not an error state to hide: with no `COLLIE_MUX` and no single
- * multiplexer running, `collie start` REFUSES, and a doctor that reported a cheerful "herdr" for that
- * host would be reporting a bridge that is never going to come up.
- */
-type MuxOrigin =
-  | { readonly kind: "explicit" }
-  | { readonly kind: "auto"; readonly evidence: string }
-  | { readonly kind: "undecided"; readonly found: readonly MuxSighting[] };
-
-/** The mux settings, read from the CLI's merged env exactly as `bridge/config.ts` reads them. */
-interface MuxSettings {
-  readonly name: string;
-  readonly endpoint: string;
-  readonly tmuxBin: string;
-  readonly zellijBin: string;
-  readonly ternBin: string;
-  readonly origin: MuxOrigin;
-}
-
-/**
- * `COLLIE_MUX` and the endpoint it addresses, resolved as `collie start` resolves them.
- *
- * Herdr's endpoint IS the Herdr socket path (`bridge/config.ts`), so it comes from the context that
- * already resolved `HERDR_SOCKET_PATH` — the same value `herdr-socket` probes, which is why the
- * `mux` line defers to that check instead of stating a path twice.
- *
- * With nothing configured this asks `cli/mux.ts`'s probe rather than falling to `DEFAULT_MUX`, so
- * `doctor` names the multiplexer the next `start` would actually pick, and the evidence for it. The
- * probe is a read (see that module's header); running it costs one listing per installed adapter.
- */
-function muxSettings(deps: DoctorDeps): MuxSettings {
-  const env = deps.ctx.env;
-  const tmuxBin = (env.COLLIE_TMUX_BIN ?? "").trim();
-  const zellijBin = (env.COLLIE_ZELLIJ_BIN ?? "").trim();
-  const ternBin = (env.COLLIE_TERN_BIN ?? "").trim();
-  const named = explicitMux(env);
-  if (named !== null) {
-    return {
-      name: named,
-      endpoint: named === DEFAULT_MUX ? deps.ctx.socket : (env[muxEndpointVar(named)] ?? "").trim(),
-      tmuxBin,
-      zellijBin,
-      ternBin,
-      origin: { kind: "explicit" },
-    };
-  }
-  const found = probeMuxes(deps);
-  const only = found.length === 1 ? found[0] : undefined;
-  if (only === undefined) {
-    return { name: DEFAULT_MUX, endpoint: "", tmuxBin, zellijBin, ternBin, origin: { kind: "undecided", found } };
-  }
-  return {
-    name: only.mux,
-    endpoint: only.mux === DEFAULT_MUX ? deps.ctx.socket : only.endpoint,
-    tmuxBin,
-    zellijBin,
-    ternBin,
-    origin: { kind: "auto", evidence: only.evidence },
-  };
-}
-
-/** How the name was arrived at, appended to whatever the per-mux branch found. */
-function originSuffix(origin: MuxOrigin): string {
-  if (origin.kind === "explicit") return " · set by COLLIE_MUX";
-  if (origin.kind === "auto") return ` · no COLLIE_MUX, so \`start\` picks it: ${origin.evidence}`;
-  return "";
-}
-
 /** The target the bridge would build for these settings (`bridge/index.ts`), minus nothing. */
 function muxTarget(settings: MuxSettings): MuxTarget {
   return {
@@ -1636,13 +1556,46 @@ function muxDeclaration(settings: MuxSettings): MuxCapabilityDeclaration | null 
 }
 
 /**
- * `mux` — which multiplexer this collie drives, where it would look for it, and whether anything
- * answered there.
+ * What the history section is told about session ids on this install (M74).
  *
- * An unreachable multiplexer is an `error` and not a warning: it is not a degraded Collie, it is a
- * Collie with no panes at all, and the symptom an operator sees first is an empty home screen or the
- * disconnected banner — neither of which names the socket, the session or the binary.
+ * A multiplexer that names agents itself but not their sessions reports one only through the hooks:
+ * with none installed `agent-sessions` is skipped and says to install them, and with them installed it
+ * is the observed result and its remedy is the hook. A multiplexer with no hook path at all (a
+ * declaration with no matcher) is skipped with the adapter's own note.
  */
+function sessionRefDeps(
+  declaration: MuxCapabilityDeclaration | null,
+  chosen: MuxSettings,
+  sessionsFromHooks: boolean,
+  hooksInstalled: boolean,
+): Pick<HistoryDeps, "noSessionRefs" | "noSessionRefsRemedy" | "sessionsFromHooks"> {
+  if (sessionsFromHooks) {
+    return hooksInstalled
+      ? { noSessionRefs: undefined, noSessionRefsRemedy: undefined, sessionsFromHooks: true }
+      : {
+          noSessionRefs: "the hooks are not installed, and a hook is what adds a Claude pane's session",
+          noSessionRefsRemedy: "`collie hooks install claude`, then relaunch the Claude in the pane",
+          sessionsFromHooks: false,
+        };
+  }
+  const bare = declaration !== null && declaration.supports.agentDetection && !declaration.supports.agentSessionRef;
+  return {
+    noSessionRefs: bare ? (declaration.notes.agentSessionRef ?? `${chosen.name} reports no agent session`) : undefined,
+    noSessionRefsRemedy: undefined,
+    sessionsFromHooks: false,
+  };
+}
+
+/**
+ * Does this multiplexer name its agents on its own wire and still lack the session id, so that only
+ * a hook can supply it? True when it declares `agentDetection`, no `agentSessionRef`, and has a
+ * beacon matcher to join the hook to its panes.
+ */
+function lacksSessionRef(settings: MuxSettings, declaration: MuxCapabilityDeclaration | null): boolean {
+  if (declaration === null || !declaration.supports.agentDetection || declaration.supports.agentSessionRef) return false;
+  return factoryFor(buildMuxRegistry(), settings.name)?.beaconMatcher !== undefined;
+}
+
 /** Where Windows keeps the long-path switch, and the value `reg query` reads. */
 export const LONG_PATHS_KEY = "HKLM\\SYSTEM\\CurrentControlSet\\Control\\FileSystem";
 /** An install folder longer than this leaves little room under 260 characters for what sits inside it. */
@@ -1794,144 +1747,6 @@ export function windowsTask(deps: Pick<DoctorDeps, "ctx" | "exec" | "host" | "li
   }
 }
 
-function mux(deps: DoctorDeps): Finding {
-  const settings = muxSettings(deps);
-  const registry = buildMuxRegistry();
-  if (settings.origin.kind === "undecided") {
-    const { detail, remedy } = refusedMux(settings.origin.found, deps.ctx.configDir, deps.ctx.env);
-    return bad("mux", `${detail}, so \`collie start\` refuses`, remedy);
-  }
-  if (factoryFor(registry, settings.name) === undefined) {
-    return bad(
-      "mux",
-      `COLLIE_MUX="${settings.name}" is not a multiplexer this build drives, so the bridge refuses to start`,
-      `set COLLIE_MUX to one of ${muxNames(registry).join(", ")} in ${join(deps.ctx.configDir, ".env")},` +
-        " then `collie restart`",
-    );
-  }
-  if (settings.name === DEFAULT_MUX) {
-    return ok("mux", `${DEFAULT_MUX} — see herdr-socket${originSuffix(settings.origin)}`);
-  }
-  if (settings.name === TMUX_MUX) return tmuxMux(deps, settings);
-  if (settings.name === ZELLIJ_MUX) return zellijMux(deps, settings);
-  // A durable program is asked by the six `durable-*` rows (and `durable-lead` in a crew), so this
-  // line defers to them as the Herdr line defers to `herdr-socket`.
-  if (settings.name === DURABLE_MUX) return ok("mux", `${DURABLE_MUX}, see the durable-* lines${originSuffix(settings.origin)}`);
-  // Registered, and this verb has no probe for it. `skipped` rather than a pass, for the reason
-  // `acl` gives: a check that could not run must never render as one that did.
-  return skipped(
-    "mux",
-    `${settings.name} — registered, but \`collie doctor\` has no liveness probe for it`,
-    `ask that multiplexer whether it is running, by hand; \`collie doctor\` reports ${TMUX_MUX} and ${ZELLIJ_MUX}`,
-  );
-}
-
-/** The first non-empty line of a tool's complaint — a doctor line is one line. */
-function firstLine(text: string): string {
-  return text.split("\n").map((l) => l.trim()).find((l) => l !== "") ?? "it said nothing";
-}
-
-/**
- * tmux, in ONE invocation: the version and the session list, `;`-joined the way the adapter joins
- * its own listing (`bridge/mux/tmux/protocol.ts` § LISTING_ARGS). Neither command starts a server.
- */
-function tmuxMux(deps: DoctorDeps, settings: MuxSettings): Finding {
-  const where = tmuxServerLabel(settings.endpoint);
-  const dotenv = join(deps.ctx.configDir, ".env");
-  const binary = resolveTmuxBinary(settings.tmuxBin, (p) => deps.files.exists(p));
-  if (binary === null) {
-    const why =
-      settings.tmuxBin === ""
-        ? `nothing executable at ${TMUX_BINARY_CANDIDATES.join(", ")}`
-        : `COLLIE_TMUX_BIN="${settings.tmuxBin}" is not an absolute path to a file that is there`;
-    return bad(
-      "mux",
-      `tmux — ${where}, and there is no tmux binary to run: ${why} (a Herdr plugin action gets no` +
-        " login shell, so PATH is never consulted)",
-      `install tmux, or set COLLIE_TMUX_BIN to its absolute path in ${dotenv}, then \`collie restart\``,
-    );
-  }
-  const serverArgs = tmuxServerArgs(settings.endpoint);
-  const asked = deps.exec.capture(binary, [
-    ...serverArgs,
-    ...TMUX_VERSION_ARGS,
-    ";",
-    "list-sessions",
-    "-F",
-    "#{session_name}",
-  ]);
-  if (!asked.found || asked.code !== 0) {
-    const detail = asked.found ? firstLine(asked.stderr || asked.stdout) : `${binary} could not be run`;
-    return bad(
-      "mux",
-      `tmux — ${binary} is there, but no server answered on ${where}: ${detail}`,
-      `start one (\`tmux ${[...serverArgs, "new", "-d"].join(" ")}\`), or point ` +
-        `${muxEndpointVar(TMUX_MUX)} at the server you already run, in ${dotenv}, then \`collie restart\``,
-    );
-  }
-  // The version is the first line the joined invocation printed; every line after it is a session.
-  const lines = asked.stdout.split("\n").map((l) => l.trim()).filter((l) => l !== "");
-  const version = lines[0] ?? "?";
-  const sessions = lines.length === 0 ? 0 : lines.length - 1;
-  return ok(
-    "mux",
-    `tmux ${version} · ${where} · ${String(sessions)} session${sessions === 1 ? "" : "s"}` +
-      originSuffix(settings.origin),
-  );
-}
-
-/**
- * zellij: one `list-sessions`, read by the SAME two pure functions the adapter's session binding
- * reads it with (`parseSessionList` + `chooseSession`), so `doctor` and the bridge cannot disagree
- * about which session this collie drives — or about why there is none.
- */
-function zellijMux(deps: DoctorDeps, settings: MuxSettings): Finding {
-  const dotenv = join(deps.ctx.configDir, ".env");
-  const candidates = zellijBinaryCandidates(deps.ctx.home);
-  const binary = resolveZellijBinary(settings.zellijBin, (p) => deps.files.exists(p), candidates);
-  if (binary === null) {
-    const why =
-      settings.zellijBin === ""
-        ? `nothing executable at ${candidates.join(", ")}`
-        : `COLLIE_ZELLIJ_BIN="${settings.zellijBin}" is not an absolute path to a file that is there`;
-    return bad(
-      "mux",
-      `zellij — there is no zellij binary to run: ${why} (a Herdr plugin action gets no login shell,` +
-        " so PATH is never consulted)",
-      `install zellij, or set COLLIE_ZELLIJ_BIN to its absolute path in ${dotenv}, then \`collie restart\``,
-    );
-  }
-  const asked = deps.exec.capture(binary, [...ZELLIJ_LIST_SESSIONS_ARGS]);
-  if (!asked.found) {
-    return bad(
-      "mux",
-      `zellij — ${binary} could not be run`,
-      `set COLLIE_ZELLIJ_BIN to a zellij that runs, in ${dotenv}, then \`collie restart\``,
-    );
-  }
-  // A box with no sessions exits non-zero and says so on stderr; the chooser turns that, the
-  // ambiguity and the exited session into one sentence — the same one the adapter would print.
-  const sessions = parseSessionList(asked.code === 0 ? asked.stdout : "");
-  const choice = chooseSession(sessions, settings.endpoint);
-  const running = sessions.filter((session) => session.running).length;
-  if (!choice.ok) {
-    const named = settings.endpoint.trim();
-    return bad(
-      "mux",
-      `zellij — ${binary} answered, and ${choice.detail}`,
-      named === ""
-        ? `start one (\`zellij -s <name>\`) and name it in ${muxEndpointVar(ZELLIJ_MUX)} in ${dotenv}, then \`collie restart\``
-        : `start it (\`zellij -s ${named}\`) or attach once to resurrect it — Collie never creates or` +
-          ` resurrects a session; then \`collie restart\``,
-    );
-  }
-  return ok(
-    "mux",
-    `zellij · session ${choice.session} · ${String(running)} running of ${String(sessions.length)} listed` +
-      originSuffix(settings.origin),
-  );
-}
-
 // ── The agent's own hooks, and the beacons they write (M11/05) ───────────────
 //
 // BOTH ARE READS, and both read the SAME CODE the verbs do: `claudeSettingsTargets` finds the files,
@@ -1995,14 +1810,23 @@ function beaconHooks(
   deps: DoctorDeps,
   entries: readonly InstalledEntry[],
   muxReportsAgents: boolean,
+  hooksGiveSessions: boolean,
 ): Finding {
   const check = "beacon-hooks-claude";
   const would = resolveHookCommand(deps.ctx, deps.link);
   const name = muxSettings(deps).name;
   const install =
     `\`collie hooks install claude\` (writes ${String(BEACON_HOOKS.length)} marked entries into` +
-    " ~/.claude/settings.json; running Claudes must be relaunched)";
+    " ${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json; running Claudes must be relaunched)";
   if (entries.length === 0) {
+    // The multiplexer names agents, and only a hook can add the session id that gives a pane History.
+    if (muxReportsAgents && hooksGiveSessions) {
+      return skipped(
+        check,
+        `${name} names each agent itself; the hooks add a Claude pane's session, which is what gives it History. Hooks installed: no`,
+        install,
+      );
+    }
     return muxReportsAgents
       ? ok(check, `not needed — ${name} reports agents itself; hooks installed: no`)
       : bad(
@@ -2057,7 +1881,11 @@ function beaconHooks(
   // Installed under a multiplexer that names its own agents is still `ok`. That multiplexer does not
   // need the hooks to name an agent, so the line says what they still give: the hook edges of the
   // input surface (M56 spec 11).
-  const spare = muxReportsAgents ? `; ${name} names agents itself and does not need them for that, so they give hook edges only` : "";
+  const spare = !muxReportsAgents
+    ? ""
+    : hooksGiveSessions
+      ? `; ${name} names agents itself, so they give hook edges and each Claude pane's session (its History)`
+      : `; ${name} names agents itself and does not need them for that, so they give hook edges only`;
   // The permission hold (M56 spec 12): which files hold permissions for the phone, if any.
   const holdEvent = loadProfiles().get("claude")?.hold?.event;
   const holding = holdEvent === undefined ? 0 : [...perFile.keys()].filter((path) => settingsHold(deps.files.read(path), holdEvent)).length;
@@ -2112,6 +1940,70 @@ function walkyRefusals(deps: DoctorDeps): Finding[] {
 }
 
 /**
+ * `telemetry` — whether this install sends its anonymous daily ping, and which switch decided it
+ * (M86 spec 01). Info only: off is a choice. A pure read: it makes no ID and writes no file.
+ *
+ * THE RUNNING BRIDGE DECIDES, NOT THIS SHELL. A service reads its own `.env`, so `COLLIE_TELEMETRY` in
+ * the shell that runs `collie doctor` says nothing about the bridge that would send. The bridge is asked
+ * first, over the route the Settings card uses (`GET /api/telemetry`, the local read credential), and
+ * the line says it is the bridge's answer. With no bridge answering, this verb evaluates the switches
+ * from its own environment and config file and says that it did, and that the service reads its own
+ * `.env`. A value of `COLLIE_TELEMETRY` that nobody knows is a warning of its own: it reads as off.
+ */
+export async function telemetryFindings(deps: Pick<DoctorDeps, "ctx" | "files" | "fetch">): Promise<Finding[]> {
+  const asked = await readOwnSnapshot(deps, { path: "/api/telemetry", extraHeaders: identityHeader(deps) });
+  const bridge = asked.kind === "body" ? bridgeTelemetryAnswer(asked.text) : null;
+  const unknown = telemetrySwitchWarning(deps.ctx.env);
+  const switchWarning =
+    unknown === null
+      ? []
+      : [warn("telemetry-switch", unknown, "set COLLIE_TELEMETRY to 0 or 1, in the service .env for a service, then run `collie restart`")];
+  if (bridge !== null) {
+    return [ok("telemetry", `${bridge.on ? "on" : "off"}, decided by ${TELEMETRY_DECIDERS[bridge.decidedBy]} (as the running bridge sees it)`), ...switchWarning];
+  }
+  const { env, configLayer, root, stateDir } = deps.ctx;
+  const setting = parseTelemetryRecord(deps.files.read(telemetryPath(stateDir))).setting;
+  const state = telemetryState({
+    env,
+    origin: telemetryOrigin(env, configLayer),
+    setting,
+    version: collieVersionBare(root, (p) => deps.files.read(p)),
+  });
+  const own = `${state.on ? "on" : "off"}, decided by ${TELEMETRY_DECIDERS[state.decidedBy]}`;
+  return [ok("telemetry", `${own} (as this shell sees it; the service reads its own .env)`), ...switchWarning];
+}
+
+/** The bridge's `GET /api/telemetry` body, or null when it is not that: an older bridge, or another answer. */
+function bridgeTelemetryAnswer(text: string): { on: boolean; decidedBy: TelemetryDecider } | null {
+  const doc = asJsonObject(parseJson(text));
+  if (doc === undefined) return null;
+  const on = asJsonBoolean(doc.on);
+  const decidedBy = parseTelemetryDecider(asJsonString(doc.decidedBy));
+  if (on === undefined || decidedBy === undefined) return null;
+  return { on, decidedBy };
+}
+
+/**
+ * `account-windows` — whether the bridge reads the operator's own harness logins to ask the vendors for
+ * the 5-hour and 7-day windows (ADR 0118), what each harness reads and where it asks. Never a warning:
+ * off is a choice, and on reads nothing until a pane of the harness exists. OpenCode and Grok are off
+ * unless named (or `all`), unverified until one real login has proven their shape. The line names files and
+ * hosts, never anything in a file. It looks at OpenCode's auth store for an `opencode-go` entry and at
+ * Grok's login file for existence, so the line can say which of them has a login.
+ */
+export function accountWindowsFinding(deps: Pick<DoctorDeps, "ctx" | "host" | "files">): Finding {
+  const { env, home } = deps.ctx;
+  const setting = parseAccountWindowsSetting(env["COLLIE_ACCOUNT_WINDOWS"]);
+  // A file of an off harness is not looked at, not even to say whether it has a login.
+  const store = setting.harnesses.includes("opencode") ? deps.files.read(opencodeAuthPath(env, home)) : null;
+  const facts = {
+    opencodeGoKey: store !== null && hasOpencodeGoEntry(store),
+    grokLogin: setting.harnesses.includes("grok") && deps.files.exists(grokAuthPath(env, home)),
+  };
+  return ok("account-windows", accountWindowsDoctorLine(setting, env, home, deps.host.platform, facts));
+}
+
+/**
  * `beacons` — how many agents have identified themselves here, and how many of those are gone.
  *
  * An expired beacon is ORDINARY and never a warning: agents end. Its pane goes back to reading as a
@@ -2120,11 +2012,22 @@ function walkyRefusals(deps: DoctorDeps): Finding[] {
  * actually been written since the emitter was installed.
  *
  * Nothing here removes a file. The sweep is a READ, on this path as on the bridge's.
+ *
+ * A platform with no start-time probe (`bridge/beacon/liveness.ts`: not Linux, not macOS) never gets
+ * a beacon, so with the emitter installed and none on disk the row says that rather than "not yet"
+ * (M80 spec 11).
  */
 async function beacons(deps: DoctorDeps, installed: boolean): Promise<Finding> {
   const readings = await readBeacons(deps.beacons);
   const live = readings.filter((reading) => reading.liveness === "live").length;
   const expired = readings.length - live;
+  if (readings.length === 0 && installed && !hasStartTimeProbe(deps.host.platform)) {
+    return skipped(
+      "beacons",
+      "no agent writes one on this platform, because Collie cannot read a process's start time here",
+      "nothing to do here: only Linux and macOS have that probe",
+    );
+  }
   if (readings.length === 0) {
     return skipped(
       "beacons",
@@ -2315,7 +2218,7 @@ function memberVersions(
     );
   }
   const behind = answered.filter(
-    (e) => e.outcome.value.version !== null && e.outcome.value.version !== ours,
+    (e) => e.outcome.value.version !== null && !sameBuild(e.outcome.value.version, ours),
   );
   const skewed = behind.map((e) => `${e.id} runs ${e.outcome.value.version}`);
   if (skewed.length === 0) return ok("member-versions", `every member that reported one runs ${ours}${note}`);
@@ -2362,6 +2265,7 @@ export function doctorDeps(base: {
   exec: Exec;
   files: Files;
   ui?: Ui | null;
+  columns?: number;
   host?: Host;
 }): DoctorDeps {
   return {
@@ -2369,11 +2273,13 @@ export function doctorDeps(base: {
     ...base,
     link: realLinkFs,
     store: new TrustStore(base.ctx.stateDir),
+    ops: new CrewOpsStore(base.ctx.stateDir),
     fetch: (url, init) => fetch(url, init),
     // The bridge's own reader, seams and all (`bridge/beacon-io.ts`), so `doctor` counts what the
     // running bridge counts. Both of its seams are reads; neither can create the directory.
     beacons: beaconReader(base.ctx.stateDir),
     now: () => Date.now(),
     ownerOnly: realOwnerOnlyDeps,
+    harnesses: harnessReader(base.ctx.env),
   };
 }

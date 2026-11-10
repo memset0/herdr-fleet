@@ -9,6 +9,8 @@ import { STT_SUBCOMMANDS } from "./stt.ts";
 import { CONFIG_SUBCOMMANDS } from "./config.ts";
 import { WALKY_SUBCOMMANDS } from "./walky.ts";
 import { DURABLE_SUBCOMMANDS } from "./durable-attach.ts";
+import { MUX_SUBCOMMANDS } from "./mux-list.ts";
+import { SESSIONS_VERB } from "./sessions.ts";
 import {
   type Command,
   COMMANDS,
@@ -96,9 +98,15 @@ const STT_VERBS = ["stt"];
 /** The config-file tree (ADR 0040). Declared right after `stt`, for the same reasons. */
 const CONFIG_VERBS = ["config"];
 const DURABLE_VERBS = ["durable"];
-// Walky talky (M62). Declared after `durable`. One spelling: the `wt` alias was dropped before
+// `mux list` (M76 spec 02). Declared after `durable`: it reads the multiplexers the durable adapter is one of.
+const MUX_VERBS = ["mux"];
+// The agent-session list (M76 spec 03), declared right after `mux`. The name is `SESSIONS_VERB`.
+const SESSIONS_VERBS = [SESSIONS_VERB];
+// Walky talky (M62). Declared after `sessions`. One spelling: the `wt` alias was dropped before
 // release, because Windows Terminal's binary is `wt.exe`.
 const WALKY_VERBS = ["walky"];
+// `theme check` (M59 spec 05), declared after `walky`. It reads files and touches no state.
+const THEME_VERBS = ["theme"];
 // The manual, printed out of the binary: `collie skill` for an AI agent, `collie docs` for the
 // operator pages. Neither was ever a shell verb — there was nothing to print before it was embedded.
 const MANUAL_VERBS = ["skill", "docs"];
@@ -121,7 +129,10 @@ describe("the verb table", () => {
       ...STT_VERBS,
       ...CONFIG_VERBS,
       ...DURABLE_VERBS,
+      ...MUX_VERBS,
+      ...SESSIONS_VERBS,
       ...WALKY_VERBS,
+      ...THEME_VERBS,
       ...CREW_VERBS,
       ...MANUAL_VERBS,
       "help",
@@ -283,6 +294,22 @@ describe("dispatch", () => {
     }
   });
 
+  // `serve` now has a child, and a parent with children runs outside the guard in front of every leaf.
+  // The bare verb publishes a front door, so it answers `--help` itself; `serve status` only reads.
+  test("`serve --help` prints usage and never publishes; `serve status` reaches the sub-verb", async () => {
+    // The REAL table here, because the guard under test is part of the real `serve` row (a spy would
+    // replace it). Safe: `--help` is answered before any body runs, which is what this pins.
+    for (const argv of [["serve", "--help"], ["serve", "-h"]]) {
+      const io = capture();
+      expect(await run(argv, io, COMMANDS)).toBe(EXIT.OK);
+      expect(io.stdout[0]).toBe("usage: collie serve [options]");
+      expect(io.stderr).toEqual([]);
+    }
+    const { table, ran } = spied();
+    expect(await run(["serve", "status"], capture(), table)).toBe(EXIT.OK);
+    expect(ran).toEqual(["serve status"]);
+  });
+
   test("`_apply-update --help` runs nothing and exits non-zero", async () => {
     const { table, ran } = spied();
     const io = capture();
@@ -409,8 +436,14 @@ describe("the subcommand trees", () => {
     expect(findCommand("durable")?.subcommands?.map((s) => s.name)).toEqual([...DURABLE_SUBCOMMANDS]);
   });
 
+  test("`mux` declares exactly `cli/mux-list.ts`'s sub-verbs, in its order", () => {
+    expect(findCommand("mux")?.subcommands?.map((s) => s.name)).toEqual([...MUX_SUBCOMMANDS]);
+  });
+
   test("no other verb declares a tree — the grammar is one level deep everywhere else", () => {
     expect(COMMANDS.filter((c) => c.subcommands !== undefined).map((c) => c.name)).toEqual([
+      // `serve` publishes; `serve status` reads what tailscale serve publishes (M76).
+      "serve",
       "hooks",
       "beacon",
       "devices",
@@ -418,7 +451,9 @@ describe("the subcommand trees", () => {
       "stt",
       "config",
       "durable",
+      "mux",
       "walky",
+      "theme",
       "crew",
       // The alias carries the SAME array — that is what `cli/crew.test.ts` pins.
       "pack",
@@ -545,13 +580,19 @@ describe("exit codes", () => {
       // fakes in a temp dir.
       ...CONFIG_VERBS,
       ...DURABLE_VERBS,
+      // `mux list` resolves the real context and reads the real hook target registry, and removes the
+      // record of a dead bridge there. cli/mux-list.test.ts drives it against fakes.
+      ...MUX_VERBS,
       // `walky` talks to this host's running bridges over their local sockets, and a `send`
       // would type into a real pane. cli/walky.test.ts drives every sub-verb against a temp socket.
       ...WALKY_VERBS,
+      // `sessions` dials this host's own running bridge for its snapshot. cli/sessions.test.ts drives it against a fake fetch.
+      ...SESSIONS_VERBS,
     ];
     // `skill` and `docs` print text compiled into this binary. They read nothing, resolve no state
-    // dir and touch no machine, so the suite may run them for real.
-    const readOnly = ["version", "help", "skill", "docs"];
+    // dir and touch no machine, so the suite may run them for real. `theme` reads only the files it
+    // is named, resolves no context and writes nothing (cli/theme-check.test.ts).
+    const readOnly = ["version", "help", "skill", "docs", ...THEME_VERBS];
     for (const name of [...worldTouching, ...readOnly]) expect(findCommand(name)).toBeDefined();
     expect([...worldTouching, ...readOnly].length).toBe(COMMANDS.length);
     // The grep stops at the verb's closing quote, NOT at the `"]` that used to follow it: a verb

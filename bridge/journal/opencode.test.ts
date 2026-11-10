@@ -830,6 +830,76 @@ describe("OpencodeTranscriptSource — the V2 store", () => {
   });
 });
 
+// OpenCode 2.1 renamed its V2 `session` table to `session_v2` and keeps a 1.x install's older
+// conversations in `message`/`part` until OpenCode itself opens each session and copies them into
+// `session_message` (measured on 2.1.1, 2026-10-27: the upgraded database has `session_v2`,
+// `message`, `part` and NO `session`). Choosing the store from the table the session ROW lives in
+// read every pre-upgrade session as an empty V2 one, so History said there was no log.
+describe("OpencodeTranscriptSource — the 2.1 upgrade layout", () => {
+  const LEGACY_SID = "ses_e812a50faffeHHMW1GJ262DI3e";
+
+  /** V2 tables plus the V1 content tables the 2.1 rename left behind (no `session` table). */
+  const UPGRADED_SCHEMA = [
+    ...V2_SCHEMA,
+    ...V1_SCHEMA.filter((ddl) => !ddl.startsWith("create table session ")),
+  ] as const;
+
+  async function fixture() {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "collie-opencode-21-")));
+    const root = join(base, "data");
+    await mkdir(root, { recursive: true });
+    const db = openDb(join(root, "opencode.db"), UPGRADED_SCHEMA);
+    db.run("insert into session_v2 values (?, null, 'legacy session', 1, 100)", [LEGACY_SID]);
+    db.run("insert into message values ('msg_old', ?, 10, 10, ?)", [LEGACY_SID, JSON.stringify(userData(10))]);
+    db.run("insert into part values ('prt_old', 'msg_old', ?, 10, 10, ?)", [
+      LEGACY_SID,
+      JSON.stringify(textPart("written before the upgrade")),
+    ]);
+    return { base, root, db };
+  }
+
+  test("a session row in session_v2 whose conversation is still V1 reads through V1", async () => {
+    const { base, root, db } = await fixture();
+    db.close();
+    const src = new OpencodeTranscriptSource(root);
+    const key = (await src.resolve({ kind: "id", value: LEGACY_SID }))!;
+    expect(key).toBe(`${join(root, "opencode.db")}#${LEGACY_SID}`);
+    expect(await src.stat(key)).toEqual({ size: 2, mtimeMs: 10 });
+    const entries = parseOpencodeTranscript((await src.load(key)).text);
+    expect(entries.map((e) => [e.uuid, e.role])).toEqual([["msg_old", "user"]]);
+    expect(entries[0]!.parts).toEqual([{ kind: "text", text: "written before the upgrade" }]);
+    await rm(base, { recursive: true, force: true });
+  });
+
+  test("once OpenCode copies the session across, the copied V2 rows win the tie", async () => {
+    const { base, root, db } = await fixture();
+    db.run("insert into session_message values ('msg_new', ?, 'user', 1, 10, 10, ?)", [
+      LEGACY_SID,
+      JSON.stringify(v2UserData("copied to v2", 10)),
+    ]);
+    db.close();
+    const src = new OpencodeTranscriptSource(root);
+    const key = (await src.resolve({ kind: "id", value: LEGACY_SID }))!;
+    const entries = parseOpencodeTranscript((await src.load(key)).text);
+    expect(entries.map((e) => [e.uuid, e.role])).toEqual([["msg_new", "user"]]);
+    expect(entries[0]!.parts).toEqual([{ kind: "text", text: "copied to v2" }]);
+    await rm(base, { recursive: true, force: true });
+  });
+
+  test("a fresh session with no rows yet still resolves to the generation that will write it", async () => {
+    const { base, root, db } = await fixture();
+    const fresh = "ses_freshV2session00001";
+    db.run("insert into session_v2 values (?, null, 'fresh session', 5, 6)", [fresh]);
+    db.close();
+    const src = new OpencodeTranscriptSource(root);
+    const key = (await src.resolve({ kind: "id", value: fresh }))!;
+    expect(key).toBe(`${join(root, "opencode.db")}#${fresh}`);
+    expect(await src.stat(key)).toEqual({ size: 0, mtimeMs: 0 });
+    expect((await src.load(key)).text).toBe("");
+    await rm(base, { recursive: true, force: true });
+  });
+});
+
 // A machine that upgraded keeps both generations in the same opencode.db — V1 sessions in `session`
 // and everything new in `session_v2`. Both must resolve, and each must be served by its own tables.
 describe("OpencodeTranscriptSource — both generations side by side", () => {
@@ -1570,9 +1640,9 @@ describe("parseOpencodeTranscript: the structured tool call", () => {
     });
   });
 
-  test("a tool outside the nine kinds is `other` and reads exactly as its row did", () => {
-    const part = firstTool(one(toolPart("todowrite", { status: "completed", input: { todos: [] }, output: "ok" })));
-    expect(part.call).toEqual({ kind: "other", name: "todowrite", summary: part.summary });
+  test("a tool outside the ten kinds is `other` and reads exactly as its row did", () => {
+    const part = firstTool(one(toolPart("todoread", { status: "completed", input: {}, output: "ok" })));
+    expect(part.call).toEqual({ kind: "other", name: "todoread", summary: part.summary });
   });
 });
 
@@ -1950,6 +2020,15 @@ describe("parseOpencodeTranscript — patch and file parts", () => {
     ]);
   });
 
+  test("an attached image over the cap becomes a visible line beside the text", () => {
+    const big = `data:image/png;base64,${"A".repeat(4 * 1024 * 1024 + 4)}`;
+    const entries = parseOpencodeTranscript(line("msg_a", userData(), [textPart("look"), filePart("image/png", big)]));
+    expect(entries[0]!.parts).toEqual([
+      { kind: "text", text: "look" },
+      { kind: "text", text: expect.stringMatching(/^Picture too large to show here \(\d+\.\d MB\)$/) },
+    ]);
+  });
+
   test("an http url on the agent's word never becomes a fetch the phone makes", () => {
     const entries = parseOpencodeTranscript(
       line("msg_a", userData(), [filePart("image/png", "http://evil.example/x.png"), textPart("look")]),
@@ -2016,5 +2095,136 @@ describe("parseOpencodeTranscript — a message sent while the agent works", () 
       ["msg_4", "assistant"],
     ]);
     expect(entries[2]!.parts).toEqual([{ kind: "text", text: "Queued note: reply with only OK." }]);
+  });
+});
+
+// The context dot (.adr/0115, amended 2026-10-25). OpenCode counts `tokens.input` apart from
+// `tokens.cache`, so the three together are what the turn carried; the window comes from OpenCode's
+// copy of the models.dev catalog, `<provider>.models.<id>.limit.context`. Lab names only.
+describe("the opencode probe — the context", () => {
+  type Message = { [key: string]: JsonValue | undefined };
+  const assistant = (at: number, tokens: Message, extra: Message = {}): Message => ({
+    role: "assistant",
+    providerID: "labrouter",
+    modelID: "lab/model-one",
+    time: { created: at - 10, completed: at },
+    tokens,
+    ...extra,
+  });
+
+  async function probeOf(rows: readonly Message[], catalog?: JsonValue) {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "collie-opencode-context-")));
+    const db = openDb(join(base, "opencode.db"), V1_SCHEMA);
+    db.run("insert into session values (?, null, 'session', 1, 100)", [SID]);
+    for (const [i, data] of rows.entries()) {
+      db.run("insert into message values (?, ?, ?, ?, ?)", [`msg_${String(i)}`, SID, 1000 + i, 1000 + i, JSON.stringify(data)]);
+    }
+    db.close();
+    const models = join(base, "models.json");
+    if (catalog !== undefined) await Bun.write(models, JSON.stringify(catalog));
+    const probe = await opencodeJournal(base, models).cacheProbe?.({ kind: "id", value: SID });
+    await rm(base, { recursive: true, force: true });
+    return probe;
+  }
+  const catalog = { labrouter: { models: { "lab/model-one": { limit: { context: 1_050_000, output: 128_000 } } } } };
+
+  test("the tokens are input, cache read and cache write; the catalog names the window", async () => {
+    const probe = await probeOf([assistant(2000, { input: 276, output: 135, cache: { read: 14_208, write: 16 } })], catalog);
+    expect(probe?.contextTokens).toBe(14_500);
+    expect(probe?.contextWindow).toBe(1_050_000);
+  });
+
+  test("with no catalog file there is no window", async () => {
+    const probe = await probeOf([assistant(2000, { input: 276, cache: { read: 14_208, write: 0 } })]);
+    expect(probe?.contextTokens).toBe(14_484);
+    expect(probe?.contextWindow).toBeUndefined();
+  });
+
+  test("a catalog that does not name the model gives no window", async () => {
+    const probe = await probeOf([assistant(2000, { input: 276, cache: { read: 0, write: 0 } })], {
+      labrouter: { models: { "lab/other": { limit: { context: 9 } } } },
+    });
+    expect(probe?.contextWindow).toBeUndefined();
+  });
+
+  test("a reply still at zero tokens is passed over for the turn before it", async () => {
+    const probe = await probeOf(
+      [assistant(2000, { input: 300, cache: { read: 700, write: 0 } }), assistant(3000, { input: 0, output: 0, cache: { read: 0, write: 0 } })],
+      catalog,
+    );
+    expect(probe?.contextTokens).toBe(1000);
+  });
+
+  test("a compaction summary newer than every turn leaves the context unknown", async () => {
+    const probe = await probeOf(
+      [
+        assistant(2000, { input: 300, cache: { read: 700, write: 0 } }),
+        assistant(3000, { input: 9000, cache: { read: 0, write: 0 } }, { mode: "compaction", summary: true }),
+      ],
+      catalog,
+    );
+    expect(probe?.contextTokens).toBeUndefined();
+  });
+});
+
+// The session cost (PaneUsage.cost): each assistant message states `cost` in US dollars, and the probe
+// sums them in SQL. Lab names only.
+describe("the opencode probe — the session cost", () => {
+  type Message = { [key: string]: JsonValue | undefined };
+  const assistant = (at: number, cost: JsonValue | undefined): Message => {
+    const message: Message = {
+      role: "assistant",
+      providerID: "labrouter",
+      modelID: "lab/model-one",
+      time: { created: at - 10, completed: at },
+      tokens: { input: 10, output: 5, cache: { read: 0, write: 0 } },
+    };
+    if (cost !== undefined) message.cost = cost;
+    return message;
+  };
+
+  async function costOf(rows: readonly Message[]): Promise<number | undefined> {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "collie-opencode-cost-")));
+    const db = openDb(join(base, "opencode.db"), V1_SCHEMA);
+    db.run("insert into session values (?, null, 'session', 1, 100)", [SID]);
+    for (const [i, data] of rows.entries()) {
+      db.run("insert into message values (?, ?, ?, ?, ?)", [`msg_${String(i)}`, SID, 1000 + i, 1000 + i, JSON.stringify(data)]);
+    }
+    db.close();
+    const probe = await opencodeJournal(base, join(base, "models.json")).cacheProbe?.({ kind: "id", value: SID });
+    await rm(base, { recursive: true, force: true });
+    return probe?.costUsd;
+  }
+
+  test("sums the cost of every assistant message, an integer one included", async () => {
+    const user: Message = { role: "user", time: { created: 1 }, cost: 50 };
+    expect(await costOf([user, assistant(2000, 0.25), assistant(3000, 0.5), assistant(4000, 1)])).toBeCloseTo(1.75, 9);
+  });
+
+  test("a message with no cost, or one that is not a number, adds nothing", async () => {
+    expect(await costOf([assistant(2000, 0.5), assistant(3000, undefined), assistant(4000, "9")])).toBeCloseTo(0.5, 9);
+  });
+
+  test("a session that states no cost, or only zeros, has none", async () => {
+    expect(await costOf([assistant(2000, undefined)])).toBeUndefined();
+    expect(await costOf([assistant(2000, 0), assistant(3000, 0)])).toBeUndefined();
+  });
+
+  test("V2 sums the assistant rows of session_message", async () => {
+    const base = await realpath(await mkdtemp(join(tmpdir(), "collie-opencode-cost-")));
+    const db = openDb(join(base, "opencode.db"), V2_SCHEMA);
+    db.run("insert into session_v2 values (?, null, 'session', 1, 100)", [SID]);
+    const rows: Array<[string, Message]> = [
+      ["user", { time: { created: 1 }, text: "hi", cost: 40 }],
+      ["assistant", { time: { created: 2, completed: 3 }, model: { id: "lab/model-one", providerID: "labrouter" }, content: [], tokens: { input: 1 }, cost: 0.125 }],
+      ["assistant", { time: { created: 4, completed: 5 }, model: { id: "lab/model-one", providerID: "labrouter" }, content: [], tokens: { input: 1 }, cost: 0.25 }],
+    ];
+    for (const [i, [type, data]] of rows.entries()) {
+      db.run("insert into session_message values (?, ?, ?, ?, ?, ?, ?)", [`m${String(i)}`, SID, type, i + 1, 1000 + i, 1000 + i, JSON.stringify(data)]);
+    }
+    db.close();
+    const probe = await opencodeJournal(base, join(base, "models.json")).cacheProbe?.({ kind: "id", value: SID });
+    await rm(base, { recursive: true, force: true });
+    expect(probe?.costUsd).toBeCloseTo(0.375, 9);
   });
 });

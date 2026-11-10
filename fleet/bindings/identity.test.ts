@@ -26,10 +26,10 @@ test("host and multiplexer session qualify terminal identities", () => {
 
 test("association operations are idempotent, namespaced and many-to-many", () => {
   const tag = { terminal: ref, kind: "tag", resource: "one" };
-  const task = { terminal: ref, kind: "todoist", resource: "one" };
+  const task = { terminal: ref, kind: "example-task", resource: "one" };
   const both = attachRelation(attachRelation([], tag), task);
   expect(attachRelation(both, task)).toBe(both);
-  expect(relationsFor(both, ref, "todoist")).toEqual([task]);
+  expect(relationsFor(both, ref, "example-task")).toEqual([task]);
   expect(detachRelation(both, tag)).toEqual([task]);
 });
 

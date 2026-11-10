@@ -13,6 +13,7 @@ import {
   incompatibleBackoffMs,
   INCOMPATIBLE_BACKOFF_MS,
   MAX_CONTACT_RESETS,
+  STALE_DIAL_LOG_REPEAT_MS,
   CrewLead,
   type PeerMemory,
 } from "./lead.ts";
@@ -88,6 +89,8 @@ function lead(
     ) => Promise<PeerOutcome<{ readonly version: string | null; readonly mux?: MuxConfig | null; readonly surfaceVersion?: number }>>;
     turns?: UpdateTurns;
     proxy?: ForwardTransport;
+    selfMux?: () => string | null;
+    selfHost?: () => string | null;
   } = {},
 ) {
   const roster = [...members];
@@ -109,6 +112,8 @@ function lead(
     proxy: opts.proxy ?? neverProxy,
     hello: opts.hello,
     self: { id: "desk", name: "the herd" },
+    selfMux: opts.selfMux,
+    selfHost: opts.selfHost,
     maxUploadBytes: DEFAULT_MAX_UPLOAD_BYTES,
     now: () => clock,
     follow:
@@ -199,6 +204,8 @@ describe("CrewLead — a peer's sessions never vanish (§10.2)", () => {
 
     h.advance(30_000);
     await h.lead.sweep();
+    // Two misses in a row: the first is held (UNREACHABLE_AFTER_SWEEPS), the second is the verdict.
+    await h.lead.sweep();
     const c = h.lead.contributions()[0]!;
     expect(c.state.health).toBe("unreachable");
     // The registry kept the timestamp of the LAST GOOD call — never cleared by a failure.
@@ -228,6 +235,37 @@ describe("CrewLead — a peer's sessions never vanish (§10.2)", () => {
     expect(h.lead.merge(localBody(), NARROW_PLAN).servers).toEqual([
       { id: "desk", name: "the herd", isLead: true, reachable: true, protocol: "ok", lastSeenAt: NOW },
     ]);
+  });
+});
+
+describe("CrewLead, the host name on the merged servers rows (M77 spec 01)", () => {
+  test("the lead's row states its own host, read on every merge; a member's row states the one it reported", async () => {
+    let own: string | null = "bluefin";
+    const h = lead([member({ memberId: "laptop" })], () => ok(body), { selfHost: () => own });
+    await h.lead.sweep();
+    h.registry.recordStatus("laptop", { mux: "herdr-core", panes: 2, host: "minibuch" });
+    const rows = h.lead.merge(localBody(), NARROW_PLAN).servers!;
+    expect(rows.find((r) => r.id === "desk")!.host).toBe("bluefin");
+    expect(rows.find((r) => r.id === "laptop")!.host).toBe("minibuch");
+    own = null;
+    expect("host" in h.lead.merge(localBody(), NARROW_PLAN).servers![0]!).toBe(false);
+    // An answer that carries no host clears the banked one: a name true a sweep ago is not kept.
+    h.registry.recordStatus("laptop", { mux: "herdr-core", panes: 2, host: null });
+    expect("host" in h.lead.merge(localBody(), NARROW_PLAN).servers!.find((r) => r.id === "laptop")!).toBe(false);
+  });
+});
+
+describe("CrewLead — the multiplexer on the merged servers rows (M76)", () => {
+  test("the lead's row states its own, read on every merge; a member's row states the one it reported", async () => {
+    let own: string | null = "herdr";
+    const h = lead([member({ memberId: "laptop" })], () => ok(body), { selfMux: () => own });
+    await h.lead.sweep();
+    h.registry.recordStatus("laptop", { mux: "herdr-core", panes: 2 });
+    const rows = h.lead.merge(localBody(), NARROW_PLAN).servers!;
+    expect(rows.find((r) => r.id === "desk")!.mux).toBe("herdr");
+    expect(rows.find((r) => r.id === "laptop")!.mux).toBe("herdr-core");
+    own = null;
+    expect("mux" in h.lead.merge(localBody(), NARROW_PLAN).servers![0]!).toBe(false);
   });
 });
 
@@ -508,6 +546,7 @@ describe("a landed forward refreshes the receipt (§10.2)", () => {
     );
     await h.lead.sweep();
     sweepOk = false;
+    await h.lead.sweep();
     await h.lead.sweep();
     expect(h.health()).toBe("unreachable");
 
@@ -954,6 +993,105 @@ describe("CrewLead — a pairing collision is REPORTED every sweep, never swallo
   });
 });
 
+// ── The launcher copy to the deputy (ADR 0127 point 5, §18.14) ───────────────
+
+describe("CrewLead — the crew's launcher rows reach the deputy as a copy", () => {
+  const ROWS = [{ command: "make test", label: "Tests", kind: "command" as const, noPrompts: false }];
+
+  /** A lead whose deputy answers its snapshot with `launchersDigest`, or without one. */
+  function copying(opts: { reported?: string; deputy?: string | null; answer?: () => "applied" | "no_route" | "failed"; digest?: () => string }) {
+    const pushes: unknown[] = [];
+    const members = [member({ memberId: "laptop" }), member({ memberId: "nas" })];
+    const deputyState = { reachable: true, digest: opts.reported };
+    const l = new CrewLead({
+      log: () => {},
+      registry: new CrewRegistry({ sessions: { get: () => undefined }, self: "desk", members: () => members }),
+      snapshot: async () => {
+        if (!deputyState.reachable) return down;
+        return ok(deputyState.digest === undefined ? body : { ...body, launchersDigest: deputyState.digest });
+      },
+      proxy: neverProxy,
+      self: { id: "desk", name: "the herd" },
+      maxUploadBytes: DEFAULT_MAX_UPLOAD_BYTES,
+      now: () => NOW,
+      launchersCopy: {
+        deputy: () => (opts.deputy === undefined ? "laptop" : opts.deputy),
+        current: async () => ({ rows: ROWS, digest: opts.digest?.() ?? "d1" }),
+        push: async (link, rows) => {
+          pushes.push([link.memberId, rows]);
+          return opts.answer?.() ?? "applied";
+        },
+      },
+    });
+    const sweep = async () => {
+      await l.sweep();
+      await Bun.sleep(5);
+    };
+    return {
+      sweep,
+      pushes,
+      drop: () => void (deputyState.reachable = false),
+      restore: () => void (deputyState.reachable = true),
+      report: (digest: string) => void (deputyState.digest = digest),
+    };
+  }
+
+  test("a deputy holding no copy is sent the rows, and only the deputy", async () => {
+    const h = copying({});
+    await h.sweep();
+    expect(h.pushes).toEqual([["laptop", ROWS]]);
+  });
+
+  test("a deputy reporting the same digest costs no send, on this sweep or any other", async () => {
+    const h = copying({ reported: "d1" });
+    await h.sweep();
+    await h.sweep();
+    expect(h.pushes).toEqual([]);
+  });
+
+  test("a change on the lead is sent again: the deputy's report no longer matches", async () => {
+    let digest = "d1";
+    const h = copying({ reported: "d1", digest: () => digest });
+    await h.sweep();
+    expect(h.pushes).toEqual([]);
+    digest = "d2";
+    await h.sweep();
+    expect(h.pushes).toHaveLength(1);
+    h.report("d2");
+    await h.sweep();
+    expect(h.pushes).toHaveLength(1);
+  });
+
+  test("a crew with no deputy sends to nobody", async () => {
+    const h = copying({ deputy: null });
+    await h.sweep();
+    expect(h.pushes).toEqual([]);
+  });
+
+  test("an OLD deputy's 404 stops the sends until it reconnects", async () => {
+    const h = copying({ answer: () => "no_route" });
+    await h.sweep();
+    await h.sweep();
+    await h.sweep();
+    // One send, then silence: the old build reports nothing, and asking every sweep would be a dial a
+    // sweep for a route it does not have.
+    expect(h.pushes).toHaveLength(1);
+    h.drop();
+    await h.sweep();
+    h.restore();
+    await h.sweep();
+    // The next connect asks once more, in case the deputy came back on a build that has the route.
+    expect(h.pushes).toHaveLength(2);
+  });
+
+  test("a send that fails for any other reason is offered again on the next sweep", async () => {
+    const h = copying({ answer: () => "failed" });
+    await h.sweep();
+    await h.sweep();
+    expect(h.pushes).toHaveLength(2);
+  });
+});
+
 // ── §19 — the member's own update preflight, banked by the sweep ─────────────
 
 describe("CrewLead — each member's update preflight (§19)", () => {
@@ -1186,10 +1324,39 @@ describe("CrewLead — the journal names a verdict once per transition", () => {
     expect(h.journal).toEqual([]);
     answer = false;
     await h.lead.sweep();
+    await h.lead.sweep();
     answer = true;
     await h.lead.sweep();
     await h.lead.sweep();
     expect(h.journal).toEqual(["[crew] laptop: unreachable (timed out)", "[crew] laptop: reachable again"]);
+  });
+
+  test("a member that flaps one sweep at a time writes nothing — each miss is held", async () => {
+    // The 2026-10-29 journal: under host load one snapshot in many missed its budget, and every miss
+    // wrote an unreachable / reachable-again pair. A held miss is not a transition, so neither is
+    // the answer after it.
+    let answer = true;
+    const h = lead([member({ memberId: "laptop" })], () => (answer ? ok(body) : down));
+    await h.lead.sweep();
+    for (let i = 0; i < 3; i += 1) {
+      answer = false;
+      await h.lead.sweep();
+      expect(h.registry.state("laptop").health).toBe("reachable");
+      answer = true;
+      await h.lead.sweep();
+    }
+    expect(h.journal).toEqual([]);
+  });
+
+  test("two misses in a row write the verdict once", async () => {
+    let answer = true;
+    const h = lead([member({ memberId: "laptop" })], () => (answer ? ok(body) : down));
+    await h.lead.sweep();
+    answer = false;
+    await h.lead.sweep();
+    expect(h.journal).toEqual([]);
+    await h.lead.sweep();
+    expect(h.journal).toEqual(["[crew] laptop: unreachable (timed out)"]);
   });
 });
 
@@ -1459,6 +1626,40 @@ describe("a reply from an older dial is dropped, never merged (M22/05)", () => {
     await Bun.sleep(5);
     // Sweep 1 claimed dial 1, its probe claimed 2, sweep 2 claimed 3. The reply carries 2.
     expect(h.journal).toContain("[crew] laptop: dropped a stale hello reply, dial 2 of 3");
+  });
+
+  test(`the drop's line is written once per member per ${STALE_DIAL_LOG_REPEAT_MS / 1000} s, and every drop still happens`, async () => {
+    // The 2026-10-29 journal again: the patient hello overtaken by the next sweep is routine under
+    // load, and fourteen lines an hour said one thing.
+    const lands: ((v: PeerOutcome<{ version: string | null }>) => void)[] = [];
+    let miss = true;
+    const h = lead([member({ memberId: "laptop" })], () => (miss ? budgetMissed : ok(body)), {
+      hello: () =>
+        new Promise((resolve) => {
+          lands.push(resolve);
+        }),
+    });
+    await h.lead.sweep();
+    const cycle = async () => {
+      miss = true;
+      await h.lead.sweep();
+      await Bun.sleep(1);
+      miss = false;
+      await h.lead.sweep();
+      for (const land of lands.splice(0)) land(helloDown);
+      await Bun.sleep(1);
+      // Dropped every time: the newer answer stands, whatever the journal says.
+      expect(h.registry.state("laptop").reason).toBeNull();
+    };
+    const dropped = () => h.journal.filter((l) => l.includes("dropped a stale")).length;
+    await cycle();
+    expect(dropped()).toBe(1);
+    h.advance(1500);
+    await cycle();
+    expect(dropped()).toBe(1);
+    h.advance(STALE_DIAL_LOG_REPEAT_MS);
+    await cycle();
+    expect(dropped()).toBe(2);
   });
 
   test("nothing about the dropped reply reaches the merge", async () => {

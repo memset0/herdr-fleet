@@ -115,6 +115,20 @@ export interface DisplayPrefs {
    * the setting and the literal prefs in the component tests stay valid. Per device, in this one key.
    */
   sentSuggestions?: boolean;
+  /**
+   * How the pane screen moves between panes and spaces by gesture (M70 spec 03, ADR 0121): `twoFingers`
+   * (the default: hold one finger on the reading area, swipe with a second), `joystick` (hold the
+   * handle above the belt, then steer) or `off`. Optional in the TYPE only, for the same reason as
+   * {@link hand}: every read goes through {@link paneNavOf}. Read by the pane when it mounts
+   * (components/agent-chat.tsx), so a change shows the next time a pane opens. Per device.
+   */
+  paneNav?: PaneNav;
+  /**
+   * Whether a pane offers a problem report after three failed sends in a row (ADR 0123). On by default,
+   * because the offer collects nothing and sends nothing. Optional in the TYPE only, for the same reason
+   * as {@link hand}: every read goes through {@link reportOfferOf}. Per device.
+   */
+  reportOffer?: boolean;
 }
 
 /** The two hands the pane screen can be laid out for. */
@@ -125,6 +139,26 @@ export const HAND_DEFAULT: Hand = "right";
 /** Narrow a string of unknown provenance (a stored pref, a segmented value) to a Hand. */
 export function isHand(value: string | undefined): value is Hand {
   return HANDS.some((hand) => hand === value);
+}
+
+/** The three ways the pane screen can take a navigation gesture (ADR 0121). */
+export const PANE_NAVS = ["twoFingers", "joystick", "off"] as const;
+export type PaneNav = (typeof PANE_NAVS)[number];
+export const PANE_NAV_DEFAULT: PaneNav = "twoFingers";
+
+/** Narrow a string of unknown provenance to a PaneNav. */
+export function isPaneNav(value: string | undefined): value is PaneNav {
+  return PANE_NAVS.some((nav) => nav === value);
+}
+
+/** The pane navigation of a prefs value, with the default where a literal left it out. */
+export function paneNavOf(prefs: DisplayPrefs): PaneNav {
+  return prefs.paneNav ?? PANE_NAV_DEFAULT;
+}
+
+/** Whether the report offer is on, with the default (on) where a literal left it out. */
+export function reportOfferOf(prefs: DisplayPrefs): boolean {
+  return prefs.reportOffer ?? true;
 }
 
 /** Whether the suggestion strip is on, with the default (on) where a literal left it out. */
@@ -278,6 +312,10 @@ function readHand(value: string | undefined): Hand | undefined {
   return isHand(value) ? value : undefined;
 }
 
+function readPaneNav(value: string | undefined): PaneNav | undefined {
+  return isPaneNav(value) ? value : undefined;
+}
+
 function readKeepChat(value: string | undefined): KeepChat {
   return isKeepChat(value) ? value : KEEP_CHAT_DEFAULT;
 }
@@ -395,6 +433,10 @@ function loadPrefs(): DisplayPrefs {
       hand: readHand(asJsonString(p.hand)),
       // Absent until the operator chooses, and read as on through {@link sentSuggestionsOf}.
       sentSuggestions: asJsonBoolean(p.sentSuggestions),
+      // Absent until the operator chooses, and read as Two fingers through {@link paneNavOf}.
+      paneNav: readPaneNav(asJsonString(p.paneNav)),
+      // Absent until the operator chooses, and read as on through {@link reportOfferOf}.
+      reportOffer: asJsonBoolean(p.reportOffer),
     };
   } catch {
     return DEFAULTS;
@@ -439,6 +481,10 @@ export interface UseDisplayPrefsReturn {
   setHand: (hand: Hand) => void;
   /** Whether a shell pane offers lines from Sent above its box. */
   setSentSuggestions: (on: boolean) => void;
+  /** How the pane screen takes a navigation gesture. */
+  setPaneNav: (paneNav: PaneNav) => void;
+  /** Whether a pane offers a problem report after failed sends. */
+  setReportOffer: (on: boolean) => void;
 }
 
 export function useDisplayPrefs(): UseDisplayPrefsReturn {
@@ -551,6 +597,22 @@ export function useDisplayPrefs(): UseDisplayPrefsReturn {
     });
   }, []);
 
+  const setPaneNav = useCallback((paneNav: PaneNav) => {
+    setPrefs((p) => {
+      const next: DisplayPrefs = { ...p, paneNav };
+      savePrefs(next);
+      return next;
+    });
+  }, []);
+
+  const setReportOffer = useCallback((reportOffer: boolean) => {
+    setPrefs((p) => {
+      const next: DisplayPrefs = { ...p, reportOffer };
+      savePrefs(next);
+      return next;
+    });
+  }, []);
+
   return {
     prefs,
     setWrap,
@@ -566,5 +628,7 @@ export function useDisplayPrefs(): UseDisplayPrefsReturn {
     setKeepChat,
     setHand,
     setSentSuggestions,
+    setPaneNav,
+    setReportOffer,
   };
 }

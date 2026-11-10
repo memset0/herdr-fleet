@@ -33,33 +33,17 @@
 // harness's own name are the agent's words or the machine's, and they go through as they arrived.
 
 import { createContext, memo, useContext, useEffect, useMemo, useState, type ReactNode } from "react";
-import {
-  ArrowRightLeft,
-  Bot,
-  Check,
-  ChevronRight,
-  CircleQuestionMark,
-  Clock,
-  FilePlusCorner,
-  FileText,
-  Globe,
-  Pencil,
-  Search,
-  SquareTerminal,
-  Trash2,
-  User,
-  Wrench,
-  type LucideIcon,
-} from "lucide-react";
 
 import { DiffView, TokenLine, useSyntaxTokens } from "@/components/changes-view";
+import { JournalImage } from "@/components/journal-image";
 import { isPlainClick, useFileLinks } from "@/components/file-links";
 import { MarkdownText } from "@/components/markdown-text";
 import { MIRROR_INVERT, MIRROR_SPACE } from "@/components/mirror-space";
 import { StatusDot } from "@/components/status-badge";
 import { WalkyCard } from "@/components/walky-card";
 import { WalkyIds } from "@/components/walky-id-chip";
-import { useWalkyLog, useWalkyReads, useWalkySelf } from "@/components/walky-log";
+import { useWalkyLive, useWalkyLog, useWalkyReads, useWalkySelf } from "@/components/walky-log";
+import { sentTargetWords } from "@/components/walky-name-chip";
 import { Badge } from "@/components/ui/badge";
 import { Card } from "@/components/ui/card";
 import { Collapse } from "@/components/ui/collapse";
@@ -72,6 +56,7 @@ import { findFilePaths } from "@/lib/file-paths";
 import type { PendingState } from "@/lib/durable-pending";
 import { clockTime } from "@/lib/format";
 import { t, tn, type PluralKey } from "@/lib/i18n";
+import { useScope } from "@/lib/session";
 import {
   directionOf,
   parseWalkyCommand,
@@ -79,7 +64,6 @@ import {
   shellLineOf,
   stateWord,
   standingOf,
-  targetWord,
   type EnvelopeHeader,
   type WalkyCommand,
   type WalkyRow,
@@ -87,6 +71,8 @@ import {
 import type { Hunk, ToolQuestion } from "@/lib/types";
 import type { DiffRow } from "@/lib/unified-diff";
 import { cn } from "@/lib/utils";
+import { Icon } from "@/components/icons/icon";
+import type { IconKey } from "@/components/icons/keys";
 
 /**
  * How a harness spells its own name. Its own word, so it never goes through a dictionary.
@@ -105,6 +91,8 @@ const HARNESS_LABELS = new Map([
   ["grok", "Grok"],
   ["hermes", "Hermes Agent"],
   ["muse", "Muse"],
+  ["kiro", "Kiro"],
+  ["dsh-tui", "dsh-TUI"],
 ]);
 
 /** The harness's own name for itself, or the key back when nobody has taught us one. */
@@ -177,6 +165,8 @@ export const SubagentSheetCtx = createContext<SubagentSheetHandle | null>(null);
  */
 export function standsAlone(item: ChatItem): boolean {
   if (item.kind !== "tool") return false;
+  // A picture the call returned is the reason to look at it, so it never folds out of sight.
+  if (item.image !== undefined) return true;
   if (item.tool.kind === "task" || item.tool.kind === "question") return true;
   const line = shellLineOf(item.tool);
   const walky = line === null ? null : parseWalkyCommand(line);
@@ -264,7 +254,7 @@ export const ToolGroup = memo(
       [count("read"), "chat.run.reads"],
       [count("search") + count("fetch"), "chat.run.searches"],
       [count("task"), "chat.run.agents"],
-      [count("other") + count("question") + count("delete") + count("move"), "chat.run.others"],
+      [count("other") + count("plan") + count("question") + count("delete") + count("move"), "chat.run.others"],
     ];
     const summary = parts
       .filter(([n]) => n > 0)
@@ -288,7 +278,7 @@ export const ToolGroup = memo(
               data-chat-inset className={cn(FOLD_ROW, "justify-start rounded-md border border-border")}
               onClick={() => setOpen(false)}
             >
-              <ChevronRight className="size-3.5 shrink-0 rotate-90" />
+              <Icon name="disclosure" className="size-3.5 shrink-0 rotate-90" />
               <span className="min-w-0 truncate">{summary}</span>
             </button>
           ) : (
@@ -299,7 +289,7 @@ export const ToolGroup = memo(
                 data-chat-inset className={cn(FOLD_ROW, "justify-start rounded-md border border-border")}
                 onClick={() => setOpen(true)}
               >
-                <ChevronRight className="size-3.5 shrink-0" />
+                <Icon name="disclosure" className="size-3.5 shrink-0" />
                 {/* `tabular-nums` on the whole run rather than on one span: the sentence is one
                     message now, and every number in it (the count and the summary's own) steps. */}
                 <span className="min-w-0 truncate tabular-nums">{tn("chat.run.earlier", start, { summary })}</span>
@@ -322,7 +312,7 @@ export const ToolGroup = memo(
         className="flex min-h-11 w-full min-w-0 flex-col justify-center gap-0.5 rounded-md border border-border px-3 py-1.5 text-left transition-colors active:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
       >
         <span className="flex min-w-0 items-center gap-1.5 text-xs font-medium text-muted-foreground">
-          <ChevronRight className="size-3.5 shrink-0" />
+          <Icon name="disclosure" className="size-3.5 shrink-0" />
           <span className="min-w-0 truncate">{summary}</span>
           {failed > 0 && <BadBadge>{tn("chat.run.failed", failed)}</BadBadge>}
         </span>
@@ -376,6 +366,9 @@ export function stepLine(call: ChatToolCall): StepLine {
     // A sub-agent's name and a tool's own name are the harness's vocabulary, never a dictionary's.
     case "task":
       return { verb: call.agent === undefined ? `${t("chat.card.agentPlain")}:` : `${call.agent}:`, subject: call.summary, mono: false };
+    // The plan's label is Collie's word; the count is two numbers and needs no translation.
+    case "plan":
+      return { verb: t("chat.card.plan"), subject: planCount(call), mono: false };
     case "question":
     case "other":
       return { verb: `${call.name}:`, subject: call.summary.split("\n")[0] ?? "", mono: false };
@@ -399,7 +392,7 @@ export const ItemView = memo(function ItemView({ item }: { item: ChatItem }) {
       return <Growing partial={item.partial === true}><MarkdownText text={item.text} stretches /></Growing>;
     case "thinking":
       return (
-        <Disclosure label={t("chat.card.thinking")} icon={ChevronRight}>
+        <Disclosure label={t("chat.card.thinking")} icon="disclosure">
           {() => (
             <Growing partial={item.partial === true}>
               <MarkdownText text={item.text} className="px-5 pb-1 italic text-muted-foreground" />
@@ -411,10 +404,27 @@ export const ItemView = memo(function ItemView({ item }: { item: ChatItem }) {
       return <Notice item={item} />;
     case "compacted":
       return <Compacted item={item} />;
+    case "image":
+      return <ChatImage url={item.url} alt={t("transcript.attachmentAlt")} />;
     case "tool":
-      return <ToolCard tool={item.tool} status={item.status} waiting={waiting} />;
+      if (item.image === undefined) return <ToolCard tool={item.tool} status={item.status} waiting={waiting} callId={item.id} />;
+      return (
+        <div className="flex flex-col gap-1.5">
+          <ToolCard tool={item.tool} status={item.status} waiting={waiting} callId={item.id} />
+          <ChatImage url={item.image} alt={t("transcript.toolImageAlt")} />
+        </div>
+      );
   }
 });
+
+function ChatImage({ url, alt }: { url: string; alt: string }) {
+  const scope = useScope();
+  return (
+    <div className="min-w-0">
+      <JournalImage ref_={url} alt={alt} scope={scope} />
+    </div>
+  );
+}
 
 /**
  * A text the program is still writing (WIRE.md 7.15): `data-partial` makes the stylesheet put a cursor at the end of its
@@ -449,7 +459,7 @@ function Notice({ item }: { item: Extract<ChatItem, { kind: "notice" }> }) {
     );
   }
   return (
-    <Disclosure label={t("transcript.systemLabel")} icon={ChevronRight}>
+    <Disclosure label={t("transcript.systemLabel")} icon="disclosure">
       {() => <MarkdownText text={item.text} className="px-5 pb-1 text-sm text-muted-foreground" />}
     </Disclosure>
   );
@@ -472,7 +482,7 @@ function Compacted({ item }: { item: Extract<ChatItem, { kind: "compacted" }> })
   }
   const text = item.text;
   return (
-    <Disclosure label={t("transcript.summaryLabel")} icon={ChevronRight}>
+    <Disclosure label={t("transcript.summaryLabel")} icon="disclosure">
       {() => <MarkdownText text={text} className="px-5 pb-1 text-sm text-muted-foreground" />}
     </Disclosure>
   );
@@ -506,7 +516,7 @@ function UserTurn({ text, ts, pending, notInLog = false }: { text: string; ts?: 
       )}
     >
       <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold label-caps text-status-working">
-        <User className="size-3.5" />
+        <Icon name="user-turn" className="size-3.5" />
         {/* The transcript's own word for the reader, so History and Chat never disagree. */}
         {t("transcript.youLabel")}
         {time && <span className="font-normal tabular-nums opacity-80">{time}</span>}
@@ -520,7 +530,7 @@ function UserTurn({ text, ts, pending, notInLog = false }: { text: string; ts?: 
         {/* The clock takes the slot the time takes once the program's line is here, so the swap moves nothing. */}
         {pending !== undefined && (
           <span className="flex items-center gap-1 font-normal normal-case tracking-normal opacity-80">
-            <Clock className="size-3" aria-hidden="true" />
+            <Icon name="queued" className="size-3" aria-hidden="true" />
             {pending === "sending" || pending === "sent" ? (
               <span className="sr-only">{t("durable.pending.sending")}</span>
             ) : (
@@ -581,18 +591,18 @@ function clockTimeOf(iso: string): string {
  */
 export function Disclosure({
   label,
-  icon: Icon,
+  icon,
   children,
 }: {
   label: ReactNode;
-  icon: LucideIcon;
+  icon: IconKey;
   children: () => ReactNode;
 }) {
   const [open, setOpen] = useState(false);
   return (
     <div className="flex flex-col">
-      <button type="button" aria-expanded={open} onClick={() => setOpen(!open)} data-chat-inset className={cn(FOLD_ROW, "justify-start px-0")}>
-        <Icon className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")} />
+      <button data-chat-inset type="button" aria-expanded={open} onClick={() => setOpen(!open)} className={cn(FOLD_ROW, "justify-start px-0")}>
+        <Icon name={icon} className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")} />
         {label}
       </button>
       {open && children()}
@@ -637,22 +647,28 @@ function StatusSlot({ status, exitCode }: { status: ChatToolStatus; exitCode?: n
   );
 }
 
+/** `done/total` for a plan's head and its folded line. */
+function planCount(call: Extract<ChatToolCall, { kind: "plan" }>): string {
+  return `${call.tasks.filter((x) => x.status === "done").length}/${call.tasks.length}`;
+}
+
 const KIND_ICON = {
-  edit: Pencil,
-  execute: SquareTerminal,
-  read: FileText,
-  search: Search,
-  fetch: Globe,
-  task: Bot,
-  other: Wrench,
-  question: CircleQuestionMark,
-  delete: Trash2,
-  move: ArrowRightLeft,
-} satisfies Record<ChatToolCall["kind"], LucideIcon>;
+  edit: "tool-edit",
+  execute: "tool-execute",
+  read: "tool-read",
+  search: "tool-search",
+  fetch: "tool-fetch",
+  task: "tool-task",
+  other: "tool-other",
+  plan: "tool-plan",
+  question: "tool-question",
+  delete: "tool-delete",
+  move: "tool-move",
+} satisfies Record<ChatToolCall["kind"], IconKey>;
 
 /** A card's head row: glyph, the kind as a chrome word, the subject, the state slot. */
 function ToolHead({
-  icon: Icon,
+  icon,
   label,
   badge,
   children,
@@ -660,7 +676,7 @@ function ToolHead({
   status,
   exitCode,
 }: {
-  icon: LucideIcon;
+  icon: IconKey;
   label: string;
   /** A small word after the tool's name (the walky talky badge). */
   badge?: ReactNode;
@@ -671,7 +687,7 @@ function ToolHead({
 }) {
   return (
     <div data-chat-inset className="flex min-h-9 min-w-0 items-center gap-2 px-3 py-1.5 text-xs">
-      <Icon className="size-3.5 shrink-0 text-muted-foreground" />
+      <Icon name={icon} className="size-3.5 shrink-0 text-muted-foreground" />
       <span className="shrink-0 font-medium">{label}</span>
       {badge}
       <span className="flex min-w-0 flex-1 items-center">{children}</span>
@@ -788,7 +804,7 @@ function WaitingArea({ waiting, line }: { waiting?: CardWaiting; line?: boolean 
               line ? "px-2 pb-1.5" : "border-t border-border px-3 py-2.5",
             )}
           >
-            <SquareTerminal className="mt-px size-3.5 shrink-0" />
+            <Icon name="tool-execute" className="mt-px size-3.5 shrink-0" />
             <span className="min-w-0">{note}</span>
           </p>
         )}
@@ -800,6 +816,8 @@ function WaitingArea({ waiting, line }: { waiting?: CardWaiting; line?: boolean 
 interface ToolCardProps {
   tool: ChatToolCall;
   status: ChatToolStatus;
+  /** The chat item's id. It is the card's identity: the subagent sheet keys its state by it. */
+  callId: string;
   waiting?: CardWaiting;
   preview?: boolean;
 }
@@ -842,6 +860,7 @@ function WalkyToolCard({ command, ...props }: ToolCardProps & { command: WalkyCo
   useLocale();
   const log = useWalkyLog();
   const self = useWalkySelf();
+  const live = useWalkyLive();
   const output = "output" in props.tool ? props.tool.output : undefined;
   let receipt: string | null = null;
   let inbox: WalkyRow | null = null;
@@ -851,7 +870,7 @@ function WalkyToolCard({ command, ...props }: ToolCardProps & { command: WalkyCo
     // A line "Message to <target>" is about a message this pane sent: a row that reached this pane is not one.
     if (standing?.standing === "held" && directionOf(standing.row, self) === "sent") {
       receipt = t("walky.composer.outcome", {
-        label: targetWord(standing.row.receipt.target),
+        label: sentTargetWords(standing.row, live, self),
         state: stateWord(standing.row.receipt),
       });
     }
@@ -880,6 +899,7 @@ export function ToolCard(props: ToolCardProps) {
 function ToolCardBody({
   tool,
   status,
+  callId,
   waiting,
   preview,
   walky,
@@ -889,7 +909,8 @@ function ToolCardBody({
   // `data-waiting` lets a host find the card of the thing it is waiting on (scroll to it, see if it
   // is on screen).
   const anchor = waiting?.id;
-  const subagentCardKey = anchor ?? (tool.kind === "task" ? `${tool.agent ?? ""}:${tool.summary}` : "");
+  // Two calls can share an agent and a summary, so the sheet keys by the item id, never by that text.
+  const subagentCardKey = callId;
   const taskAgent = tool.kind === "task" ? tool.agent : undefined;
   const taskSummary = tool.kind === "task" ? tool.summary : "";
   const taskAgentId = tool.kind === "task" ? tool.agentId : undefined;
@@ -916,7 +937,7 @@ function ToolCardBody({
       return (
         <Card data-waiting={anchor} className={cn("gap-0 py-0", held)}>
           <ToolHead
-            icon={tool.created ? FilePlusCorner : Pencil}
+            icon={tool.created ? "tool-create-file" : "tool-edit"}
             label={t(tool.created ? "chat.card.create" : "chat.card.edit")}
             status={status}
             trailing={
@@ -940,12 +961,17 @@ function ToolCardBody({
       return (
         <Card data-waiting={anchor} className={cn("gap-0 py-0", held)}>
           <ToolHead
-            icon={SquareTerminal}
+            icon="tool-execute"
             label={t("chat.card.run")}
             badge={walky && <WalkyBadge />}
             status={status}
             exitCode={tool.exitCode}
           >
+            {tool.background && (
+              <Badge variant="outline" className="mr-1.5 shrink-0 text-muted-foreground">
+                {t("chat.card.background")}
+              </Badge>
+            )}
             {tool.description && (
               <span className="font-content min-w-0 truncate text-muted-foreground">{tool.description}</span>
             )}
@@ -957,7 +983,7 @@ function ToolCardBody({
       );
     case "read":
       return (
-        <LineTool anchor={anchor} icon={FileText} label={t("chat.card.read")} status={status} waiting={waiting}>
+        <LineTool anchor={anchor} icon="tool-read" label={t("chat.card.read")} status={status} waiting={waiting}>
           <ToolPath path={tool.path} line={tool.range?.[0]} />
           {tool.range && (
             <span className="shrink-0 pl-1.5 text-muted-foreground tabular-nums">
@@ -966,6 +992,8 @@ function ToolCardBody({
           )}
         </LineTool>
       );
+    case "plan":
+      return <PlanTool call={tool} status={status} anchor={anchor} held={held} />;
     case "question":
       return <QuestionTool call={tool} status={status} waiting={waiting} anchor={anchor} held={held} />;
     case "search":
@@ -1011,7 +1039,14 @@ function ToolCardBody({
             {shortPath(tool.path)} → {shortPath(tool.to ?? "")}
           </span>
         ) : !("summary" in tool) || tool.summary.includes("\n") ? null : (
-          <span className="font-content min-w-0 truncate text-muted-foreground">{tool.summary}</span>
+          <span
+            className={cn(
+              "font-content min-w-0 truncate text-muted-foreground",
+              tool.kind === "other" && tool.quiet && "opacity-60",
+            )}
+          >
+            {tool.summary}
+          </span>
         );
       const body = (tool.kind === "task" || tool.kind === "other") && tool.summary.includes("\n") ? tool.summary : null;
       const onTap =
@@ -1037,6 +1072,7 @@ function ToolCardBody({
           output={output}
           body={body}
           waiting={waiting}
+          quiet={tool.kind === "other" && tool.quiet === true}
           onTap={onTap}
           badge={walky && <WalkyBadge />}
           note={walky?.receipt}
@@ -1046,6 +1082,67 @@ function ToolCardBody({
       );
     }
   }
+}
+
+const PLAN_GLYPH = {
+  pending: { icon: "plan-pending", tone: "text-muted-foreground", key: "chat.card.plan.pending" },
+  in_progress: { icon: "plan-in-progress", tone: "text-status-working", key: "chat.card.plan.inProgress" },
+  done: { icon: "plan-done", tone: "text-status-done", key: "chat.card.plan.done" },
+  blocked: { icon: "plan-blocked", tone: "text-status-blocked", key: "chat.card.plan.blocked" },
+  dropped: { icon: "plan-dropped", tone: "text-muted-foreground", key: "chat.card.plan.dropped" },
+} as const;
+
+/**
+ * A task list: done/total in the head, one row per task. Every row reserves its glyph cell, so a
+ * task moving from pending to done repaints the glyph and nothing moves (DESIGN.md §2); a dropped
+ * task is struck through and muted. Titles are the agent's words, so they wear the content face.
+ */
+function PlanTool({
+  call,
+  status,
+  anchor,
+  held,
+}: {
+  call: Extract<ChatToolCall, { kind: "plan" }>;
+  status: ChatToolStatus;
+  anchor?: string;
+  held: string | false;
+}) {
+  useLocale();
+  return (
+    <Card data-waiting={anchor} className={cn("gap-0 overflow-hidden py-0", held)}>
+      <ToolHead
+        icon="tool-plan"
+        label={t("chat.card.plan")}
+        status={status}
+        trailing={<span className="shrink-0 font-mono text-xs tabular-nums text-muted-foreground">{planCount(call)}</span>}
+      />
+      {call.tasks.length === 0 ? (
+        <p className="border-t border-border px-3 py-2.5 text-xs text-muted-foreground">{t("chat.card.plan.empty")}</p>
+      ) : (
+        <ul data-slot="list-group" className="border-t border-border">
+          {call.tasks.map((task, i) => {
+            const glyph = PLAN_GLYPH[task.status];
+            return (
+              <li key={i} data-status={task.status} className="flex items-start gap-2 px-3 py-1.5">
+                <span className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center">
+                  <Icon name={glyph.icon} role="img" aria-label={t(glyph.key)} className={cn("size-3.5", glyph.tone)} />
+                </span>
+                <span
+                  className={cn(
+                    "font-content min-w-0 whitespace-pre-wrap break-words text-sm",
+                    task.status === "dropped" && "text-muted-foreground line-through",
+                  )}
+                >
+                  {task.title}
+                </span>
+              </li>
+            );
+          })}
+        </ul>
+      )}
+    </Card>
+  );
 }
 
 /**
@@ -1082,7 +1179,7 @@ function QuestionTool({
   const asking = status === "running" && waiting?.body === undefined;
   return (
     <Card data-waiting={anchor} className={cn("gap-0 overflow-hidden py-0", held)}>
-      <ToolHead icon={CircleQuestionMark} label={header || t("chat.tool.question")} status={status} />
+      <ToolHead icon="tool-question" label={header || t("chat.tool.question")} status={status} />
       {call.questions.map((q, i) => (
         <QuestionBlock
           key={i}
@@ -1163,7 +1260,7 @@ function QuestionRow({
   return (
     <li aria-current={picked || undefined} data-chat-inset className="flex items-start gap-2 px-3 py-1.5">
       <span aria-hidden className="mt-0.5 flex size-3.5 shrink-0 items-center justify-center">
-        {picked && <Check className="size-3.5 text-status-done" />}
+        {picked && <Icon name="selected" className="size-3.5 text-status-done" />}
       </span>
       <span className="flex min-w-0 flex-col">
         <span className={cn("font-content whitespace-pre-wrap break-words text-sm", muted && "text-muted-foreground")}>
@@ -1186,24 +1283,27 @@ function QuestionRow({
  */
 function LineTool({
   anchor,
-  icon: Icon,
+  icon,
   label,
   status,
   output,
   body,
   waiting,
+  quiet,
   onTap,
   badge,
   note,
   children,
 }: {
   anchor?: string;
-  icon: LucideIcon;
+  icon: IconKey;
   label: string;
   status: ChatToolStatus;
   output?: string;
   body?: string | null;
   waiting?: CardWaiting;
+  /** Bookkeeping (memory, phase): same row, lower contrast, so a run of them recedes. */
+  quiet?: boolean;
   onTap?: () => void;
   /** A small word after the label (the walky talky badge). */
   badge?: ReactNode;
@@ -1215,13 +1315,14 @@ function LineTool({
   const interactive = onTap !== undefined || output !== undefined;
   const row = (
     <>
-      <Icon className="size-3.5 shrink-0 text-muted-foreground" />
-      <span className="shrink-0 font-medium text-muted-foreground">{label}</span>
+      <Icon name={icon} className="size-3.5 shrink-0 text-muted-foreground" />
+      <span className={cn("shrink-0 font-medium text-muted-foreground", quiet && "opacity-60")}>{label}</span>
       {badge}
       <span className="flex min-w-0 flex-1 items-center">{children}</span>
       <StatusSlot status={status} />
       {interactive && (
-        <ChevronRight
+        <Icon
+          name="disclosure"
           className={cn(
             "size-3.5 shrink-0 text-muted-foreground transition-transform",
             onTap === undefined && open && "rotate-90",
@@ -1233,6 +1334,7 @@ function LineTool({
   return (
     <div
       data-waiting={anchor}
+      data-quiet={quiet || undefined}
       className={cn("rounded-md border border-transparent", waiting?.body !== undefined && "border-status-blocked bg-card")}
     >
       {interactive ? (
@@ -1302,7 +1404,7 @@ function CommandBlock({ command, output, preview }: { command: string; output?: 
             onClick={() => setOpen(!open)}
             data-chat-inset className={cn(FOLD_ROW, "flex-1 tabular-nums")}
           >
-            <ChevronRight className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")} />
+            <Icon name="disclosure" className={cn("size-3.5 shrink-0 transition-transform", open && "rotate-90")} />
             {open ? t("chat.card.output.hide") : tn("chat.card.output.show", lines.length)}
           </button>
           {open && lines.length > TAIL && (

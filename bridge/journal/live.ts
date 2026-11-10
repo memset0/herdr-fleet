@@ -40,6 +40,7 @@ import type { Cursor } from "./cursor.ts";
 import { NO_CURSOR } from "./cursor.ts";
 import type { RowReducer } from "./reduce.ts";
 import type { TranscriptStore } from "./store.ts";
+import { receiptQueue, type QueuedSendWire, type ReceiptQueued } from "./receipt-queue.ts";
 import type { AgentSessionRef, JournalAdapter, TranscriptEntry } from "./types.ts";
 import { LIVE_TURNS, MAX_PAGE_ROWS, pageStart } from "./turns.ts";
 import { redactText } from "../redact.ts";
@@ -80,6 +81,17 @@ export const TICK_FLOOR_MS = 250;
 
 /** How long a window survives with nobody asking about it. Then it is dropped whole. */
 export const WINDOW_IDLE_MS = 120_000;
+
+/**
+ * How much of the newest rows a window fingerprints, in characters: at least one row, then rows back
+ * to this many (#642).
+ *
+ * The print is what tells a log REWRITTEN in place at the same size from a log that was only touched.
+ * A rewrite worth showing (a compaction, a rewind, an edit) changes the newest rows, so the last few
+ * kilobytes catch it, and a bare mtime touch leaves them byte-identical. Hashes are kept, not the rows,
+ * so the print costs a few dozen numbers whatever a row weighs.
+ */
+export const TAIL_PRINT_CHARS = 4096;
 
 /**
  * How many sessions are held live at once. The oldest-asked goes first.
@@ -175,10 +187,21 @@ export interface ChatWindowBody {
    * this wire does not have. The 304 still works: the ETag is over these bytes, so a queue that
    * changed is a different body and a queue that did not is the same one.
    *
-   * ONE harness fills it. Claude Code and Muse record their queues in the log; the other five do not record one,
-   * and answer `[]` (`journal/reduce.ts` § `RowReducer.queued`).
+   * Claude Code and Muse record their queues in the log, and their reducers fill it. Every other
+   * harness records none (`journal/reduce.ts` § `RowReducer.queued`). This list is the JOURNAL's only:
+   * Collie's own queued sends ride in {@link queuedSends} and never here, because a phone one release
+   * behind draws this list with a Send now button that cannot work for them (ADR 0122).
    */
   queued: string[];
+  /**
+   * The pane's queued sends as Collie's receipts know them (ADR 0122), oldest first: each card's request
+   * id, where it stands (`queued` in the harness, `returned` to the input box by a Stop, `unconfirmed`
+   * when Collie cannot tell), and its text, masked like {@link queued}. A run of texts a Stop gave back
+   * together is one card. A card whose text {@link queued} lists is left out; a harness that records
+   * its queue in the log gets only `returned` cards. STATE, whole on every answer, like {@link queued}.
+   * ABSENT when there is none, and from a bridge one release behind.
+   */
+  queuedSends?: QueuedSendWire[];
   /**
    * The keys that deliver {@link queued} now, in the neutral spelling, when this session's harness
    * declares any (`JournalAdapter.sendQueuedNow`). ABSENT for every other harness, so their bodies are
@@ -273,6 +296,7 @@ export function redactChatBody(body: ChatBody): ChatBody {
   const upserts = body.upserts.map(redactEntry);
   if (body.page === "older") return { ...body, upserts };
   const masked: ChatWindowBody = { ...body, upserts, queued: body.queued.map(redactText) };
+  if (body.queuedSends !== undefined) masked.queuedSends = body.queuedSends.map((row) => ({ ...row, text: redactText(row.text) }));
   if (body.lastPrompt !== undefined) {
     masked.lastPrompt = { ...body.lastPrompt, text: redactText(body.lastPrompt.text) };
   }
@@ -400,6 +424,42 @@ interface LiveRow {
   entry: TranscriptEntry;
 }
 
+/** One source row as the tail print ({@link TAIL_PRINT_CHARS}) remembers it: its hash and its length. */
+interface RowPrint {
+  readonly hash: number | bigint;
+  readonly chars: number;
+}
+
+/**
+ * The print of the newest rows: `lines` from the end backwards, then `held` (the print of what came
+ * before them) until {@link TAIL_PRINT_CHARS} is reached. Oldest first. Walks only the tail, so a
+ * 2 MB reset read costs the hashing of its last few rows, not of all of them.
+ */
+function printTail(lines: readonly string[], held: readonly RowPrint[]): RowPrint[] {
+  const out: RowPrint[] = [];
+  let chars = 0;
+  for (let i = lines.length - 1; i >= 0 && (out.length === 0 || chars < TAIL_PRINT_CHARS); i--) {
+    const line = lines[i]!;
+    out.push({ hash: Bun.hash(line), chars: line.length });
+    chars += line.length;
+  }
+  for (let i = held.length - 1; i >= 0 && chars < TAIL_PRINT_CHARS; i--) {
+    out.push(held[i]!);
+    chars += held[i]!.chars;
+  }
+  return out.toReversed();
+}
+
+/** Whether `lines` end in exactly the rows `print` remembers. */
+function endsWithPrint(lines: readonly string[], print: readonly RowPrint[]): boolean {
+  if (lines.length < print.length) return false;
+  const offset = lines.length - print.length;
+  return print.every((row, i) => {
+    const line = lines[offset + i]!;
+    return line.length === row.chars && Bun.hash(line) === row.hash;
+  });
+}
+
 /** What a row costs. The length of its JSON: what it weighs on the wire, and near what it weighs here. */
 function weigh(entry: TranscriptEntry): number {
   return JSON.stringify(entry).length;
@@ -457,8 +517,15 @@ class LiveWindow {
   private ticked = false;
   private lastTickAt = 0;
   private lastSeen: { size: number; mtimeMs: number } | null = null;
+  /** The newest rows read, as hashes ({@link TAIL_PRINT_CHARS}). Reset with the generation's read. */
+  private print: RowPrint[] = [];
   /** When a reader last asked. The idle rule's whole input. */
   askedAt: number;
+  /**
+   * The ref values readers reached this window by, so {@link LiveWindows.held} can find it from a
+   * pane's ref without resolving a path. A pane names one or two (a pi path, then its id), so a handful.
+   */
+  readonly refs = new Set<string>();
   /** This window's session on the wire ({@link sessionTag}). Fixed: one window is one key. */
   readonly session: string;
 
@@ -500,12 +567,42 @@ class LiveWindow {
     ) {
       return;
     }
+    const before = this.lastSeen;
     this.lastSeen = seen;
     const read = await this.adapter.source.readSince(key, this.cursor);
     this.cursor = read.cursor;
     if (read.reset) this.rebuild(read.fromStart);
-    this.fold(read.lines);
+    this.take(read.lines, read.reset);
+    // The log moved, kept its size, and the read found nothing new: a resume at a cursor that already
+    // sits at the end cannot see a rewrite IN PLACE (#642), so ask whether the content changed.
+    const sameSize = seen !== null && before !== null && seen.size === before.size;
+    if (sameSize && !read.reset && read.lines.length === 0) await this.recheck(key);
+  }
+
+  /**
+   * A same-size log whose mtime moved: rebuild only if its newest rows really changed (#642).
+   *
+   * FULL RE-READ, not a byte-offset peek. The {@link Cursor} is opaque above the source
+   * (journal/cursor.ts), so this side cannot ask for "the 4 KB before the cursor", and two of the
+   * sources count rows rather than bytes anyway. So the check is one fresh read from {@link NO_CURSOR}
+   * (the same bounded tail a window opens with) and a comparison of its newest rows with the print of
+   * the rows this window read last. A bare mtime touch matches and changes nothing: no new generation,
+   * so no client refetches. A rewrite does not match, and that same read becomes the new generation,
+   * so the rewrite costs one extra read and never two.
+   */
+  private async recheck(key: string): Promise<void> {
+    const fresh = await this.adapter.source.readSince(key, NO_CURSOR);
+    if (fresh.cursor === this.cursor && endsWithPrint(fresh.lines, this.print)) return;
+    this.cursor = fresh.cursor;
+    this.rebuild(fresh.fromStart);
+    this.take(fresh.lines, true);
+  }
+
+  /** Fold one read's rows in, keep the window bounded, and move the tail print along with them. */
+  private take(lines: readonly string[], reset: boolean): void {
+    this.fold(lines);
     this.trim();
+    if (reset || lines.length > 0) this.print = printTail(lines, reset ? [] : this.print);
   }
 
   /**
@@ -610,7 +707,7 @@ class LiveWindow {
    * everything after each instead, held to `limit` rows at least and {@link MAX_PAGE_ROWS} at most
    * (`journal/turns.ts`). That is a first paint.
    */
-  body(after: ChatAfter | null, limit: number): ChatWindowBody {
+  body(after: ChatAfter | null, limit: number, receipts: readonly ReceiptQueued[] = []): ChatWindowBody {
     const rows =
       after !== null && after.gen === this.gen
         ? this.rows.filter((row) => row.rev > after.rev)
@@ -632,12 +729,31 @@ class LiveWindow {
     };
     // Added only when declared, so every other harness's body is byte-identical to before.
     if (this.adapter.sendQueuedNow !== undefined) body.sendQueuedNow = [...this.adapter.sendQueuedNow];
+    // Collie's own queued sends (ADR 0122), checked against every prompt the window holds, not the page.
+    if (receipts.length > 0) {
+      const cards = receiptQueue(receipts, this.rows.map((row) => row.entry), this.adapter.recordsQueue === true, body.queued);
+      if (cards.length > 0) body.queuedSends = cards;
+    }
     // Over every row the window holds, not the `limit` sent: the point is the prompt the first paint
     // left out. A window that opened mid-run holds none, and then the one looked up behind its front
     // stands in, until a prompt the window does hold replaces it.
     const prompt = newestPrompt(this.rows, (row) => row.entry) ?? this.behind?.prompt ?? null;
     if (prompt !== null) body.lastPrompt = prompt;
     return body;
+  }
+
+  /**
+   * What the window holds, for a reader that is not a client poll ({@link LiveWindows.held}). `stamp`
+   * moves whenever a held turn does, so a caller can keep what it derived until it moves.
+   */
+  heldNow(): HeldWindow {
+    const held: HeldWindow = {
+      stamp: `${this.gen}:${this.rev}`,
+      askedAt: this.askedAt,
+      entries: () => this.rows.map((row) => row.entry),
+    };
+    if (this.lastSeen !== null) held.writtenAt = this.lastSeen.mtimeMs;
+    return held;
   }
 
   /** This generation, for a `?before=` page that must land in the same numbering. */
@@ -663,6 +779,21 @@ class LiveWindow {
     if (gen === this.gen) this.behind = { gen, prompt };
   }
 }
+
+/** One live window as {@link LiveWindows.held} hands it out. Read only; the entries are the window's own. */
+export interface HeldWindow {
+  /** `<gen>:<rev>`. The same stamp means the same turns in the same state. */
+  stamp: string;
+  /** When a reader last polled this window. */
+  askedAt: number;
+  /** The log's mtime at the last read, when a read has run. */
+  writtenAt?: number;
+  /** The held turns, oldest first. Built on call, so a caller whose stamp did not move pays nothing. */
+  entries: () => readonly TranscriptEntry[];
+}
+
+/** Most ref values one window remembers; past it the oldest go. */
+const MAX_WINDOW_REFS = 4;
 
 /**
  * Every live session this bridge is holding, one window each.
@@ -691,15 +822,26 @@ export class LiveWindows {
    * place the adapter can confine now (`TranscriptSource.pending`, pi only). That window answers an
    * empty session from its start under the new session's tag, and the same window starts reading
    * when the file appears, because `resolve` then answers the same key (#526).
+   *
+   * `receipts` are the pane's open queued sends from Collie's own receipts (ADR 0122): the answer lists
+   * those the journal does not show as a prompt yet. Per pane, not per window: two panes on one session
+   * each see their own sends.
    */
   async window(
     adapter: JournalAdapter,
     ref: AgentSessionRef,
     params: ChatParams,
+    receipts: readonly ReceiptQueued[] = [],
   ): Promise<ChatWindowBody | null> {
     const key = (await adapter.source.resolve(ref)) ?? (await adapter.source.pending?.(ref)) ?? null;
     if (key === null) return null;
     const window = this.reach(key, adapter);
+    window.refs.delete(ref.value);
+    window.refs.add(ref.value);
+    for (const old of window.refs) {
+      if (window.refs.size <= MAX_WINDOW_REFS) break;
+      window.refs.delete(old);
+    }
     await window.tick(key);
     // The window opened mid-run (its first read is a 2 MB tail, and a long tool run fills that with
     // no prompt in it): look the prompt up in the History read, once per generation and WITHOUT
@@ -713,7 +855,7 @@ export class LiveWindows {
         () => window.settleLookup(gen, null),
       );
     }
-    return window.body(params.after ?? null, params.limit);
+    return window.body(params.after ?? null, params.limit, receipts);
   }
 
   /**
@@ -737,6 +879,9 @@ export class LiveWindows {
     const key = await adapter.source.resolve(ref);
     if (key === null) return null;
     const window = this.reach(key, adapter);
+    // Tick first, so the page carries the generation the next poll will answer with. A log rewritten
+    // since the last poll would otherwise stamp this page with a numbering that poll replaces (#642).
+    await window.tick(key);
     const page = await this.store.page(adapter, ref, { limit, before: before.uuid, turns: true });
     if (page === null) return null;
     // Numbered from the END of the page backwards, so the newest turn in it sits immediately before
@@ -750,6 +895,19 @@ export class LiveWindows {
       upserts: page.entries.map((entry, i) => chatEntry(entry, first + i)),
       hasOlder: page.hasMore,
     };
+  }
+
+  /**
+   * The window a client poll reached by this ref value, from memory alone: no resolve, no read, and
+   * no idle bookkeeping, so asking keeps nothing alive. Null when no poll has reached it, or the
+   * window has gone. The belt's agents pill reads Oh My Pi's and Gentle Shell's ongoing task cards
+   * from here (bridge/subagents-journal.ts).
+   */
+  held(refValue: string): HeldWindow | null {
+    for (const window of this.windows.values()) {
+      if (window.refs.has(refValue)) return window.heldNow();
+    }
+    return null;
   }
 
   /** How many sessions are held live. For tests and for the idle rule's own assertions. */

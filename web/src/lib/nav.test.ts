@@ -30,6 +30,8 @@ import {
   updatesPath,
   upTarget,
   voicePagePath,
+  installCountPath,
+  telemetrySettingsPath,
 } from "./nav";
 
 describe("the commit view's paths", () => {
@@ -144,10 +146,12 @@ describe("the New page's address", () => {
     expect(newPath({ machine: "mini" })).toBe("/new?machine=mini");
     expect(newPath({ machine: "mini", pane: "w1:p1", session: "demo" })).toBe("/new?machine=mini&pane=w1%3Ap1&s=demo");
     expect(newPath({ pane: "w1:p1" })).toBe("/new?pane=w1%3Ap1");
+    expect(newPath({ machine: "mini", beside: "w1:p1" })).toBe("/new?machine=mini&beside=w1%3Ap1");
   });
 
   it("reads back what it wrote, and blank values as absent", () => {
     expect(readNewAt("?machine=mini&pane=w1%3Ap1&s=demo")).toEqual({ machine: "mini", pane: "w1:p1", session: "demo" });
+    expect(readNewAt("?beside=w1%3Ap1")).toMatchObject({ beside: "w1:p1", pane: undefined });
     expect(readNewAt("")).toEqual({ machine: undefined, pane: undefined, session: undefined });
     expect(readNewAt("?machine=%20&pane=")).toEqual({ machine: undefined, pane: undefined, session: undefined });
   });
@@ -214,6 +218,14 @@ describe("voicePagePath", () => {
   });
 });
 
+describe("installCountPath", () => {
+  it("names the page below System, keeping the scope, and is where the dashboard notice opens", () => {
+    expect(installCountPath()).toBe("/settings/system/install-count");
+    expect(installCountPath({ host: "badger", session: "demo" })).toBe("/settings/system/install-count?h=badger&s=demo");
+    expect(telemetrySettingsPath()).toBe("/settings/system/install-count");
+  });
+});
+
 describe("pairLandingPath", () => {
   // The QR `collie pair` prints names `/settings?pair=<code>`. The form is on System now, so the
   // index forwards a code there with the whole query, scope included.
@@ -262,6 +274,10 @@ describe("ancestorsOf / isAncestor: the level tree", () => {
     ["/pane/w1%3Ap1", "/pane/w1%3Ap1/history", true],
     ["/pane/w1%3Ap2", "/pane/w1%3Ap1/history", false],
     ["/pane/w1%3Ap1/history", "/pane/w1%3Ap1", false],
+    // The zoomed output sits under its pane, as History does.
+    ["/pane/w1%3Ap1?h=badger", "/pane/w1%3Ap1/zoom", true],
+    ["/pane/w1%3Ap2", "/pane/w1%3Ap1/zoom", false],
+    ["/pane/w1%3Ap1/zoom", "/pane/w1%3Ap1", false],
     ["/pane/w1%3Ap1", "/pane/w1%3Ap1/changes", true],
     ["/", "/space/w1/changes", true],
     ["/space/w1", "/space/w1/changes", true],
@@ -273,6 +289,9 @@ describe("ancestorsOf / isAncestor: the level tree", () => {
     ["/space/w1/changes/commit", "/space/w1/changes", false],
     ["/settings/voice", "/settings/voice/host", true],
     ["/settings", "/settings/voice/model", true],
+    ["/settings/system", "/settings/system/install-count", true],
+    ["/settings", "/settings/system/install-count", true],
+    ["/settings/system/install-count", "/settings/system", false],
     ["/settings/voice/host", "/settings/voice", false],
     ["/settings/voice/host", "/settings/voice/model", false],
     ["/", "/settings", true],
@@ -364,6 +383,7 @@ describe("parentChain: what a cold deep link gets behind it", () => {
     ["/pane/w1%3Ap1", "", ["/"]],
     ["/pane/w1%3Ap1", "?h=badger&s=demo", ["/?h=badger&s=demo"]],
     ["/pane/w1%3Ap1/history", "?h=badger", ["/?h=badger", "/pane/w1%3Ap1?h=badger"]],
+    ["/pane/w1%3Ap1/zoom", "?h=badger", ["/?h=badger", "/pane/w1%3Ap1?h=badger"]],
     ["/pane/w1%3Ap1/changes", "", ["/", "/pane/w1%3Ap1"]],
     ["/pane/w1%3Ap1/changes", "?repo=.&path=a.ts", ["/", "/pane/w1%3Ap1", "/pane/w1%3Ap1/changes"]],
     ["/space/w1", "", ["/"]],
@@ -393,14 +413,16 @@ describe("parentChain: what a cold deep link gets behind it", () => {
     ],
     ["/space/w1/changes/files", "?path=README.md", ["/", "/space/w1", "/space/w1/changes"]],
     ["/settings", "", ["/"]],
-    // Both are opened from the System section now, so a cold deep link gets the index AND that
-    // section behind it — two taps back to home, matching the two pushes that would have got here.
-    ["/settings/updates", "", ["/", "/settings", "/settings/system"]],
+    // Updates is the first row of the index, so a cold deep link gets the index behind it.
+    ["/settings/updates", "", ["/", "/settings"]],
     ["/settings/device", "", ["/", "/settings"]],
     ["/settings/voice", "", ["/", "/settings"]],
     // The two pages below the Voice hub: the hub and the index behind them.
     ["/settings/voice/host", "", ["/", "/settings", "/settings/voice"]],
     ["/settings/voice/model", "?h=badger", ["/?h=badger", "/settings?h=badger", "/settings/voice?h=badger"]],
+    // The install count sits one level below System: the index and System behind it.
+    ["/settings/system/install-count", "", ["/", "/settings", "/settings/system"]],
+    ["/settings/system/install-count", "?h=badger", ["/?h=badger", "/settings?h=badger", "/settings/system?h=badger"]],
     ["/crew", "", ["/", "/settings", "/settings/system"]],
     // Machines sits under Settings, and one machine under Machines: a cold deep link gets both behind it.
     ["/machines", "", ["/", "/settings"]],

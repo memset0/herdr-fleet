@@ -13,7 +13,7 @@ const USAGE = [
 /** The plugin restart that carries a persisted membership change into the running runtime. */
 const RESTART_HINT =
   "  apply it to the running runtime:\n" +
-  "    herdr plugin action invoke restart --plugin memset0.herdr-fleet";
+  '    "$HERDR_PLUGIN_ROOT/scripts/herdr-fleet.sh" restart';
 
 function configCheck(config: FleetConfig): string {
   return JSON.stringify(

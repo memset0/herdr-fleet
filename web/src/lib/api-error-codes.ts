@@ -37,6 +37,7 @@ export const API_ERROR_CODES = [
   "reply.not_submitted",
   "reply.send_failed",
   "keys.send_failed",
+  "keys.unconfirmed",
   // Grandfathered spelling: already on the wire before the catalogue existed, matched literally by
   // `lib/dialog-guard.ts`, `lib/preview-action.ts` and `components/composer.tsx`. Not renamed.
   "prompt_changed",
@@ -59,6 +60,7 @@ export const API_ERROR_CODES = [
   "launch.not_allowlisted",
   "launch.pane_unknown",
   "launch.unknown_harness",
+  "launch.row_not_from_lead",
   "launch.bad_folder",
   "launch.folder_missing",
   "launch.no_device",
@@ -84,8 +86,6 @@ export const API_ERROR_CODES = [
   // Worktrees — /api/worktree and its plan (ADR 0032, ADR 0093)
   "worktree.create_failed",
   "worktree.created_not_opened",
-  "worktree.busy",
-  "worktree.ambiguous_branch",
   "worktree.branch_required",
   "worktree.not_a_repo",
   "worktree.invalid_branch",
@@ -169,6 +169,10 @@ export const API_ERROR_CODES = [
 
   // Reopening a durable program's closed conversation, POST /api/durable/conversation/:id/reopen
   "durable.reopen_failed",
+
+  // The anonymous install count, POST /api/telemetry
+  "telemetry.setting_invalid",
+  "telemetry.request_id_required",
 ] as const;
 
 /** Every code the bridge can send. Derived from the list, so there is exactly one place to edit. */

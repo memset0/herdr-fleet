@@ -2,10 +2,11 @@ import { render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { ThreadSidebar } from "./agent-sidebar";
+import { CrewProvider } from "./crew-provider";
 import { paneRowKey } from "@/lib/hosts";
 import { currentPins, setPinned } from "@/lib/pins";
 import { fixtureAgents, fixtureCrewAgents, fixtureServers, fixtureShellPanes } from "@/test/handlers";
-import type { AgentView, Launcher } from "@/lib/types";
+import type { AgentView, Launcher, WorkspaceView } from "@/lib/types";
 
 const idleAgent: AgentView = {
   paneId: "w3:p1",
@@ -38,6 +39,45 @@ describe("ThreadSidebar", () => {
     ]);
     expect(screen.queryByText("Working")).toBeNull();
     expect(screen.queryByText("Recent")).toBeNull();
+  });
+
+  // Issue #666: a worktree pane names its repository in the switcher, as the dashboard does.
+  describe("linked worktrees", () => {
+    const REPO = "/home/k/projects/membero";
+    const spaceOf = (workspaceId: string, number: number, label: string, over: Partial<WorkspaceView>): WorkspaceView => ({
+      workspaceId,
+      number,
+      label,
+      focused: false,
+      activeTabId: `${workspaceId}:t1`,
+      tabCount: 1,
+      paneCount: 1,
+      ...over,
+    });
+    const rootSpace = spaceOf("w1", 1, "membero", { repoRoot: REPO, isWorktree: false });
+    const wtSpace = spaceOf("w2", 2, "lucky-meadow-d1ec", { repoRoot: REPO, isWorktree: true });
+    const rootPane: AgentView = { ...idleAgent, paneId: "w1:p1", workspaceId: "w1", workspaceLabel: "membero", workspaceNumber: 1, tabId: "w1:t1" };
+    const wtPane: AgentView = { ...idleAgent, paneId: "w2:p1", workspaceId: "w2", workspaceLabel: "lucky-meadow-d1ec", workspaceNumber: 2, tabId: "w2:t1" };
+    const headings = () => screen.getAllByRole("heading").map((h) => h.textContent);
+
+    it("folds a worktree under its open root workspace", () => {
+      render(
+        <ThreadSidebar agents={[rootPane, wtPane]} workspaces={[rootSpace, wtSpace]} currentPaneKey="" onSelect={vi.fn()} />,
+      );
+      expect(headings()).toEqual([expect.stringContaining("membero")]);
+      expect(headings()).not.toEqual([expect.stringContaining("lucky-meadow-d1ec")]);
+      expect(screen.getAllByRole("button", { name: /claude/i })).toHaveLength(2);
+    });
+
+    it("heads a worktree whose root is not open `repo › slug`", () => {
+      render(<ThreadSidebar agents={[wtPane]} workspaces={[wtSpace]} currentPaneKey="" onSelect={vi.fn()} />);
+      expect(headings()).toEqual([expect.stringContaining("membero › lucky-meadow-d1ec")]);
+    });
+
+    it("lists every workspace as before when given no workspaces", () => {
+      render(<ThreadSidebar agents={[rootPane, wtPane]} currentPaneKey="" onSelect={vi.fn()} />);
+      expect(headings()).toEqual([expect.stringContaining("membero"), expect.stringContaining("lucky-meadow-d1ec")]);
+    });
   });
 
   it("moves no row and no heading when a pane changes state (ADR 0063)", () => {
@@ -546,7 +586,8 @@ describe("ThreadSidebar — pinned panes", () => {
       expect.stringContaining("shell"),
       expect.stringContaining("sandbox"),
     ]);
-    const summary = screen.getByRole("button", { name: /needs you/i });
+    // The count, not the words alone: a blocked row's own mark is named "needs you" too (#695).
+    const summary = screen.getByRole("button", { name: /\d needs you/i });
     expect(summary.compareDocumentPosition(region()) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
   });
 
@@ -764,5 +805,93 @@ describe("ThreadSidebar: subtitle and badge of a durable pane", () => {
     const { container } = render(<ThreadSidebar agents={[idleAgent]} currentPaneKey="" onSelect={vi.fn()} />);
     expect(container.querySelector('[data-slot="pane-badge"]')).toBeNull();
     expect(container.querySelector('[data-slot="pane-row-subtitle"]')).toBeNull();
+  });
+});
+
+describe("ThreadSidebar: which machine, as a glyph on the row (2026-10-21)", () => {
+  const crew = ({ children }: { children: React.ReactNode }) => (
+    <CrewProvider servers={fixtureServers}>{children}</CrewProvider>
+  );
+
+  it("marks every row of a crew with its machine's glyph, the name in the label and not on screen", () => {
+    render(
+      <ThreadSidebar agents={fixtureCrewAgents} servers={fixtureServers} currentPaneKey="" onSelect={vi.fn()} />,
+      { wrapper: crew },
+    );
+    const marks = screen.getAllByLabelText(/^host: /i);
+    expect(marks).toHaveLength(fixtureCrewAgents.length);
+    expect(marks.map((m) => m.getAttribute("aria-label"))).toEqual(
+      expect.arrayContaining([expect.stringMatching(/^host: bluefin/i), expect.stringMatching(/^host: workshop/i)]),
+    );
+    for (const m of marks) {
+      expect(m.textContent).toBe("");
+      expect(m.querySelector("svg")).not.toBeNull();
+    }
+    // Inside the place line, after the place: the row's second line ends with the machine.
+    expect(marks[0]!.parentElement!.className).toContain("text-[11px]");
+    expect(marks[0]!.closest("button")).not.toBeNull();
+  });
+
+  it("draws no machine on a one-machine install, so a solo row is unchanged", () => {
+    render(<ThreadSidebar agents={fixtureAgents} currentPaneKey="" onSelect={vi.fn()} />);
+    expect(screen.queryAllByLabelText(/^host: /i)).toHaveLength(0);
+  });
+});
+
+// Issue #695: the heading's counts say how many panes work or wait, not which ones. Each row now
+// carries its own status mark on the logo's corner, as the closed rail does, and the dashboard's
+// unseen square after the name.
+describe("ThreadSidebar: each row says its own status (#695)", () => {
+  const inSpace = (paneId: string, paneLabel: string, over: Partial<AgentView>): AgentView => ({
+    ...idleAgent,
+    paneId,
+    paneLabel,
+    ...over,
+  });
+  const working = inSpace("w3:p1", "builder", { status: "working" });
+  const resting = inSpace("w3:p2", "reader", { status: "idle" });
+  const blocked = inSpace("w3:p3", "asker", { status: "blocked" });
+  // Herdr 0.9 reports a settled agent as idle, not done (#345): unseen, it still rests as a ring.
+  const unseen = inSpace("w3:p4", "finisher", { status: "idle", lastActiveAt: 2, lastSeenAt: 1 });
+  // The row's name runs logo, status, the pane's name, then the unseen word, and jsdom joins them with
+  // no space (it applies no CSS, so every part is inline). The names below are unique substrings.
+  const row = (name: string) => screen.getByRole("button", { name: new RegExp(name, "i") });
+
+  it("marks every agent row with its own status, named for a screen reader", () => {
+    render(<ThreadSidebar agents={[working, resting, blocked]} currentPaneKey="" onSelect={vi.fn()} />);
+    expect(within(row("builder")).getByRole("img", { name: "working" })).toBeInTheDocument();
+    expect(within(row("reader")).getByRole("img", { name: "idle" })).toBeInTheDocument();
+    expect(within(row("asker")).getByRole("img", { name: "needs you" })).toBeInTheDocument();
+  });
+
+  it("draws the unseen square on a finished pane nobody opened, and keeps its slot on the others", () => {
+    render(<ThreadSidebar agents={[unseen, resting]} currentPaneKey="" onSelect={vi.fn()} />);
+    expect(within(row("finisher")).getByRole("img", { name: "unseen" })).toBeInTheDocument();
+    expect(within(row("reader")).queryByRole("img", { name: "unseen" })).toBeNull();
+    // Reserved, invisible and silent: the name truncates at one width in both states.
+    expect(row("reader").querySelector("svg.invisible[aria-hidden='true']")).not.toBeNull();
+  });
+
+  it("backs the mark with the surface under the row: the card, or the accent on the current row", () => {
+    render(<ThreadSidebar agents={[working, resting]} currentPaneKey={paneRowKey(working)} onSelect={vi.fn()} />);
+    const mark = (name: string) => within(row(name)).getByRole("img", { name: /working|idle/ });
+    expect(mark("builder").querySelector(".bg-accent")).not.toBeNull();
+    expect(mark("reader").querySelector(".bg-card")).not.toBeNull();
+  });
+
+  it("draws no status mark and no unseen slot on a shell row", () => {
+    render(<ThreadSidebar agents={[]} shellPanes={fixtureShellPanes} currentPaneKey="" onSelect={vi.fn()} />);
+    const shellRow = screen.getByRole("button", { name: /shell/i });
+    expect(within(shellRow).queryByRole("img")).toBeNull();
+    expect(shellRow.querySelector("[class*='text-status-']")).toBeNull();
+  });
+
+  it("keeps every row in its place when a pane starts working: the mark repaints, the row stays", () => {
+    const { rerender } = render(<ThreadSidebar agents={[resting, working]} currentPaneKey="" onSelect={vi.fn()} />);
+    const order = () => screen.getAllByRole("button").map((b) => b.getAttribute("data-pane-key"));
+    const before = order();
+    rerender(<ThreadSidebar agents={[{ ...resting, status: "working" }, working]} currentPaneKey="" onSelect={vi.fn()} />);
+    expect(order()).toEqual(before);
+    expect(within(row("reader")).getByRole("img", { name: "working" })).toBeInTheDocument();
   });
 });

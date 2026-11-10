@@ -1,18 +1,7 @@
-import { Fragment, useEffect, useState } from "react";
+import { Fragment, useEffect, useRef, useState } from "react";
 import type { CSSProperties, ReactNode } from "react";
-import type { LucideIcon } from "lucide-react";
-import {
-  ArrowBigUp,
-  ArrowDown,
-  ArrowLeft,
-  ArrowRight,
-  ArrowRightToLine,
-  ArrowUp,
-  Check,
-  CornerDownLeft,
-  Lock,
-  Space,
-} from "lucide-react";
+import { Icon } from "@/components/icons/icon";
+import type { IconKey } from "@/components/icons/keys";
 
 import { cn } from "@/lib/utils";
 import { Button } from "@/components/ui/button";
@@ -94,6 +83,14 @@ interface NavTrayProps {
   board?: KeyBoard;
   disabled?: boolean;
   /**
+   * Clear (ADR 0116, the Clear paragraph): the button at the chip row's end that empties the harness's
+   * input box in one tap. Absent, no button is drawn (a playground, a test, a pane with no screen).
+   * `available` is the composer's reading of the Surface: the box holds a draft and no dialog is up. The
+   * composer owns the request and shows the receipt under the box; the tray owns the spinner and takes
+   * no second tap while the request is in flight.
+   */
+  clearBox?: { readonly available: boolean; readonly onClear: () => Promise<void> };
+  /**
    * Neutral key spellings this multiplexer refuses (`/api/config`, M10/06). A button whose chord
    * uses one is greyed — the door is open (`sendKeys`), this key is simply not behind it.
    *
@@ -107,14 +104,14 @@ interface NavTrayProps {
 const NO_REFUSED_KEYS: readonly string[] = [];
 
 // The icon a default-faced key wears, keyed by its step. Everything else shows its text face.
-const FACE_ICON = new Map<string, LucideIcon>([
-  ["Tab", ArrowRightToLine],
-  ["Space", Space],
-  ["Enter", CornerDownLeft],
-  ["Up", ArrowUp],
-  ["Down", ArrowDown],
-  ["Left", ArrowLeft],
-  ["Right", ArrowRight],
+const FACE_ICON = new Map<string, IconKey>([
+  ["Tab", "key-tab"],
+  ["Space", "key-space"],
+  ["Enter", "key-enter"],
+  ["Up", "key-up"],
+  ["Down", "key-down"],
+  ["Left", "key-left"],
+  ["Right", "key-right"],
 ]);
 
 // Hold-to-repeat, WHITELISTED to the arrows (see navBtn). A whitelist rather than a blacklist: Enter,
@@ -150,10 +147,25 @@ export function NavTray({
   onQueueChange,
   board = DEFAULT_BOARD,
   disabled,
+  clearBox,
   unsupportedKeys = NO_REFUSED_KEYS,
 }: NavTrayProps) {
   useLocale();
   const [open, setOpen] = useState<OpenPanel>(null);
+  // A Clear in flight takes no second tap: a second request id would be a second press.
+  const [clearing, setClearing] = useState(false);
+  const clearingRef = useRef(false);
+  async function runClear() {
+    if (clearBox === undefined || disabled || !clearBox.available || clearingRef.current) return;
+    clearingRef.current = true;
+    setClearing(true);
+    try {
+      await clearBox.onClear();
+    } finally {
+      clearingRef.current = false;
+      setClearing(false);
+    }
+  }
   const togglePanel = (panel: Exclude<OpenPanel, null>) =>
     setOpen((cur) => (cur === panel ? null : panel));
   const { queue, mods, activeMods, composing, arm, press, pushBase, removeAt, clear, take, releaseAbsent } =
@@ -287,7 +299,7 @@ export function NavTray({
             {repeat.count > 1 && <span className="text-xs tabular-nums">×{repeat.count}</span>}
           </span>
         ) : phase === "done" && !armed ? (
-          <Check className="mx-auto size-4" />
+          <Icon name="confirm" className="mx-auto size-4" />
         ) : armed ? (
           <span className="truncate text-xs">{t("keys.confirm.short")}</span>
         ) : (
@@ -315,7 +327,7 @@ export function NavTray({
         style={style}
         className={cn("h-9 px-0 text-sm font-medium", extraClassName)}
       >
-        {mode === "locked" && <Lock className="size-3" />}
+        {mode === "locked" && <Icon name="modifier-lock" className="size-3" />}
         {label}
       </Button>
     );
@@ -358,7 +370,7 @@ export function NavTray({
       <Fragment key={cell}>
         {modBtn(
           key.mod,
-          key.mod === "shift" ? <ArrowBigUp className="size-4" aria-hidden="true" /> : word,
+          key.mod === "shift" ? <Icon name="key-shift" className="size-4" aria-hidden="true" /> : word,
           word,
           cn("w-full min-w-0", KEY_TAP_TARGET, tall(key)),
           areaCss(cell, key),
@@ -372,9 +384,9 @@ export function NavTray({
     const words = stepsWords(key.steps, t("keys.pad.then"));
     const aria = key.label === undefined ? words : t("keys.pad.sends", { label: key.label, keys: words });
     // An icon stands for a key that wears its own default face. A key the person named shows the name.
-    const Icon = key.label === undefined && only !== undefined ? FACE_ICON.get(only) : undefined;
+    const faceIcon = key.label === undefined && only !== undefined ? FACE_ICON.get(only) : undefined;
     const content =
-      Icon !== undefined ? <Icon className="size-4" aria-hidden="true" /> : textLabel(keyLabel(key));
+      faceIcon !== undefined ? <Icon name={faceIcon} className="size-4" aria-hidden="true" /> : textLabel(keyLabel(key));
     const isEnter = only === "Enter";
     return (
       <Fragment key={cell}>
@@ -423,6 +435,24 @@ export function NavTray({
         {chip("123", "123")}
         {chip("presets", t("keys.presets.label"))}
         {chip("fkeys", t("keys.fkeys.label"))}
+        {clearBox !== undefined && (
+          // Clear (ADR 0116): one tap, no arm, since a cleared draft is retyped. Collie's own control, so it
+          // is drawn plain and apart from the keys; greyed in place (never removed) when there is no draft
+          // to clear, a dialog is up, or the link is down. 36px drawn + 4px reach each side = 44px to tap.
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            data-slot="keys-clear"
+            disabled={disabled || !clearBox.available || clearing}
+            aria-label={t("keys.clear.aria")}
+            onClick={() => void runClear()}
+            className={cn("ml-auto h-9 gap-1.5 px-3 text-sm font-medium touch-manipulation select-none", "relative before:absolute before:inset-x-0 before:-inset-y-[4px] before:content-['']")}
+          >
+            {clearing ? <Icon name="busy" className="size-4 animate-spin" aria-hidden="true" /> : <Icon name="clear-keys" className="size-4" aria-hidden="true" />}
+            {t("keys.clear.label")}
+          </Button>
+        )}
       </div>
 
       {open === "123" && (
@@ -449,7 +479,7 @@ export function NavTray({
                   item.danger && !isPending && phase === "idle" && "text-destructive",
                 )}
               >
-                {isPending ? t("keys.confirm.label") : phase === "done" ? <Check className="size-4" /> : item.label}
+                {isPending ? t("keys.confirm.label") : phase === "done" ? <Icon name="sent-ok" className="size-4" /> : item.label}
               </Button>
             );
           })}

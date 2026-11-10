@@ -1,9 +1,9 @@
-import { act, fireEvent, render, screen } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
-import { Keyboard, Terminal } from "lucide-react";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
 import { __resetHarnessBar, setHarnessBarEnabled } from "@/lib/harness-bar-pref";
+import { DURABLE_BAR } from "@/lib/harness-bar";
 import { ActionsRow, switchPillInset, type ActionsRowProps, type GeneralAction } from "./actions-row";
 import { COLLAPSE_MS } from "./ui/collapse";
 
@@ -15,7 +15,7 @@ afterEach(() => {
 const took = async () => true;
 
 function general(over: Partial<GeneralAction> = {}): GeneralAction {
-  return { id: "keys", icon: Keyboard, label: "Keys", onSelect: vi.fn(), ...over };
+  return { id: "keys", icon: "keys-drawer", label: "Keys", onSelect: vi.fn(), ...over };
 }
 
 /** Every button in the row, in paint order, by its accessible name. */
@@ -25,7 +25,7 @@ describe("ActionsRow", () => {
   it("puts Collie's own actions first and the harness's own after them", () => {
     render(
       <ActionsRow
-        general={[general(), general({ id: "type", icon: Terminal, label: "Type into terminal" })]}
+        general={[general(), general({ id: "type", icon: "type-into-terminal", label: "Type into terminal" })]}
         agent="claude"
         onRun={took}
       />,
@@ -50,14 +50,14 @@ describe("ActionsRow", () => {
   });
 
   it("draws the general actions on a pane whose harness has no bar at all", () => {
-    render(<ActionsRow general={[general()]} agent="grok" onRun={took} />);
+    render(<ActionsRow general={[general()]} agent="hermes" onRun={took} />);
     expect(names()).toEqual(["Keys"]);
   });
 
   it("costs no height when there is neither a general action nor a harness bar", () => {
     // With nothing to carry, the row must not render an empty scroller — that would spend 12px on
     // nothing.
-    const { container } = render(<ActionsRow general={[]} agent="grok" onRun={took} />);
+    const { container } = render(<ActionsRow general={[]} agent="hermes" onRun={took} />);
     expect(container).toBeEmptyDOMElement();
   });
 
@@ -73,8 +73,8 @@ describe("ActionsRow", () => {
       <ActionsRow
         general={[
           general({ id: "keys", expanded: true, on: true, onSelect }),
-          general({ id: "type", icon: Terminal, label: "Type into terminal", pressed: true }),
-          general({ id: "quick", icon: Keyboard, label: "Quick", disabled: true }),
+          general({ id: "type", icon: "type-into-terminal", label: "Type into terminal", pressed: true }),
+          general({ id: "quick", icon: "keys-drawer", label: "Quick", disabled: true }),
         ]}
         agent="grok"
         onRun={took}
@@ -373,7 +373,7 @@ describe("ActionsRow — the agents mark's glyph and count", () => {
 
   it("draws the Bot glyph exactly as Files and the Switch mark draw theirs: same classes, no offset", () => {
     const { agents, files, handle } = renderMarks();
-    const glyph = (el: HTMLElement) => el.querySelector("svg.lucide")!.getAttribute("class")!.split(" ").filter((c) => !c.startsWith("lucide"));
+    const glyph = (el: HTMLElement) => el.querySelector("svg[data-icon]")!.getAttribute("class")!.split(" ").filter((c) => c !== "icon" && !c.startsWith("lucide"));
     expect(glyph(agents)).toEqual(glyph(files));
     expect(glyph(agents)).toEqual(glyph(handle));
     expect(glyph(agents).join(" ")).not.toMatch(/translate|mt-|mb-/);
@@ -394,6 +394,130 @@ describe("ActionsRow — the agents mark's glyph and count", () => {
     expect(alert).toHaveClass(...shared);
     expect(count).toHaveClass("tabular-nums");
     expect(count.className).not.toMatch(/left-/);
+  });
+});
+
+// THE JOBS MARK (issue 670, ADR 0128): the agents mark's twin for background jobs, right of it and
+// left of Files, with the running count as the same corner badge, and no badge at zero.
+describe("ActionsRow, the jobs mark", () => {
+  function renderJobs(count: number, onClick = vi.fn()) {
+    render(
+      <ActionsRow
+        general={[general()]}
+        agent="pi"
+        onRun={took}
+        agents={{ count: 1, onClick: vi.fn(), label: "Agents 1", expanded: false }}
+        jobs={{ count, onClick, label: `Jobs ${count}`, expanded: false }}
+        changes={{ onClick: vi.fn(), label: "Files" }}
+        handle={{ ref: vi.fn(), onClick: vi.fn(), label: "Switch pane" }}
+      />,
+    );
+    return screen.getByRole("button", { name: `Jobs ${count}` });
+  }
+
+  it("stands right of the agents mark and left of Files, and a tap calls its handler", async () => {
+    const onClick = vi.fn();
+    const jobs = renderJobs(2, onClick);
+    expect(jobs).toHaveAttribute("data-slot", "belt-jobs");
+    expect(jobs).toHaveAttribute("aria-expanded", "false");
+    const order = names();
+    expect(order.indexOf("Jobs 2")).toBe(order.indexOf("Agents 1") + 1);
+    expect(order.indexOf("Files")).toBe(order.indexOf("Jobs 2") + 1);
+    await userEvent.click(jobs);
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("draws the Timer glyph as its neighbours draw theirs, with the running count in the shared corner badge", () => {
+    const jobs = renderJobs(2);
+    expect(jobs.querySelector('svg[data-icon="jobs"]')).not.toBeNull();
+    const glyph = (el: HTMLElement) => el.querySelector("svg[data-icon]")!.getAttribute("class")!.split(" ").filter((c) => c !== "icon" && !c.startsWith("lucide"));
+    expect(glyph(jobs)).toEqual(glyph(screen.getByRole("button", { name: "Files" })));
+    const count = jobs.querySelector<HTMLElement>('[data-slot="belt-jobs-count"]')!;
+    expect(count.textContent).toBe("2");
+    expect(count).toHaveClass("pointer-events-none", "absolute", "top-0.5", "right-0.5", "rounded-full", "bg-chrome", "ring-2", "ring-chrome", "tabular-nums");
+  });
+
+  it("wears no badge when only ended jobs are listed", () => {
+    const jobs = renderJobs(0);
+    expect(jobs.querySelector('[data-slot="belt-jobs-count"]')).toBeNull();
+  });
+
+  it("is not drawn without the prop", () => {
+    render(<ActionsRow general={[general()]} agent="pi" onRun={took} handle={{ ref: vi.fn(), onClick: vi.fn(), label: "Switch pane" }} />);
+    expect(document.querySelector('[data-slot="belt-jobs"]')).toBeNull();
+  });
+
+  it("a sixth pinned pill has its own first-frame inset", () => {
+    // 269 + 32 + 6 = 307 at scale 1; 85 + 6 × 37 + 5 × 6 = 337 at the default scale. The pins mark makes seven (345).
+    expect([5, 6, 7].map((n) => switchPillInset(1, n))).toEqual([269, 307, 345]);
+    expect(switchPillInset(1.15, 6)).toBe(337);
+  });
+});
+
+// THE PINS MARK (M90 spec 03): the jobs mark's twin for pinned messages, right of it and left of Files, with the
+// count as the corner badge, and never drawn at zero (the pane view leaves the prop out then).
+describe("ActionsRow, the pins mark", () => {
+  function renderPins(count: number, onClick = vi.fn(), expanded = false) {
+    render(
+      <ActionsRow
+        general={[general()]}
+        agent="pi"
+        onRun={took}
+        jobs={{ count: 1, onClick: vi.fn(), label: "Jobs 1", expanded: false }}
+        pins={{ count, onClick, label: `${count} pinned`, expanded }}
+        changes={{ onClick: vi.fn(), label: "Files" }}
+        handle={{ ref: vi.fn(), onClick: vi.fn(), label: "Switch pane" }}
+      />,
+    );
+    return screen.getByRole("button", { name: `${count} pinned` });
+  }
+
+  it("stands right of the jobs mark and left of Files, and a tap calls its handler", async () => {
+    const onClick = vi.fn();
+    const pins = renderPins(3, onClick);
+    expect(pins).toHaveAttribute("data-slot", "belt-pins");
+    expect(pins).toHaveAttribute("aria-expanded", "false");
+    const order = names();
+    expect(order.indexOf("3 pinned")).toBe(order.indexOf("Jobs 1") + 1);
+    expect(order.indexOf("Files")).toBe(order.indexOf("3 pinned") + 1);
+    await userEvent.click(pins);
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("draws the Pin glyph as its neighbours draw theirs, with the count in the shared corner badge", () => {
+    const pins = renderPins(3);
+    expect(pins.querySelector('svg[data-icon="pins-list"]')).not.toBeNull();
+    const glyph = (el: HTMLElement) => el.querySelector("svg[data-icon]")!.getAttribute("class")!.split(" ").filter((c) => c !== "icon" && !c.startsWith("lucide"));
+    expect(glyph(pins)).toEqual(glyph(screen.getByRole("button", { name: "Files" })));
+    const count = pins.querySelector<HTMLElement>('[data-slot="belt-pins-count"]')!;
+    expect(count.textContent).toBe("3");
+    expect(count).toHaveClass("pointer-events-none", "absolute", "top-0.5", "right-0.5", "rounded-full", "bg-chrome", "ring-2", "ring-chrome", "tabular-nums");
+  });
+
+  it("reports its sheet open through aria-expanded", () => {
+    expect(renderPins(2, vi.fn(), true)).toHaveAttribute("aria-expanded", "true");
+  });
+
+  it("is not drawn without the prop", () => {
+    render(<ActionsRow general={[general()]} agent="pi" onRun={took} handle={{ ref: vi.fn(), onClick: vi.fn(), label: "Switch pane" }} />);
+    expect(document.querySelector('[data-slot="belt-pins"]')).toBeNull();
+  });
+
+  it("grows the spacer by one pill when it joins the block", () => {
+    const { container } = render(<ActionsRow general={[general()]} agent="claude" onRun={took} handle={{ ref: vi.fn(), onClick: vi.fn(), label: "Switch pane" }} />);
+    const alone = container.querySelector<HTMLElement>(".overflow-x-auto")!.lastElementChild!.getAttribute("style")!;
+    cleanup();
+    const both = render(
+      <ActionsRow
+        general={[general()]}
+        agent="claude"
+        onRun={took}
+        pins={{ count: 1, onClick: vi.fn(), label: "1 pinned", expanded: false }}
+        handle={{ ref: vi.fn(), onClick: vi.fn(), label: "Switch pane" }}
+      />,
+    );
+    const two = both.container.querySelector<HTMLElement>(".overflow-x-auto")!.lastElementChild!.getAttribute("style")!;
+    expect(parseInt(two.replace("width: ", "")) - parseInt(alone.replace("width: ", ""))).toBe(43);
   });
 });
 
@@ -644,7 +768,7 @@ describe("ActionsRow — hand", () => {
   const rows = (hand?: "right" | "left") =>
     render(
       <ActionsRow
-        general={[general(), general({ id: "type", icon: Terminal, label: "Type into terminal" })]}
+        general={[general(), general({ id: "type", icon: "type-into-terminal", label: "Type into terminal" })]}
         agent="claude"
         onRun={took}
         hand={hand}
@@ -730,5 +854,189 @@ describe("ActionsRow — hand", () => {
     render(<ActionsRow general={[general()]} agent="claude" onRun={took} hand="left" />);
     expect(scroller().className).toMatch(/(?:^|\s)pl-3(?=\s|$)/);
     expect(scroller().className).toMatch(/(?:^|\s)pr-3(?=\s|$)/);
+  });
+});
+
+describe("ActionsRow: Stop (M68 spec 02)", () => {
+  it("draws no Stop without the stop prop: an idle pane, or a running one the bridge has no key for", () => {
+    render(<ActionsRow general={[general()]} agent="claude" onRun={took} />);
+    expect(document.querySelector("[data-slot='belt-stop']")).toBeNull();
+    expect(document.querySelector("[data-slot='durable-bar']")).toBeNull();
+  });
+
+  it("draws the Stop dimmed, and still first, while the turn is idle", () => {
+    render(<ActionsRow general={[general()]} agent="claude" onRun={took} stop={{ onStop: async () => {}, paneId: "w1:p1", running: false }} />);
+    const stop = document.querySelector<HTMLElement>("[data-slot='belt-stop']")!;
+    expect(stop).toHaveAttribute("aria-disabled", "true");
+    expect(stop).not.toBeDisabled();
+    const scroller = document.querySelector<HTMLElement>(".overflow-x-auto")!;
+    expect(scroller.firstElementChild).toBe(stop);
+  });
+
+  it("keeps every other belt button in the same order whether the turn runs or not", () => {
+    const order = (running: boolean) => {
+      const { unmount } = render(<ActionsRow general={[general()]} agent="claude" onRun={took} stop={{ onStop: async () => {}, paneId: "w1:p1", running }} />);
+      const labels = Array.from(document.querySelector<HTMLElement>(".overflow-x-auto")!.querySelectorAll("button")).map((b) => b.getAttribute("data-slot") ?? b.textContent);
+      unmount();
+      return labels;
+    };
+    const idle = order(false);
+    expect(idle[0]).toBe("belt-stop");
+    expect(order(true)).toEqual(idle);
+  });
+
+  it("draws one Stop at the belt's start when the pane offers it", () => {
+    render(<ActionsRow general={[general()]} agent="claude" onRun={took} stop={{ onStop: async () => {}, paneId: "w1:p1", running: true }} />);
+    expect(document.querySelectorAll("[data-slot='belt-stop']")).toHaveLength(1);
+    expect(screen.getByRole("button", { name: "Stop the turn" })).toBeInTheDocument();
+  });
+
+  it("stands the Stop first in the scroller, before the composer controls", () => {
+    render(<ActionsRow general={[general()]} agent="claude" onRun={took} stop={{ onStop: async () => {}, paneId: "w1:p1", running: true }} />);
+    const scroller = document.querySelector<HTMLElement>(".overflow-x-auto")!;
+    const buttons = Array.from(scroller.querySelectorAll("button"));
+    expect(buttons[0]).toHaveAttribute("data-slot", "belt-stop");
+    expect(scroller.firstElementChild).toBe(buttons[0]);
+    const controls = scroller.querySelector("[data-slot='composer-controls']")!;
+    expect(buttons[0].compareDocumentPosition(controls) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+
+  it("keeps a durable pane's own Stop and draws no second one", () => {
+    const state = {
+      steer: { pressed: false, offered: true, onPressedChange: vi.fn() },
+      stop: { offered: true, busy: false, onStop: vi.fn() },
+    };
+    render(<ActionsRow general={[general()]} agent={null} onRun={took} durable={{ items: DURABLE_BAR, state }} />);
+    expect(document.querySelector("[data-slot='durable-bar']")).not.toBeNull();
+    expect(document.querySelector("[data-slot='belt-stop']")).toBeNull();
+    expect(screen.getByRole("button", { name: "Stop the running turn" })).toBeInTheDocument();
+  });
+});
+
+// THE OUTPUT, ZOOMED: an icon-only pill directly left of the Switch mark, on the pinned block. The
+// pane decides whether there is one (agent-chat.tsx); this file draws it and makes room for it.
+describe("ActionsRow, the Zoom pill", () => {
+  const handle = () => ({ ref: vi.fn(), onClick: vi.fn(), label: "Switch pane" });
+  const changes = () => ({ onClick: vi.fn(), label: "Changes" });
+  const zoomPill = (onClick = vi.fn()) => ({ onClick, label: "Zoom output" });
+  const clearX = () => ({ mode: "clear" as const, label: "Clear message", onClick: vi.fn() });
+  const spacerStyle = (container: HTMLElement) =>
+    container.querySelector<HTMLElement>(".overflow-x-auto")!.lastElementChild!.getAttribute("style");
+
+  it("stands directly left of the Switch mark, outside the scroller, and opens the view on a tap", async () => {
+    const onClick = vi.fn();
+    const { container } = render(
+      <ActionsRow general={[general()]} agent="claude" onRun={took} handle={handle()} changes={changes()} zoom={zoomPill(onClick)} />,
+    );
+    const pill = screen.getByRole("button", { name: "Zoom output" });
+    expect(screen.getByRole("button", { name: "Changes" }).nextElementSibling).toBe(pill);
+    expect(pill.nextElementSibling).toBe(screen.getByRole("button", { name: "Switch pane" }));
+    expect(pill.textContent).toBe("");
+    expect(pill).not.toHaveAttribute("aria-haspopup");
+    const belt = container.querySelector<HTMLElement>('[data-slot="composer-actions"]')!;
+    expect(belt.querySelector(".overflow-x-auto")!.contains(pill)).toBe(false);
+    await userEvent.click(pill);
+    expect(onClick).toHaveBeenCalledTimes(1);
+  });
+
+  it("is beside the Switch mark on a pane with no Changes pill too", () => {
+    render(<ActionsRow general={[general()]} agent="claude" onRun={took} handle={handle()} zoom={zoomPill()} />);
+    expect(screen.getByRole("button", { name: "Zoom output" }).nextElementSibling).toBe(
+      screen.getByRole("button", { name: "Switch pane" }),
+    );
+  });
+
+  it("has no Zoom pill without the prop", () => {
+    render(<ActionsRow general={[general()]} agent="claude" onRun={took} handle={handle()} />);
+    expect(screen.queryByRole("button", { name: "Zoom output" })).not.toBeInTheDocument();
+  });
+
+  it("wears the pinned pills' box and tap feedback", () => {
+    render(<ActionsRow general={[general()]} agent="claude" onRun={took} handle={handle()} zoom={zoomPill()} />);
+    const pill = screen.getByRole("button", { name: "Zoom output" });
+    for (const cls of [
+      /(?:^|\s)w-\(--belt-pill\)(?=\s|$)/,
+      /(?:^|\s)min-w-\(--belt-pill\)(?=\s|$)/,
+      /(?:^|\s)border-0(?=\s|$)/,
+      /(?:^|\s)px-0(?=\s|$)/,
+      /(?:^|\s)active:bg-foreground\/15(?=\s|$)/,
+      /(?:^|\s)motion-reduce:active:scale-100(?=\s|$)/,
+    ]) {
+      expect(pill.className).toMatch(cls);
+    }
+  });
+
+  it("widens the first-frame fallback by one pill, up to four: 85 + 4 × 37 + 3 × 6 = 251", () => {
+    const { container, unmount } = render(
+      <ActionsRow general={[general()]} agent="claude" onRun={took} handle={handle()} zoom={zoomPill()} />,
+    );
+    expect(spacerStyle(container)).toBe("width: 181px;");
+    unmount();
+    const four = render(
+      <ActionsRow
+        general={[general()]}
+        agent="claude"
+        onRun={took}
+        handle={handle()}
+        changes={changes()}
+        zoom={zoomPill()}
+        clear={clearX()}
+      />,
+    );
+    expect(spacerStyle(four.container)).toBe("width: 267px;");
+    expect([4, 5].map((n) => switchPillInset(1, n))).toEqual([231, 269]);
+    // Five with the agents mark beside them: 85 + 5 × 37 + 4 × 6 = 294 at the default scale.
+    expect([1, 2, 3, 4, 5].map((n) => switchPillInset(1.15, n))).toEqual([122, 165, 208, 251, 294]);
+  });
+
+  it("gives each of four pinned pills a hit box by its place", () => {
+    render(
+      <ActionsRow
+        general={[general()]}
+        agent="claude"
+        onRun={took}
+        handle={handle()}
+        changes={changes()}
+        zoom={zoomPill()}
+        clear={clearX()}
+      />,
+    );
+    const reach = (name: string) => {
+      const cls = screen.getByRole("button", { name }).className;
+      return [cls.match(/before:-left-\[(\d+)px\]/)?.[1], cls.match(/before:-right-\[(\d+)px\]/)?.[1]];
+    };
+    expect(reach("Clear message")).toEqual(["7", "3"]);
+    expect(reach("Changes")).toEqual(["3", "3"]);
+    expect(reach("Zoom output")).toEqual(["3", "3"]);
+    expect(reach("Switch pane")).toEqual(["3", "7"]);
+  });
+
+  it("keeps Zoom beside the Switch mark with the agents mark and Files in the block too, each reach by its place", () => {
+    const { container } = render(
+      <ActionsRow
+        general={[general()]}
+        agent="claude"
+        onRun={took}
+        handle={handle()}
+        changes={changes()}
+        zoom={zoomPill()}
+        clear={clearX()}
+        agents={{ count: 2, onClick: vi.fn(), label: "Agents 2", expanded: false }}
+      />,
+    );
+    const pill = screen.getByRole("button", { name: "Zoom output" });
+    expect(pill.previousElementSibling).toBe(screen.getByRole("button", { name: "Changes" }));
+    expect(pill.nextElementSibling).toBe(screen.getByRole("button", { name: "Switch pane" }));
+    const reach = (name: string) => {
+      const cls = screen.getByRole("button", { name }).className;
+      return [cls.match(/before:-left-\[(\d+)px\]/)?.[1], cls.match(/before:-right-\[(\d+)px\]/)?.[1]];
+    };
+    expect(reach("Clear message")).toEqual(["7", "3"]);
+    expect(reach("Agents 2")).toEqual(["3", "3"]);
+    expect(reach("Changes")).toEqual(["3", "3"]);
+    expect(reach("Zoom output")).toEqual(["3", "3"]);
+    expect(reach("Switch pane")).toEqual(["3", "7"]);
+    // All five pinned: 294 + 16 of end air.
+    expect(spacerStyle(container)).toBe("width: 310px;");
   });
 });

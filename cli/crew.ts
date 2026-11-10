@@ -16,6 +16,7 @@ import {
   liveHandover,
   markSecretDelivered,
   mintInvite,
+  parseEnrollRefusal,
   parseEnrollResponse,
   parseRoster,
   promoteSelf,
@@ -40,7 +41,9 @@ import {
   crewHelloBudget,
   crewTimeoutBudget,
   crewTimeoutClampWarning,
+  parsePeerStatus,
   PeerClient,
+  type PeerStatusReport,
   sweepPeers,
   type HelloResult,
   type CrewFetch,
@@ -62,7 +65,10 @@ import { TrustStore, type TrustedMember, type TrustStoreData } from "../bridge/c
 import { deriveConfigRoot, discoverSessionSockets } from "../bridge/mux/herdr/sessions.ts";
 import { herdTagFor } from "../bridge/sessions.ts";
 import { compareSemver } from "../bridge/update.ts";
+import { sameBuild } from "../bridge/version.ts";
 import { collieVersionBare, DEFAULT_SERVE_PORT, type CliContext } from "./context.ts";
+import { crewDelta, deltaLines } from "./crew-delta.ts";
+import { groupMembersByHost } from "./host-groups.ts";
 import { EXIT, type Io } from "./io.ts";
 import { dropEnvAssignments } from "./push-keys.ts";
 import {
@@ -77,6 +83,7 @@ import {
   standbyDoorLines,
 } from "./crew-status-deputy.ts";
 import type { Tone, TonedLine, Ui } from "./render.ts";
+import { probeConfigOf, probeTarget } from "./update-run.ts";
 // Type-only, so it is erased: the runtime edge to `cli/remote.ts` is the dynamic import in `cmdCrew`.
 import type { CrewAddDeps } from "./remote.ts";
 import type { Exec, Files } from "./sys.ts";
@@ -147,6 +154,14 @@ export interface CrewDeps {
   serve(io?: Io): Promise<number>;
   /** `collie unserve` — a peer publishes nothing (§3), so joining tears our own mapping down. */
   unserve(): number;
+  /**
+   * One `/api/health` request against this machine's own bridge: `true` when it answered ok. Absent
+   * reads as "yes", so a verb that waits on it never waits where no probe was wired. `crew invite`
+   * polls it after its restart, so the join line is printed only once a joiner can be answered.
+   */
+  bridgeAnswers?(): Promise<boolean>;
+  /** The wait between two {@link bridgeAnswers} polls. Absent: a real timer. */
+  sleep?(ms: number): Promise<void>;
   /** Push a `clear` to every subscribed device for these notification slots. Best effort. */
   clearNotifications(tags: readonly string[]): Promise<void>;
   /** The terminal renderer, when this run landed on one (`cli/render.ts`). Absent ⇒ plain lines. */
@@ -447,7 +462,8 @@ function publicFrontDoor(deps: CrewDeps): string | null {
  * domain, and is what a person can retype) on the default port, and appends `:<port>` only when this
  * lead moved off 8787. `COLLIE_PUBLIC_URL` wins over both, because it is the operator telling Collie
  * which ingress this machine actually publishes; its port is made explicit (443 for https, 80 for
- * http) so the joiner dials the door that is really there.
+ * http) so the joiner dials the door that is really there. On https 443 that is the origin,
+ * `https://<host>`, because a typed `host:443` is the shape that once fell back to :8787.
  *
  * `null` when this node has no Tailscale name and no configured URL — the caller prints a
  * placeholder, exactly as it did before.
@@ -457,6 +473,9 @@ export function joinHost(deps: CrewDeps): string | null {
   if (configured !== null) {
     const url = new URL(configured);
     const port = url.port === "" ? (url.protocol === "http:" ? 80 : DEFAULT_SERVE_PORT) : Number(url.port);
+    // 443 is spelt as the origin, never `host:443`: the joiner's dial and the typed port must agree,
+    // and `https://host` is the one spelling that cannot be read as "no port given" (see {@link leadOrigin}).
+    if (url.protocol === "https:" && port === DEFAULT_SERVE_PORT) return url.origin;
     return port === DEFAULT_PORT ? url.hostname : `${url.hostname}:${port}`;
   }
   const name = tailnetName(deps.exec);
@@ -573,10 +592,26 @@ export async function ensureStore(deps: CrewDeps, label: string | undefined): Pr
   }
 }
 
-/** Restart the local service so the running bridge sees the change, and say why. */
-async function applyLocally(deps: CrewDeps, what: string): Promise<void> {
-  deps.io.out(`  restarting the bridge so ${what} takes effect…`);
-  const code = await deps.restart();
+/**
+ * An `Io` whose `out` writes to stderr. A verb whose stdout is machine-readable hands this to the
+ * nested lifecycle verbs, so their "bridge stopped" and "bridge started" lines cannot reach stdout.
+ * `childOutToErr` covers the children those verbs spawn with inherited stdio (`tailscale serve`
+ * prints its mapping lines itself, and a lazy build prints its progress): their stdout goes to stderr.
+ */
+function allToStderr(io: Io): Io {
+  return { out: io.err, err: io.err, errIsTty: io.errIsTty, childOutToErr: true };
+}
+
+/**
+ * Restart the local service so the running bridge sees the change, and say why.
+ *
+ * `notice` picks the stream for the "restarting…" line. `crew invite` sends it, and every line the
+ * nested restart prints, to stderr, because its stdout is machine-readable: it carries the token
+ * first, and nothing from the restart path.
+ */
+async function applyLocally(deps: CrewDeps, what: string, notice: "out" | "err" = "out"): Promise<void> {
+  deps.io[notice](`  restarting the bridge so ${what} takes effect…`);
+  const code = await deps.restart(notice === "err" ? allToStderr(deps.io) : undefined);
   if (code !== EXIT.OK) {
     deps.io.err("warn: the restart failed — the trust store IS updated, but the running bridge still");
     deps.io.err("      holds the previous roster. Run `collie restart` before relying on this change.");
@@ -626,19 +661,33 @@ export const WINDOWS_CREW_SENTENCE =
  * print. Elsewhere it names the two ways in; on Windows both verbs refuse ({@link refuseCrewOnWindows}),
  * so it says that instead of suggesting a command that fails.
  */
-export function soloCrewHint(host: Host): string {
-  return host.platform === "win32"
+export function soloCrewHint(host: Host, env: Record<string, string | undefined> = {}): string {
+  return host.platform === "win32" && !crewsOnWindows(env)
     ? "  A Windows machine cannot join or lead a crew in this release."
     : "  `collie crew invite` here makes it a lead; `collie join …` makes it a peer.";
 }
 
 /**
+ * The opt-in that opens the crew-forming verbs on Windows: `COLLIE_CREWS_ON_WINDOWS=1`.
+ *
+ * Windows crews are untested upstream (docs/windows.md keeps them "not covered"), so the refusal
+ * stays the default and one environment variable consents to the experiment. The crew wire itself is
+ * platform-neutral — pinned mTLS between bridges, certificates minted in-process — and this build
+ * also fixes what a Windows lead actually tripped on: `crew add`'s ssh legs run without connection
+ * multiplexing, which Windows OpenSSH cannot do ({@link sshOptions}).
+ */
+export function crewsOnWindows(env: Record<string, string | undefined>): boolean {
+  return env.COLLIE_CREWS_ON_WINDOWS === "1";
+}
+
+/**
  * Refuse a crew-forming verb on a Windows host, before any argument, store, network or terminal is
  * touched. True when it refused; the caller returns `EXIT.FAIL`, as `collie update` does for its
- * own Windows refusal.
+ * own Windows refusal. {@link crewsOnWindows} consents past it.
  */
-export function refuseCrewOnWindows(deps: Pick<CrewDeps, "host" | "io">): boolean {
+export function refuseCrewOnWindows(deps: Pick<CrewDeps, "ctx" | "host" | "io">): boolean {
   if (deps.host.platform !== "win32") return false;
+  if (crewsOnWindows(deps.ctx.env)) return false;
   deps.io.err(`error: ${WINDOWS_CREW_SENTENCE}`);
   return true;
 }
@@ -672,6 +721,17 @@ export async function cmdCrewInvite(deps: CrewDeps, args: readonly string[]): Pr
   );
   if (minted === null) return EXIT.FAIL;
 
+  // The invite lives in the trust store, and the running bridge reads that once per process, so the
+  // bridge is restarted to load it. `restart` returns while the new process is still booting, and a
+  // `crew join` in that gap is answered 401 by nothing that knows the token. Wait until it answers.
+  // The notice goes to stderr so stdout starts with the token (`<token>.<fingerprint>`) for a script.
+  await applyLocally(deps, "the freshly minted invite", "err");
+  if (!(await bridgeAnswersWithin(deps, INVITE_WAIT_MS))) {
+    deps.io.err(`error: the bridge did not answer after its restart (waited ${INVITE_WAIT_MS / 1000} s), so no join line is printed.`);
+    deps.io.err("       A joiner would be refused while it is down. Check `collie logs`, then run `collie crew invite` again.");
+    return EXIT.FAIL;
+  }
+
   // The host the joiner types after `collie crew join` — this lead's, and `--address` still wins.
   const target = flags.address !== undefined && flags.address !== "" ? flags.address : joinHost(deps);
   // The operator carries `<token>.<lead-fingerprint>` (§8.2): the token still authenticates the joiner
@@ -682,23 +742,45 @@ export async function cmdCrewInvite(deps: CrewDeps, args: readonly string[]): Pr
   // enrollment-path MITM/relay: a token that names no lead is a token `join` will not act on.
   const leadFp = data.self.fingerprint;
   deps.io.out(`${minted.token}.${leadFp}`);
-  deps.io.out("");
-  deps.io.out(`  single-use · expires ${new Date(minted.expiresAt).toISOString()} (10 minutes)`);
-  deps.io.out("  Shown once — only its hash is stored. Run this on the machine that is joining:");
+  // Stdout carries the token and nothing else, so `collie crew invite | ssh member 'collie crew join …'` works.
+  // The banner for the person at the terminal goes to stderr, where the restart notice already went.
+  deps.io.err("");
+  deps.io.err(`  single-use · expires ${new Date(minted.expiresAt).toISOString()} (10 minutes)`);
+  deps.io.err("  Shown once — only its hash is stored. Run this on the machine that is joining:");
   const host = target ?? "<this-lead-address>";
   // The short form first, because it is the one a person types: `join` asks for the token at a
   // prompt when none is given, so nothing else has to be remembered. The stdin form stays right
   // underneath it — it is what a script uses, and it is still the only form that takes no keystrokes.
-  deps.io.out(`    collie crew join ${host}`);
-  deps.io.out(`    collie crew join ${host} -   # paste the token on stdin`);
-  deps.io.out("  Passing it as an argument instead leaves it in `ps` output for every local uid.");
-  await applyLocally(deps, "the freshly minted invite");
+  deps.io.err(`    collie crew join ${host}`);
+  deps.io.err(`    collie crew join ${host} -   # paste the token on stdin`);
+  deps.io.err("  Passing it as an argument instead leaves it in `ps` output for every local uid.");
   return EXIT.OK;
+}
+
+/** How long `crew invite` waits for the restarted bridge, and how often it asks. */
+const INVITE_WAIT_MS = 30_000;
+const INVITE_POLL_MS = 500;
+
+/** Poll {@link CrewDeps.bridgeAnswers} every {@link INVITE_POLL_MS} until it says yes or `budgetMs` is spent. */
+async function bridgeAnswersWithin(deps: CrewDeps, budgetMs: number): Promise<boolean> {
+  const probe = deps.bridgeAnswers;
+  if (probe === undefined) return true;
+  const sleep = deps.sleep ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)));
+  const attempts = Math.ceil(budgetMs / INVITE_POLL_MS);
+  for (let i = 0; i < attempts; i++) {
+    if (await probe().catch(() => false)) return true;
+    await sleep(INVITE_POLL_MS);
+  }
+  return false;
 }
 
 // ── join (on the joining machine) ────────────────────────────────────────────
 
 const JOIN_USAGE = "usage: collie crew join <lead-address> [<token>|-|@file] [--address <mine>] [--label <name>]";
+
+/** Said under every `join` usage: what the name is, because two machines may not share one. */
+export const JOIN_LABEL_NOTE =
+  "       --label names this machine in the crew. Default: the hostname, or <hostname>-<instance> for a named instance.";
 
 /** What the operator is asked when they gave no token and there is a terminal to ask at. */
 const TOKEN_PROMPT = "Paste the invite token from `collie crew invite` on the lead:";
@@ -730,17 +812,23 @@ async function resolveToken(deps: CrewDeps, address: string, given: string | und
 }
 
 /**
- * `--label`, or this machine's hostname.
+ * `--label`, or this machine's hostname, or `<hostname>-<instance>` for a named instance.
  *
  * The label becomes the member id on both sides, and an unlabelled join used to mint `collie-8f3a2b1c`
  * — a name that identifies the machine to nobody. The box's own name is the answer everyone would
  * have typed, so it is the default; `--label` still wins, and a machine with no hostname to read
  * falls back to the random id rather than to an empty string.
+ *
+ * A second instance on the same box (`COLLIE_INSTANCE=hc`, `ctx.instance`) would join under the very
+ * name its lead already shows for the box, and the lead now refuses that. So a named instance adds
+ * its name: `bluefin-hc`. The unnamed instance keeps the bare hostname.
  */
-function joinLabel(deps: CrewDeps, flag: string | undefined): string | undefined {
+export function joinLabel(deps: CrewDeps, flag: string | undefined): string | undefined {
   if (flag !== undefined && flag !== "") return flag;
   const host = deps.hostname?.().trim();
-  return host === undefined || host === "" ? undefined : host;
+  if (host === undefined || host === "") return undefined;
+  const instance = deps.ctx.instance;
+  return instance === null || instance === "" ? host : `${host}-${instance}`;
 }
 
 /** One enrollment POST. `res` absent means nothing answered; see {@link looksLikePlaintextListener}. */
@@ -851,6 +939,7 @@ export async function cmdJoin(deps: CrewDeps, args: readonly string[]): Promise<
   const [address, tokenArg] = positional;
   if (address === undefined) {
     deps.io.err(JOIN_USAGE);
+    deps.io.err(JOIN_LABEL_NOTE);
     deps.io.err("       Mint the token on the lead with `collie crew invite`; it is single-use and lasts 10 minutes.");
     return EXIT.USAGE;
   }
@@ -984,9 +1073,18 @@ export async function cmdJoin(deps: CrewDeps, args: readonly string[]): Promise<
   }
 
   if (res.status === 401) {
-    deps.io.err("error: the lead refused the token — spent, expired (10 minutes), or this is not its address.");
+    deps.io.err("error: the lead refused the token — spent, expired (10 minutes), this is not its address,");
+    deps.io.err("       or the lead is still restarting after `crew invite`.");
     deps.io.err("       Mint a fresh one on the lead: `collie crew invite`.");
     return EXIT.REFUSED;
+  }
+  if (res.status === 422) {
+    const reason = parseEnrollRefusal(await res.json().catch(() => null));
+    if (reason !== null) {
+      deps.io.err(`error: the lead refused this machine's name: ${reason}`);
+      deps.io.err("       The lead spent this invite. Mint a fresh one on the lead: `collie crew invite`.");
+      return EXIT.REFUSED;
+    }
   }
   if (res.status === 409) {
     deps.io.err(`error: protocol mismatch — this build speaks ${CREW_PROTOCOL_VERSION}; update the older machine.`);
@@ -1075,8 +1173,17 @@ export function leadOrigin(address: string): URL | null {
   }
   if (base.username !== "" || base.password !== "" || base.search !== "" || base.hash !== "") return null;
   if (base.pathname !== "/" || base.host === "") return null;
-  if (!typedScheme && base.port === "") base.port = String(DEFAULT_PORT);
+  // Decided from what was TYPED, not from `base.port`: the URL parser drops a default port, so a
+  // typed `host:443` reads back as `port === ""` and would be rewritten to :8787 — a door nothing
+  // answers on a lead behind `tailscale serve`.
+  if (!typedScheme && !typedPort(address)) base.port = String(DEFAULT_PORT);
   return base;
+}
+
+/** Did the operator type a `:port` after the host of a schemeless address? `[v6]:port` counts, `[v6]` does not. */
+function typedPort(address: string): boolean {
+  const authority = (address.split(/[/?#]/, 1)[0] ?? "").replace(/^.*@/, "");
+  return /:\d+$/.test(authority);
 }
 
 /** The enrollment URL for an operator-typed address. `null` when it is not a bare host. */
@@ -1251,11 +1358,12 @@ function retireCrewBind(deps: CrewDeps): string[] {
  * member a generation behind — and what only the far side knows stays as its verbatim reason string.
  */
 export async function cmdCrewStatus(deps: CrewDeps, args: readonly string[]): Promise<number> {
-  const { bare } = parseCrewArgs(args, ["force", "no-probe"]);
+  const { bare } = parseCrewArgs(args, ["force", "no-probe", "json"]);
   const data = await deps.store.load();
+  if (bare.has("json")) return await crewStatusJson(deps, data, bare.has("no-probe"));
   if (data === null || data.crew === null) {
     deps.io.out("mode: solo — this collie is not in a crew (no trust store, or an empty one).");
-    deps.io.out(soloCrewHint(deps.host));
+    deps.io.out(soloCrewHint(deps.host, deps.ctx.env));
     return EXIT.OK;
   }
 
@@ -1305,6 +1413,7 @@ export async function cmdCrewStatus(deps: CrewDeps, args: readonly string[]): Pr
   const members = data.lead === null ? data.peers : [data.lead, ...data.peers];
   if (members.length === 0) {
     deps.io.out("members: none yet — mint an invite and run `collie join` on the other machine.");
+    for (const line of await crewDeltaLines(deps)) deps.io.out(line);
     return EXIT.OK;
   }
 
@@ -1345,21 +1454,34 @@ export async function cmdCrewStatus(deps: CrewDeps, args: readonly string[]): Pr
 
   emit("");
   emit("members:", "dim");
-  for (const m of members) {
+  // M77: when some host runs two instances, a host line heads the instances it holds and their rows sit
+  // one step deeper; otherwise the roster prints exactly as it always did. The host is what a member
+  // said on its snapshot, so an unprobed (`--no-probe`) or silent member is a group of its own.
+  const grouping = groupMembersByHost(members, {
+    idOf: (m) => m.memberId,
+    hostOf: (m) => memberStatusOf(reaches.get(m.memberId)).host,
+  });
+  const ordered = grouping.shared
+    ? grouping.groups.flatMap((g) => g.members.map((m, i) => ({ m, headedBy: i === 0 ? g.host : null })))
+    : members.map((m) => ({ m, headedBy: null }));
+  const pad = grouping.shared ? "  " : "";
+  for (const { m, headedBy } of ordered) {
+    if (headedBy !== null) emit(`  ${headedBy}`, "plain");
+    const row = (text: string, tone: Tone = "plain"): void => emit(`${pad}${text}`, tone);
     const behind = m.status === "enrolled" && m.secretGeneration !== data.crew.secretGeneration;
-    emit(`  ${m.memberId}  (${m.role})  ${m.address}`, "plain");
-    emit(`    pinned  ${m.fingerprint.slice(0, 16)}…  enrolled ${new Date(m.enrolledAt).toISOString()}`, "dim");
-    emit(
+    row(`  ${m.memberId}  (${m.role})  ${m.address}`, "plain");
+    row(`    pinned  ${m.fingerprint.slice(0, 16)}…  enrolled ${new Date(m.enrolledAt).toISOString()}`, "dim");
+    row(
       `    secret  generation ${m.secretGeneration}` +
         (behind ? " — HAS NOT picked up the current secret" : " — current"),
       behind ? "warn" : "dim",
     );
     // §9's unfinished business, above the link line rather than under it: a member still owed the
     // proof is usually the unreachable one, and the row must not be conditional on it answering.
-    if (data.lead === null) for (const l of memberRePinLines(m)) emit(l.text, l.tone);
+    if (data.lead === null) for (const l of memberRePinLines(m)) row(l.text, l.tone);
     if (m.status === "unenrolled") {
-      emit("    status  unenrolled — dropped by a rotation it was offline for (§8.4).", "warn");
-      emit(`            Recovery is deliberate: \`collie crew invite\` here, \`collie join\` there.`, "dim");
+      row("    status  unenrolled — dropped by a rotation it was offline for (§8.4).", "warn");
+      row(`            Recovery is deliberate: \`collie crew invite\` here, \`collie join\` there.`, "dim");
       continue;
     }
     const reach = reaches.get(m.memberId);
@@ -1369,29 +1491,30 @@ export async function cmdCrewStatus(deps: CrewDeps, args: readonly string[]): Pr
     // and must never read as provisional. A number is a real contact time. Suppressed when this very
     // probe succeeded: a member reachable right now is not half-finished (it is stamped just below).
     if (m.contactedAt === null && outcome?.ok !== true) {
-      emit("    status  provisional — enrolled but never once reachable; a half-finished join looks exactly", "warn");
-      emit(`            like this (§8.2). If you did not complete a join for "${m.memberId}", clear it:`, "dim");
-      emit(`            \`collie crew remove ${m.memberId}\`.`, "dim");
+      row("    status  provisional — enrolled but never once reachable; a half-finished join looks exactly", "warn");
+      row(`            like this (§8.2). If you did not complete a join for "${m.memberId}", clear it:`, "dim");
+      row(`            \`collie crew remove ${m.memberId}\`.`, "dim");
     }
     if (outcome === undefined) {
-      emit("    link    not probed (--no-probe)", "dim");
+      row("    link    not probed (--no-probe)", "dim");
       continue;
     }
     if (outcome.ok) {
-      emit(`    link    reachable · answered at ${new Date(outcome.receivedAt).toISOString()}`, "good");
+      row(`    link    reachable · answered at ${new Date(outcome.receivedAt).toISOString()}`, "good");
       // The second question. `hello` says the machine is there; this says the phone can actually be
       // fed from it, on the strict per-poll budget that every real read runs under.
-      for (const line of dataLines(reach)) emit(line.text, line.tone);
-      for (const line of versionLines(outcome.value.version, ours, m.memberId)) emit(line, "dim");
+      for (const line of dataLines(reach)) row(line.text, line.tone);
+      for (const line of versionLines(outcome.value.version, ours, m.memberId)) row(line, "dim");
+      row(muxLine(memberStatusOf(reach)), "dim");
       // The Surface reader it sent on `hello` (M56): none means an older build, to which this lead refuses text.
-      emit(`    surface ${outcome.value.surfaceVersion === undefined ? "none (older build)" : `reader ${String(outcome.value.surfaceVersion)}`}`, "dim");
+      row(`    surface ${outcome.value.surfaceVersion === undefined ? "none (older build)" : `reader ${String(outcome.value.surfaceVersion)}`}`, "dim");
       // The two phases of RFC §5, for this member: what it says it holds, and whether its listener
       // came up holding it (§18.17). Lead-side only — a peer has no roster to report anchoring for.
       if (data.lead === null) {
         const record = opsRecords?.members[m.memberId] ?? null;
         const active = outcome.value.warrantActiveGeneration;
         for (const l of memberWarrantLines(data, outcome.value.warrantGeneration, record, m.memberId, active)) {
-          emit(l.text, l.tone);
+          row(l.text, l.tone);
         }
         await convergeAnchor(deps, data, record, m.memberId, active);
       }
@@ -1417,27 +1540,39 @@ export async function cmdCrewStatus(deps: CrewDeps, args: readonly string[]): Pr
       continue;
     }
     if (outcome.state === "incompatible") {
-      emit(`    link    INCOMPATIBLE · ${outcome.reason}`, "bad");
-      emit(
+      row(`    link    INCOMPATIBLE · ${outcome.reason}`, "bad");
+      row(
         `            Not retried on the poll cadence. If this machine is the newer one:` +
           ` \`collie crew update ${m.memberId}\`.`,
         "dim",
       );
       continue;
     }
-    emit(`    link    unreachable · ${outcome.reason}`, "bad");
+    row(`    link    unreachable · ${outcome.reason}`, "bad");
     if (outcome.reason.includes("unauthorized")) {
-      emit("            A bare 401 is deliberately one answer for two causes (§8.1): an unpinned", "dim");
-      emit("            certificate or a secret this member no longer holds. The local column above", "dim");
-      emit("            says which is likelier — a member a generation behind is the secret.", "dim");
+      row("            A bare 401 is deliberately one answer for two causes (§8.1): an unpinned", "dim");
+      row("            certificate or a secret this member no longer holds. The local column above", "dim");
+      row("            says which is likelier — a member a generation behind is the secret.", "dim");
     }
     // …and the one cause the address itself gives away. Below the reason, not instead of it: the
     // scheme is a strong suspicion about an unreachable member, never a diagnosis of the failure.
-    for (const l of schemedAddressLines(m.memberId, m.address, m.role)) emit(l.text, l.tone);
-    for (const l of unreachableLeadLines(m)) emit(l.text, l.tone);
+    for (const l of schemedAddressLines(m.memberId, m.address, m.role)) row(l.text, l.tone);
+    for (const l of unreachableLeadLines(m)) row(l.text, l.tone);
   }
+  // Under `--no-probe` too: nothing in the delta dials anyone (`cli/crew-delta.ts`).
+  for (const line of await crewDeltaLines(deps)) emit(line, "dim");
   if (deps.ui != null) await deps.ui.crewMembers(banked);
   return EXIT.OK;
+}
+
+/**
+ * Where a multiplexer's machine list and this crew differ, as `collie start` and `doctor` print it
+ * (M84/04). Only a lead gets it: a machine in no crew prints its "in no crew" block and spawns
+ * nothing (the solo branch above returns before this), and a peer has no crew to compare, which
+ * {@link crewDelta} answers without a spawn.
+ */
+async function crewDeltaLines(deps: CrewDeps): Promise<readonly string[]> {
+  return deltaLines(await crewDelta(deps));
 }
 
 /**
@@ -1485,6 +1620,71 @@ export function reportDrift(deps: DriftDeps, data: TrustStoreData): void {
 }
 
 /**
+ * What a member says about its multiplexer and its panes (M76 spec 04, CREW_PROTOCOL.md §19).
+ *
+ * The name comes off the member's `snapshot` answer, and off the `mux` block of its `hello` when
+ * the answer carries none (the lead's own roster entry is never asked for a snapshot, and a member
+ * older than 1.25.0 sends the block only). The count comes from the `snapshot` answer alone. Each is
+ * `null` when the member did not say: that prints as `-`, and is never read as `0` panes.
+ */
+export function memberStatusOf(reach: MemberReach | undefined): PeerStatusReport {
+  if (reach === undefined) return { mux: null, panes: null, host: null };
+  const answered: PeerStatusReport = reach.data !== null && reach.data.ok ? parsePeerStatus(reach.data.value) : { mux: null, panes: null, host: null };
+  const helloMux = reach.hello.ok ? (reach.hello.value.mux?.name ?? null) : null;
+  return { mux: answered.mux ?? helloMux, panes: answered.panes, host: answered.host };
+}
+
+/** The `mux` line of one reachable member: `mux     herdr · 4 panes`, with `-` for what it did not say. */
+function muxLine(status: PeerStatusReport): string {
+  const panes = status.panes === null ? "-" : `${String(status.panes)} ${status.panes === 1 ? "pane" : "panes"}`;
+  return `    mux     ${status.mux ?? "-"} · ${panes}`;
+}
+
+type JsonLink = "reachable" | "unreachable" | "incompatible" | "unenrolled" | "not-probed";
+
+/**
+ * `crew status --json`: one document, nothing else on stdout. The same probe as the plain view, and
+ * none of its writes: no first-contact stamp and no anchor convergence, because a program reading
+ * this must not change the roster by looking at it.
+ */
+async function crewStatusJson(deps: CrewDeps, data: TrustStoreData | null, noProbe: boolean): Promise<number> {
+  if (data === null || data.crew === null) {
+    deps.io.out(JSON.stringify({ mode: "solo", members: [] }));
+    return EXIT.OK;
+  }
+  const { mode } = deriveMode({
+    peers: data.peers.filter((p) => p.status === "enrolled"),
+    lead: data.lead !== null && data.lead.status === "enrolled" ? data.lead : null,
+  });
+  const roster = data.lead === null ? data.peers : [data.lead, ...data.peers];
+  const reaches = noProbe || roster.length === 0 ? new Map<string, MemberReach>() : await probeMemberReach(deps, data, roster);
+  const members = roster.map((m) => {
+    const reach = reaches.get(m.memberId);
+    const link: JsonLink = jsonLinkOf(m, reach, noProbe);
+    const status = memberStatusOf(reach);
+    return {
+      id: m.memberId,
+      role: m.role,
+      address: m.address,
+      link,
+      version: reach?.hello.ok === true ? reach.hello.value.version : null,
+      mux: status.mux,
+      panes: status.panes,
+      host: status.host,
+    };
+  });
+  deps.io.out(JSON.stringify({ crew: { id: data.crew.crewId, name: data.crew.name }, mode, self: data.self.memberId, members }));
+  return EXIT.OK;
+}
+
+function jsonLinkOf(m: TrustedMember, reach: MemberReach | undefined, noProbe: boolean): JsonLink {
+  if (m.status !== "enrolled") return "unenrolled";
+  if (noProbe || reach === undefined) return "not-probed";
+  if (reach.hello.ok) return "reachable";
+  return reach.hello.state === "incompatible" ? "incompatible" : "unreachable";
+}
+
+/**
  * The first Collie version that reports its own version over `hello` (CREW_PROTOCOL.md §5, amended
  * 2026-08-12). A member that answers without the field is older than this and is rendered as such —
  * honestly, and never as `unknown`-shaped noise (§7.1).
@@ -1505,7 +1705,7 @@ export const VERSION_REPORTED_SINCE = "1.0.0-alpha.12";
  */
 function versionLines(reported: string | null, ours: string, memberId: string): string[] {
   if (reported === null) return [`    version pre-${VERSION_REPORTED_SINCE} (not reported)`];
-  if (reported === ours) return [`    version ${reported}`];
+  if (sameBuild(reported, ours)) return [`    version ${reported}`];
   // `unknown` is this checkout answering "no build stamp and no manifest" — it is not a version, so
   // there is no older machine to name. Report theirs and stay quiet rather than warn about a skew
   // whose other half we cannot state.
@@ -1867,6 +2067,9 @@ export async function cmdCrewRemove(deps: CrewDeps, args: readonly string[]): Pr
   deps.io.out("  own copy of the crew until its operator runs `collie leave` there. Either side alone ends");
   deps.io.out("  the link (§8.4) — this side is now ended.");
   for (const line of leaveTheOtherSideLines(deps, record)) deps.io.out(line);
+  // The one line `crew add` will need later: a removed machine still answers as a member, and the
+  // add refuses it (`✗ not joined`) until `collie leave` has run there.
+  deps.io.out(`  ${record?.sshHost ?? memberId} still runs Collie as a member; run \`collie leave\` there before you add it again.`);
   await applyLocally(deps, "the shortened roster");
   return EXIT.OK;
 }
@@ -2505,8 +2708,16 @@ export function crewDeps(
     prompt: (question) => (process.stdin.isTTY === true ? prompt(question) : null),
     hostname: () => hostname(),
     clearNotifications: (tags) => clearViaPush(base.ctx, tags),
+    bridgeAnswers: () => ownBridgeAnswers(base.ctx, base.files),
     host: HOST,
   };
+}
+
+/** One `/api/health` GET at the address this instance bound (`probeTarget`); ok means HTTP 2xx. */
+async function ownBridgeAnswers(ctx: CliContext, files: Files): Promise<boolean> {
+  const target = probeTarget(probeConfigOf(ctx.env, files, ctx.stateDir, ctx.port));
+  const res = await fetch(target.url, { signal: AbortSignal.timeout(1500) }).catch(() => null);
+  return res !== null && res.ok;
 }
 
 /** Send one `clear` per notification slot through the bridge's own `Push`. Silent when push is off. */

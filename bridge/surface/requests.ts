@@ -5,8 +5,15 @@
 //
 // What a file holds: the id, the session and pane, the pane generation, the Surface revision seen at
 // accept, a salted hash and the length of the text, the phase, and the receipt once settled. Never
-// the text and never the rows: both can hold secrets. The salt is random per state directory, so a
-// short text cannot be looked up from its hash in a table made elsewhere.
+// the rows: they can hold secrets. The salt is random per state directory, so a short text cannot be
+// looked up from its hash in a table made elsewhere.
+//
+// The text, as `line`, only when Sent would keep it (`sentLineOf`, bridge/secret-line.ts, ADR 0107):
+// one line, not too long, nothing that looks like a secret, nothing the outbound mask would change.
+// That is what the pane's Recent sends list prints under each row, so a person can tell ten rows apart
+// (Altan, 2026-10-21). A text the rule refuses is sent as usual and leaves only its hash and length.
+// Unlike Sent, this is per request and per pane, kept as long as the receipt is (REQUEST_KEEP_MS),
+// listed on this machine only, and it is not searched: ADR 0107's "shell lines only" stands for Sent.
 //
 // Ask answers (M56 spec 08) live in the same directory under `ask.<id>.json`: the ask id, the pane
 // and its generation, the ask hash, the option id, the phase and the receipt. A request id cannot
@@ -18,7 +25,8 @@ import { join } from "node:path";
 import { asJsonNumber, asJsonObject, asJsonString, type JsonValue } from "../../web/src/lib/json.ts";
 import { ASK_ID, ASK_OUTCOMES, ASK_REASONS, type AskReceipt } from "../../web/src/lib/surface/ask.ts";
 import { ASK_CHANNELS } from "../../web/src/lib/surface/surface.ts";
-import { readSendCap, readSurfaceWords, RECEIPT_DETAIL_MAX, REQUEST_ID, SEND_MODES, SEND_OUTCOMES, SEND_REASONS, type ReadMark, type SendMode, type SendReceipt, type SendStep } from "../../web/src/lib/surface/send.ts";
+import { readSendCap, readSurfaceWords, RECEIPT_DETAIL_MAX, REQUEST_ID, SEND_LATES, SEND_MODES, SEND_OUTCOMES, SEND_REASONS, type ReadMark, type SendMode, type SendReceipt, type SendStep } from "../../web/src/lib/surface/send.ts";
+import { SENT_MAX_LINE, sentLineOf } from "../secret-line.ts";
 
 /** How long a settled request is kept, so a retry after a long network gap still finds its receipt. */
 export const REQUEST_KEEP_MS = 7 * 24 * 60 * 60 * 1000;
@@ -41,7 +49,15 @@ export interface SendRecord {
   readonly mode: SendMode;
   readonly textHash: string;
   readonly textLength: number;
+  /** The text as the line Sent would keep (see the header), or absent when that rule refused it. */
+  readonly line?: string;
   readonly acceptedAt: number;
+  /**
+   * The version of the Collie that accepted the request (the bridge's own bare version string), so
+   * `collie doctor` can tell receipts written before an update from those after it. Absent on records
+   * an older Collie wrote, and on a store built without one.
+   */
+  readonly collie?: string;
   readonly phase: RequestPhase;
   readonly submitSentAt?: number;
   /** When a held request's release started (M56 spec 15): its run is bounded from here, not from accept. */
@@ -100,7 +116,9 @@ const ASK_FILE = /^ask\.(ask-[0-9a-f]{14})\.json$/;
 
 const PHASES = ["accepted", "submit-sent", "settled", "held"] as const;
 const PROFILE_STATUSES = ["verified", "provisional", "revoked"] as const;
-const STEPS = ["s0", "clear", "probe", "write", "s1", "commit", "s2"] as const;
+/** The longest `binary` path a stored receipt keeps; a longer one is dropped. */
+const RECEIPT_BINARY_MAX = 4_096;
+const STEPS = ["profile", "settle", "s0", "proof", "clear", "probe", "probeWrite", "write", "s1", "commandSettle", "commit", "s2"] as const;
 
 function pick<const T extends string>(value: JsonValue | undefined, allowed: readonly T[]): T | undefined {
   return allowed.find((word) => word === value);
@@ -183,17 +201,27 @@ function parseReceipt(value: JsonValue | undefined): SendReceipt | undefined {
     outcome,
   };
   const whole: ReceiptDraft = { ...receipt };
+  // `binary` is lenient like `detail`: a value that is not a path is dropped, and the receipt stays.
+  const binary = node.binary === undefined ? undefined : asJsonString(node.binary);
+  if (binary !== undefined && binary.length > 0 && binary.length <= RECEIPT_BINARY_MAX) whole.binary = binary;
   if (reason !== undefined) whole.reason = reason;
   if (cap !== undefined) whole.cap = cap;
   if (node.queued === true) whole.queued = true;
+  // `late` is lenient like `detail`: a word this module did not write is dropped, and the receipt stays.
+  const late = node.late === undefined ? undefined : pick(node.late, SEND_LATES);
+  if (late !== undefined) whole.late = late;
   if (acknowledged !== undefined) whole.acknowledged = acknowledged;
   if (detail !== undefined) whole.detail = detail;
   if (saw !== undefined) whole.saw = saw;
   return whole;
 }
 
-/** A record read back from its file, every field checked; null when it is not one this module wrote. */
-function parseRecord(raw: JsonValue | undefined): SendRecord | null {
+/**
+ * A record read back from its file, every field checked; null when it is not one this module wrote.
+ * Pure, so a reader that must not write (`cli/send-findings.ts`, `collie doctor`) parses the same
+ * files without a store: the store's constructor creates the folder and its salt.
+ */
+export function parseSendRecord(raw: JsonValue | undefined): SendRecord | null {
   const node = asJsonObject(raw);
   if (node === undefined) return null;
   const id = asJsonString(node.id);
@@ -210,6 +238,11 @@ function parseRecord(raw: JsonValue | undefined): SendRecord | null {
   if (surfaceRevision === undefined || mode === undefined || textHash === undefined || textLength === undefined) return null;
   if (acceptedAt === undefined || phase === undefined) return null;
   let record: SendRecord = { id, session, paneId, paneGeneration, surfaceRevision, mode, textHash, textLength, acceptedAt, phase };
+  // Lenient like `detail`: a line that is not what it should be is dropped, and the record stays.
+  const line = asJsonString(node.line);
+  if (line !== undefined && line !== "" && line.length <= SENT_MAX_LINE) record = { ...record, line };
+  const collie = asJsonString(node.collie);
+  if (collie !== undefined && collie !== "") record = { ...record, collie };
   const submitSentAt = asJsonNumber(node.submitSentAt);
   if (submitSentAt !== undefined) record = { ...record, submitSentAt };
   const runAt = asJsonNumber(node.runAt);
@@ -296,6 +329,8 @@ export class RequestStore {
   constructor(
     private readonly dir: string,
     private readonly now: () => number = () => Date.now(),
+    /** The bridge's own version string, written into every record this store accepts. */
+    private readonly collie?: string,
   ) {
     mkdirSync(dir, { recursive: true, mode: 0o700 });
     const saltPath = join(dir, ".salt");
@@ -330,8 +365,8 @@ export class RequestStore {
     const target = this.path(id);
     if (!existsSync(target)) return null;
     try {
-      // SAFETY: `JSON.parse` output IS a JsonValue; `parseRecord` checks every field.
-      return parseRecord(JSON.parse(readFileSync(target, "utf8")) as JsonValue);
+      // SAFETY: `JSON.parse` output IS a JsonValue; `parseSendRecord` checks every field.
+      return parseSendRecord(JSON.parse(readFileSync(target, "utf8")) as JsonValue);
     } catch {
       return null;
     }
@@ -345,7 +380,7 @@ export class RequestStore {
     const textHash = this.hashText(input.text);
     const known = this.get(input.id);
     if (known !== null) return known.textHash === textHash ? { kind: "replay", record: known } : { kind: "id_reused", record: known };
-    const record: SendRecord = {
+    let record: SendRecord = {
       id: input.id,
       session: input.session,
       paneId: input.paneId,
@@ -357,6 +392,9 @@ export class RequestStore {
       acceptedAt: this.now(),
       phase: "accepted",
     };
+    const line = sentLineOf(input.text);
+    if (line !== null) record = { ...record, line };
+    if (this.collie !== undefined) record = { ...record, collie: this.collie };
     this.write(record);
     return { kind: "new", record };
   }
@@ -370,8 +408,8 @@ export class RequestStore {
 
   /**
    * A settled `sent` or `unknown` that a matching prompt edge confirmed (M56 spec 11) becomes
-   * `effective`, its reason dropped. That is the one change a settled record can take, and it takes it
-   * once. Returns the outcome it had, or null when the record is not one a prompt edge may close.
+   * `effective`, its reason dropped. That and {@link markReturned} are the changes a settled record can
+   * take, each once. Returns the outcome it had, or null when the record is not one a prompt edge may close.
    */
   markEffective(id: string): "sent" | "unknown" | null {
     const known = this.get(id);
@@ -381,6 +419,22 @@ export class RequestStore {
     const { reason: _dropped, ...rest } = receipt;
     this.write({ ...known, receipt: { ...rest, outcome: "effective" } });
     return receipt.outcome;
+  }
+
+  /**
+   * A settled `sent` receipt that said `queued`, or a `steered` one, gets `late: "returned"` (ADR 0122):
+   * the harness put its text back into the input box, and it never became a prompt. The outcome and
+   * `queued` stay, since both were true when it settled; the mark says what happened after. Taken once.
+   * Returns whether the record took it.
+   */
+  markReturned(id: string): boolean {
+    const known = this.get(id);
+    const receipt = known?.receipt;
+    if (known === null || known.phase !== "settled" || receipt === undefined) return false;
+    const waited = (receipt.outcome === "sent" && receipt.queued === true) || receipt.outcome === "steered";
+    if (!waited || receipt.late !== undefined) return false;
+    this.write({ ...known, receipt: { ...receipt, late: "returned" } });
+    return true;
   }
 
   /**
@@ -396,6 +450,13 @@ export class RequestStore {
     return held;
   }
 
+  /** A held request's pane moved to an agent its own profile names: the record takes the pane's new generation. */
+  moveHeld(id: string, paneGeneration: string): void {
+    const known = this.get(id);
+    if (known === null || known.phase !== "held" || known.paneGeneration === paneGeneration) return;
+    this.write({ ...known, paneGeneration });
+  }
+
   /** A held request's release starts: it runs again as accepted, bounded from now. Null when it is not held. */
   rearm(id: string, paneGeneration?: string): SendRecord | null {
     const known = this.get(id);
@@ -407,7 +468,7 @@ export class RequestStore {
     return armed;
   }
 
-  /** The request's end: its receipt. A settled record changes once at most after this (`markEffective`). */
+  /** The request's end: its receipt. A settled record changes once at most after this (`markEffective`, or `markReturned`). */
   settle(id: string, receipt: SendReceipt): SendRecord | null {
     const known = this.get(id);
     if (known === null) return null;

@@ -35,7 +35,7 @@ import {
   type TapRecorder,
   type Trail,
 } from "./leg";
-import { DEVICE_LABEL, machineDirs, memGuard, newWorkspacePane, paneRun, readRun, sleep, type Machine } from "./rig-lib";
+import { DEVICE_LABEL, machineDirs, memGuard, paneMarkers, readRun, sleep, startInPane, type Machine } from "./rig-lib";
 
 export const PHONE = devices[PHONE_DEVICE];
 
@@ -137,6 +137,8 @@ export type AsMessage = { readonly menu: true; readonly tap: TapLog; readonly id
  */
 export async function sendAsMessage(page: Page, recorder: TapRecorder, body: string, log: TapLog[]): Promise<AsMessage> {
   await page.getByRole("textbox").last().fill(body);
+  // The box composer opens on the first character; the field one has no `data-box`, so this is no failure.
+  await page.locator('[data-box="open"]').first().waitFor({ state: "attached", timeout: 1000 }).catch(() => undefined);
   const send = page.getByRole("button", { name: message("composer.send.sendAria"), exact: true });
   log.push(await hold(page, send, "hold Send"));
   const row = page.getByRole("button", { name: message("walky.composer.sendAsMessage"), exact: true });
@@ -216,7 +218,7 @@ export async function operatorMessage(browser: Browser, rig: Rig, pane: string, 
 }
 
 /** Whether the agent's turn runs now, by the Surface when the harness has one, else by Herdr's status. */
-async function turnRuns(rig: Rig, pane: string): Promise<boolean> {
+export async function turnRuns(rig: Rig, pane: string): Promise<boolean> {
   const found = await rig.pane(pane).catch(() => null);
   if (found === null) return false;
   return found.surface === null ? found.status === "working" : found.surface.turn === "running";
@@ -344,9 +346,7 @@ const quoted = (word: string): string => `'${word.replaceAll("'", `'\\''`)}'`;
 export async function startExtraAgent(rig: Rig, id: HarnessId): Promise<string> {
   memGuard(`an extra ${id}`);
   const dirs = harnessDirs(id);
-  const paneId = newWorkspacePane(dirs.project, `leg-${id}-extra`);
-  await sleep(800);
-  paneRun(paneId, `exec ${quoted(dirs.start)}`);
+  const paneId = await startInPane(dirs.project, `leg-${id}-extra`, `exec ${quoted(dirs.start)}`);
   const up = await rig.until(() => rig.pane(paneId), (pane) => pane !== null && pane.agent === SETUPS[id].agent && (freeSurface(pane) || (pane.surface === null && pane.status === "idle")), 90_000, 700);
   if (up === null) throw new NotReached(`an extra ${id} did not come up idle in 90 s`);
   return paneId;
@@ -365,18 +365,40 @@ export interface CliSend {
 
 /**
  * `collie walky send` as an agent's Bash tool runs it, with no model turn: this checkout's CLI, the
- * sender pane's own Herdr markers (`HERDR_PANE_ID`, the machine's socket) and its machine's state dir.
+ * sender pane's own mux markers (Herdr's `HERDR_PANE_ID` or the core's `HC_TERMINAL_ID`, and the machine's socket) and its machine's state dir.
  * The HOME is the bridge's empty one, so the CLI can reach no bridge but the rig's own. The bridge
  * proves the sender the way it proves an agent's: the markers name the pane.
  */
 export async function cliSend(senderPane: string, to: string, text: string, machine: Machine = "lead"): Promise<CliSend> {
+  const result = await runCli(senderPane, ["send", "--json", to, text], machine);
+  const doc = asJsonObject(parseJsonLine(result.out));
+  return { code: result.code, id: asJsonString(doc?.id) ?? null, receipts: jsonRows(doc?.receipts), out: result.out.trim() };
+}
+
+export interface CliCancel {
+  /** The exit code: 0 taken back (or already in the inbox), 3 nothing to take back, 4 not the sender. */
+  readonly code: number;
+  /** One result per target: `taken`, `repeat`, `already typed`, `not held` or `elsewhere`, with the receipt. */
+  readonly results: JsonObject[];
+  readonly out: string;
+}
+
+/** `collie walky cancel <id> --json` from a pane (M62 spec 03): the bridge checks that pane sent the message. */
+export async function cliCancel(senderPane: string, id: string, machine: Machine = "lead"): Promise<CliCancel> {
+  const result = await runCli(senderPane, ["cancel", id, "--json"], machine);
+  const doc = asJsonObject(parseJsonLine(result.out));
+  return { code: result.code, results: jsonRows(doc?.results), out: result.out.trim() };
+}
+
+/** One `collie walky` verb from a pane's own environment, as `cliSend` describes it. */
+async function runCli(senderPane: string, args: readonly string[], machine: Machine): Promise<{ code: number; out: string }> {
   const run = readRun();
   const socket = machine === "lead" ? run?.socket : run?.member?.socket;
   if (socket === undefined || socket === "") throw new Error(`the rig has no ${machine} socket`);
   const dirs = machineDirs(machine);
-  const env = { PATH: process.env.PATH ?? "", HOME: dirs.bridgeHome, COLLIE_STATE_DIR: dirs.state, HERDR_PANE_ID: senderPane, HERDR_SOCKET_PATH: socket };
-  const result = await new Promise<{ code: number; out: string }>((done) => {
-    const child = spawn("bun", [join(WORKTREE, "cli", "main.ts"), "walky", "send", "--json", to, text], { env, timeout: 60_000, stdio: ["ignore", "pipe", "ignore"] });
+  const env = { PATH: process.env.PATH ?? "", HOME: dirs.bridgeHome, COLLIE_STATE_DIR: dirs.state, COLLIE_TELEMETRY: "0", ...paneMarkers(senderPane, socket, machine) };
+  return new Promise<{ code: number; out: string }>((done) => {
+    const child = spawn("bun", [join(WORKTREE, "cli", "main.ts"), "walky", ...args], { env, timeout: 60_000, stdio: ["ignore", "pipe", "ignore"] });
     let out = "";
     child.stdout.setEncoding("utf8");
     child.stdout.on("data", (chunk: string) => {
@@ -385,8 +407,6 @@ export async function cliSend(senderPane: string, to: string, text: string, mach
     child.on("error", () => done({ code: 1, out }));
     child.on("close", (code) => done({ code: code ?? 1, out }));
   });
-  const doc = asJsonObject(parseJsonLine(result.out));
-  return { code: result.code, id: asJsonString(doc?.id) ?? null, receipts: jsonRows(doc?.receipts), out: result.out.trim() };
 }
 
 /** The first line of a CLI's output that is a JSON object. */

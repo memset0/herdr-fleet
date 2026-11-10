@@ -24,13 +24,19 @@
     },
     "placeholders": {
       "texts": ["Press up to edit queued messages"],
-      "sgr": 2
+      "patterns": ["^Try \"[^\"]*\"$"],
+      "patternsNote": "Live 2026-10-30, Claude Code 2.1.314 on herdr-core: the empty box rotates faint hints (`Try \"refactor <filepath>\"`, `Try \"fix lint errors\"`, `Try \"how do I log an error?\"`). herdr-core reads the screen as plain text, so the faint attribute is gone and the hint read as a draft; a walky talky delivery stayed held as draft present. The shape counts only on a read with no styling at all; on a styled read the faint attribute decides, so a typed `Try \"…\"` stays a draft. Fixture surface/claude--v2-1-314-placeholder-plain--w120 (plain text, as herdr-core reads it).",
+      "sgr": 2,
+      "anyText": true,
+      "anyTextNote": "M78 spec 06, 2026-10-30: after a turn the empty box shows a faint prompt suggestion in free words (`cat hello.txt to verify`, `fix it`, `save it to docs/terminal-history.md`). No text, prefix or pattern names it; on herdr-core the faint attribute is gone and the suggestion read as a draft, so a send was refused draft_present. On a read with no styling the Send Protocol proves such a box by its probe: a suggestion is not in the input, so the probe character lands at the start of the box. Fixtures claude--done, claude--ghost-suggestion and the claude-lab--statusline-* set, stripped of SGR."
     },
     "volatile": {
       "above": { "maxRows": 6 },
       "below": {
         "maxRows": 8,
         "footerMaxRows": 8,
+        "hints": ["^\\s*You(?:'|’)ve used \\d+% of your (?:[\\w-]+ )*limit\\b.*$", "^\\s*tmux focus-events off\\b.*$"],
+        "hintsNote": "Live check 2026-10-30, Claude Code 2.1.312 over tmux, 120 columns: a fresh pane draws `You've used 75% of your weekly limit · resets Nov 4, 2am (…) · /usage-credits to keep using Claude Code` under the footer, and drops it once the box grows to two rows. The rows under the box went from 2 to 1 and the send ended typed_not_submitted (changed). The pattern covers any percentage and any limit name (`weekly`, `5-hour`, `Opus weekly`); the tail after `limit` is free. Fixture claude--v2312-weekly-limit-row--w120. Lab 2026-11-01, Claude Code 2.1.316 over tmux (focus-events off, the tmux default), 100 columns: while a turn runs, Claude draws `tmux focus-events off · add 'set -g focus-events on' to ~/.tmux.conf and reattach for focus tracking` under the footer, and drops it once the box holds a draft of two paragraphs (the footer turns to `ctrl+g to edit in nano`). The rows under the box went from 2 to 1 and a two-paragraph send into the turn ended typed_not_submitted (changed); the same send with focus-events on, on an idle box, and over Herdr was sent. Fixtures bridge/surface/fixtures/claude--v2316-two-paragraphs-*--w100.",
         "footerRows": [
           { "name": "agents-panel-main", "pattern": "^\\s*(?:❯\\s+)?●\\s+main(?:\\s.*)?$" },
           { "name": "agents-panel-agent", "pattern": "^\\s*(?:❯\\s+)?◯\\s+\\S.*$" },
@@ -48,15 +54,22 @@
         }
       }
     },
+    "stoppedRows": [
+      "^\\s*⎿\\s+Interrupted · What should Claude do instead\\?\\s*$"
+    ],
     "notices": [
       { "head": "^✦ (?:Heads up|You should know) ·(?:\\s|$)", "body": true },
       { "head": "^● How is Claude doing this session\\? \\(optional\\)$" },
       { "head": "^● Can Anthropic look at your session transcript to help us improve Claude Code\\?$", "letters": true },
       { "head": "^✦ Dismissed\\.(?=\\s|$)" }
     ],
+    "promptEchoes": true,
     "noticeGaps": [
       "^ +You've used \\d{1,3}% of your [\\w -]+ limit(?: ·|$)",
-      "^ *✔ Update installed · Restart to (?:update|apply)$"
+      "^ +\\d+ tokens$",
+      "^ +\\d{1,3}% until auto(?:-[\\w…]*)?$",
+      "^ *new task\\? /clear to save \\d{1,3}(?:\\.\\d)?[km]? tokens$",
+      "^ *(?:new task\\? /clear to save \\d{1,3}(?:\\.\\d)?[km]? tokens · )?✔ Update installed · (?:Restart to (?:update|apply)|/restart to apply)$"
     ]
   },
   "keys": {
@@ -90,7 +103,11 @@
     "note": "M56 spec 01 lab, 2026-10-15: inert after the type and after Backspace in every dialog without a text field, on Herdr, tmux and zellij; fallback ¤"
   },
   "paste": {
-    "bracketed": true
+    "bracketed": true,
+    "block": true,
+    "image": "\\[Image #\\d+\\]",
+    "imageNote": "Lab 2026-10-21, Claude Code 2.1.305 over herdr: a whole-text paste loses each piece (cut at a newline, and at a space before an absolute path) that is an existing .png/.jpg/.jpeg/.gif/.webp file at an absolute path, any case; each shows as `[Image #N]` before the rest, and the kept pieces are joined by newlines. A missing file, a .txt, a file without extension, a `~/` or a relative path, and a path with words after it stay text. Lab 2026-10-30, Claude Code 2.1.312 over tmux: the path is attached only when it is the WHOLE paste (`[Image #1]`); a path among other text stays text, cut onto a row of its own after the space, and a fold counts every typed line break (42 lines with a path: `+41 lines`; one 900-character line with the path: `[Pasted text #1]`). The compare takes both forms (`WholePaste.literal`), after the field case of 2026-10-29 where a two-paragraph message with the path was typed and never submitted.",
+    "blockNote": "Lab 2026-10-20, Claude Code 2.1.304 over herdr: one bracketed paste of the whole text folds to `[Pasted text #N +M lines]`, M the line breaks (60 lines: +59; 30 short lines: +29); 3 short lines land literally; a 700-word line folds to `[Pasted text #N]`."
   },
   "ask": {
     "lifetimeMs": 5000

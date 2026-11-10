@@ -30,7 +30,7 @@ import { readdir, stat } from "node:fs/promises";
 import { dirname, join } from "node:path";
 
 import { observedClaim, type Sourced } from "../cache/claims.ts";
-import type { CacheProbe } from "../cache/engine.ts";
+import type { CacheProbe, ChoiceOnly } from "../cache/engine.ts";
 import type { JsonObject, JsonValue } from "../json.ts";
 import {
   createUnknownCounter,
@@ -46,12 +46,12 @@ import {
   type RowReducer,
 } from "./reduce.ts";
 import { asRecord, asText, probeTail, tokenCount } from "./cache-probe.ts";
-import { claudeResets, effortChosenAfter, lastTwoTurns, modelChosenAfter } from "./claude-resets.ts";
+import { choicesBeforeFirstTurn, claudeResets, effortChosenAfter, lastTwoTurns, modelChoiceAfter } from "./claude-resets.ts";
 // The shared guard on what an image block may become. It lives in pi's adapter because it also
 // resolves pi's `blob:sha256:` refs against pi's own store, and `bridge/server.ts` reaches for it
 // from there for the same reason. The rule it enforces is not pi's, though: a journal is an AGENT's
 // output, so an `http://` value in a block never becomes a fetch the phone makes.
-import { resolveImageUrl } from "./pi.ts";
+import { resolveImage } from "./pi.ts";
 import {
   containedRealpath,
   exists,
@@ -100,6 +100,33 @@ function isEnvelope(tag: string, text: string): boolean {
 }
 
 /**
+ * A bracketed paste as Claude Code records it in a `user` row: the pasted text between an opening
+ * and a closing tag that both carry the same id (or an unlabelled close), each on a line of its own,
+ * with blank lines in front when nothing was typed before the paste (measured on Claude Code 2.1.287,
+ * 2026-10-05):
+ *
+ *     "\n\n<pasted_content id=\"6100\">\n…pasted lines…\n</pasted_content id=\"6100\">\n"
+ *
+ * Collie sends every long reply and voice note this way (#349), so this is the common shape of what
+ * the operator said, not an edge case. The tags are Claude Code's own and the operator never typed
+ * them; drawn as text they open the turn with markup, and in the queue row they took a tenth of its
+ * 200 characters.
+ */
+const PASTED_CONTENT = /(^|\n)<pasted_content id="([0-9a-f]+)">\n?([\s\S]*?)\n?<\/pasted_content(?:\s+id="\2")?>/g;
+
+/** The text with each recorded paste replaced by what was pasted, trimmed at both ends. A tag with no
+ *  matching close (same id) is left as it is.
+ *
+ *  TWIN: `unwrapPrompt` in cli/beacon.ts cuts the same wrapper off a `UserPromptSubmit` prompt before
+ *  it is hashed against a send's receipt. They stay two on purpose: that one takes any id, needs a
+ *  labelled close, matches anywhere and keeps the ends, and a change to it moves which prompts match
+ *  a receipt. Change the two together when Claude Code changes the wrapper. */
+export function unwrapPastes(text: string): string {
+  if (!text.includes("<pasted_content ")) return text;
+  return text.replace(PASTED_CONTENT, "$1$3").trim();
+}
+
+/**
  * Classify a `user` row's string content.
  *
  * Only about half of these are things a human typed — Claude Code reuses the user role as the
@@ -141,7 +168,8 @@ export function classifyUserText(
     return summary ? { role: "note", text: summary } : null;
   }
 
-  return text.trim() === "" ? null : { role: "user", text };
+  const spoken = unwrapPastes(text);
+  return spoken.trim() === "" ? null : { role: "user", text: spoken };
 }
 
 /**
@@ -167,8 +195,51 @@ function toolResultText(content: JsonValue | undefined): string {
     .join("\n");
 }
 
-/** A `tool` part's answered result — {@link Clamped} plus the error flag the result row carried. */
-type ToolResult = Clamped & { isError?: boolean; denied?: boolean };
+/**
+ * An image block as a URL the phone may load, or `null`.
+ *
+ * Claude's own image shape, measured over 17 blocks in the 500 newest sessions here:
+ * `{ type: "image", source: { type: "base64", media_type, data } }`, png or jpeg. It is NOT pi's
+ * `{ data, mimeType }`, which is why the shared resolver is fed the two fields rather than the block.
+ * A `source.type` of `url` is refused for pi's reason: a reference this build will not load
+ * contributes nothing, rather than a broken <img>. A base64 picture over the cap comes back as a
+ * `note` (journal/pi.ts § MAX_INLINE_IMAGE_CHARS), so the caller can say it was left out.
+ */
+function imageBlock(b: JsonObject): { url: string; mimeType?: string } | { note: string } | null {
+  const source = b.source;
+  const src = source !== null && typeof source === "object" && !Array.isArray(source) ? source : {};
+  const mimeType = typeof src.media_type === "string" ? src.media_type : undefined;
+  const image = src.type === "base64" && typeof src.data === "string" ? resolveImage(src.data, mimeType) : null;
+  if (image === null || "note" in image) return image;
+  return mimeType === undefined ? { url: image.url } : { url: image.url, mimeType };
+}
+
+/** What a tool result's pictures come to: the first loadable URL, and a note for each one left out for size. */
+interface ResultImage {
+  readonly url?: string;
+  readonly notes: readonly string[];
+}
+
+/**
+ * The first loadable image in a `tool_result.content`: what `Read` returns for a picture, and what a
+ * screenshot tool returns. A plain-string content has none. Each picture over the cap adds a note.
+ */
+function toolResultImage(content: JsonValue | undefined): ResultImage {
+  const notes: string[] = [];
+  let url: string | undefined;
+  if (!Array.isArray(content)) return { notes };
+  for (const b of content) {
+    if (b === null || typeof b !== "object" || Array.isArray(b) || b.type !== "image") continue;
+    const image = imageBlock(b);
+    if (image === null) continue;
+    if ("note" in image) notes.push(image.note);
+    else if (url === undefined) url = image.url;
+  }
+  return url === undefined ? { notes } : { url, notes };
+}
+
+/** A `tool` part's answered result — {@link Clamped} plus the error flag and image the result row carried. */
+type ToolResult = Clamped & { isError?: boolean; imageUrl?: string; denied?: boolean };
 
 /**
  * An error result that is a REFUSAL, not a failure.
@@ -181,10 +252,13 @@ const REFUSED =
   /The user doesn't want to proceed|Request interrupted by user for tool use|user rejected|was rejected|dismissed the question/i;
 
 /** One row's `tool_result` payload, folded onto the call it answers. */
-function toolResult(text: string, isError: boolean): ToolResult {
+function toolResult(text: string, isError: boolean, image: ResultImage = { notes: [] }): ToolResult {
   const result: ToolResult = clamp(text, MAX_RESULT_CHARS);
+  // The note rides after the clamp, so a long result never cuts it off.
+  if (image.notes.length > 0) result.text = [result.text, ...image.notes].filter((line) => line !== "").join("\n");
   // Assigned, never conditionally spread: `isError` is ABSENT when false, not `false`.
   if (isError) result.isError = true;
+  if (image.url !== undefined) result.imageUrl = image.url;
   if (isError && REFUSED.test(text)) result.denied = true;
   return result;
 }
@@ -354,6 +428,10 @@ const QUEUE_ID_CHARS = 256;
 /** How much raw text {@link readQueueEntry} looks at: room for colour codes and runs of spaces. */
 const QUEUE_READ_CHARS = QUEUE_ID_CHARS * 16;
 
+/** How much raw text {@link readQueueEntry} reads for the operator's own words, so a recorded paste's
+ *  closing tag is still in the read and {@link unwrapPastes} can take both tags off. */
+const QUEUE_PASTE_READ_CHARS = QUEUE_READ_CHARS * 8;
+
 /** ANSI off, whitespace runs to one space, ends trimmed: the spelling-proof form of a message. */
 function queueNormal(text: string): string {
   return stripAnsi(text).replace(/\s+/g, " ").trim().slice(0, QUEUE_ID_CHARS);
@@ -383,7 +461,22 @@ function readQueueEntry(content: string): QueueEntry {
   }
   const notice = QUEUE_NOTICES.find((prefix) => text.startsWith(prefix));
   if (notice !== undefined) return { kind: notice, id: queueNormal(text), text: null };
-  return { kind: null, id: queueNormal(text), text: text === "" ? null : clamp(text, MAX_QUEUED_CHARS).text };
+  // Unwrapped BEFORE the cap, or the tags spend the row's budget. A cut message ends in "…", so the
+  // row never reads as the whole of what is waiting. Still bounded, but wider than `text`: a paste's
+  // closing tag sits after the whole pasted text, and a read cut short of it leaves both tags in. A
+  // paste longer than the wider read keeps its tags, which costs the row its look, never its identity:
+  // both sides of a match are cut the same way.
+  const queued = unwrapPastes(stripAnsi(content.slice(0, QUEUE_PASTE_READ_CHARS))).trim();
+  return {
+    kind: null,
+    id: queueNormal(queued),
+    text:
+      queued === ""
+        ? null
+        : queued.length <= MAX_QUEUED_CHARS
+          ? queued
+          : `${queued.slice(0, MAX_QUEUED_CHARS - 1).trimEnd()}…`,
+  };
 }
 
 /** A string content, or the first text block of an array one: what a delivered message says. */
@@ -834,27 +927,19 @@ export function createClaudeReducer(opts: { includeSidechains?: boolean } = {}):
         // A `continue` over the BLOCK, not the row: the other blocks of this turn still count.
         if (b === null || typeof b !== "object" || Array.isArray(b)) continue;
         if (b.type === "text" && typeof b.text === "string") {
-          if (b.text.trim() !== "")
-            parts.push({ kind: "text", ...clamp(stripAnsi(b.text), MAX_TEXT_CHARS) });
+          if (b.text.trim() !== "") {
+            const text = type === "user" || absorbed !== null ? unwrapPastes(stripAnsi(b.text)) : stripAnsi(b.text);
+            if (text.trim() !== "") parts.push({ kind: "text", ...clamp(text, MAX_TEXT_CHARS) });
+          }
         } else if (b.type === "thinking" && typeof b.thinking === "string") {
           if (b.thinking.trim() !== "")
             parts.push({ kind: "thinking", ...clamp(stripAnsi(b.thinking), MAX_TEXT_CHARS) });
         } else if (b.type === "image") {
-          // Claude's own image shape, measured over 17 blocks in the 500 newest sessions here:
-          // `{ type: "image", source: { type: "base64", media_type, data } }`, png or jpeg. It is
-          // NOT pi's `{ data, mimeType }`, which is why the shared resolver is fed the two fields
-          // rather than the block. A `source.type` of `url` is refused for pi's reason: a reference
-          // this build will not load contributes no part, rather than a broken <img>.
-          const source = b.source;
-          const src = source !== null && typeof source === "object" && !Array.isArray(source) ? source : {};
-          const mimeType = typeof src.media_type === "string" ? src.media_type : undefined;
-          const url = src.type === "base64" && typeof src.data === "string" ? resolveImageUrl(src.data, mimeType) : null;
-          if (url !== null) {
-            // Assigned, never conditionally spread: an unnamed mime type leaves the key OFF.
-            const part: Extract<TranscriptPart, { kind: "image" }> = { kind: "image", url };
-            if (mimeType !== undefined) part.mimeType = mimeType;
-            parts.push(part);
-          }
+          const image = imageBlock(b);
+          if (image === null) continue;
+          // A picture over the cap becomes a text line, so the person sees it was left out.
+          if ("note" in image) parts.push({ kind: "text", text: image.note });
+          else parts.push({ kind: "image", ...image });
         } else if (b.type === "tool_use") {
           const name = typeof b.name === "string" ? b.name : "tool";
           const summary = summarizeToolInput(b.input);
@@ -880,6 +965,7 @@ export function createClaudeReducer(opts: { includeSidechains?: boolean } = {}):
           // Tool output routinely carries colour codes (any command run through a shell) — strip
           // them, since this view renders text nodes rather than interpreting escapes.
           const resultText = stripAnsi(toolResultText(b.content));
+          const image = toolResultImage(b.content);
           if (target) {
             pendingTools.delete(id);
             // `toolUseResult` rides on the ROW, not on the content block: it is Claude's own record of
@@ -901,18 +987,18 @@ export function createClaudeReducer(opts: { includeSidechains?: boolean } = {}):
               const aid = target.part.call?.kind === "task" ? target.part.call.agentId : undefined;
               if (aid !== undefined) rememberPending(asyncTasks, aid, target);
             } else {
-              target.part.result = toolResult(resultText, b.is_error === true);
+              target.part.result = toolResult(resultText, b.is_error === true, image);
             }
             // The mutation above landed in a turn that went out rows ago. Name it.
             changed.add(target.uuid);
-          } else if (resultText.trim() !== "") {
+          } else if (resultText.trim() !== "" || image.url !== undefined || image.notes.length > 0) {
             // Orphan result (its call fell outside a tail-read window) — keep it, unattached, so the
             // window never silently drops output.
             parts.push({
               kind: "tool",
               name: "result",
               summary: "",
-              result: toolResult(resultText, b.is_error === true),
+              result: toolResult(resultText, b.is_error === true, image),
             });
           }
         }
@@ -1308,12 +1394,15 @@ export function claudeJournal(roots: string | readonly string[]): JournalAdapter
     parse: (text) => parseClaudeTranscript(text),
     reducer: () => createClaudeReducer(),
     cacheProbe: (ref) => claudeCacheProbe(source, ref),
+    choiceProbe: (ref) => claudeChoiceProbe(source, ref),
     // Proven 2026-10-07 on a throwaway pane under Herdr 0.9.3: with two messages queued behind a
     // running tool, `ctrl+Enter` through `POST /api/pane/:id/keys` made Claude Code write a `remove`
     // row for BOTH (`absorbed_mid_turn`) and the "ctrl+enter to send now" hint went away. NOT on tmux
     // 3.6b or zellij 0.44.2, which deliver it as a plain Enter (mux/keys.ts `EXTENDED_ONLY_CHORDS`);
     // the chat route drops this list there (server.ts `chatBodyForMux`).
     sendQueuedNow: ["ctrl+Enter"],
+    // The `queue-operation` rows are the queue (createQueueTracker): the cards come from them (ADR 0122).
+    recordsQueue: true,
   };
 }
 
@@ -1363,6 +1452,26 @@ function ttlFromUsage(usage: JsonObject, path: string): Sourced<number> | undefi
 }
 
 /**
+ * The `/model` and `/effort` choices in a log whose window holds no turn, or null. A session that has
+ * only just started names its model this way: Claude Code writes the `/model` record before the first
+ * message exists. The window holding a turn answers null, because {@link claudeCacheProbe} reads the
+ * choices after that turn itself. Nothing about the cache comes from it.
+ */
+async function claudeChoiceProbe(source: ClaudeTranscriptSource, ref: AgentSessionRef): Promise<ChoiceOnly | null> {
+  const tail = await probeTail(source, ref);
+  if (tail === null || lastTwoTurns(tail.lines) !== null) return null;
+  const { model, effort } = choicesBeforeFirstTurn(tail.lines);
+  if (model === undefined && effort === undefined) return null;
+  const choices: ChoiceOnly = {};
+  if (model !== undefined) {
+    choices.selectedModel = model.name;
+    choices.selectedModelAt = model.at;
+  }
+  if (effort !== undefined) choices.effort = effort;
+  return choices;
+}
+
+/**
  * The newest turn's reading, plus every reset event around it.
  *
  * One walk of the same 128 KB tail finds the newest turn and the turn before it
@@ -1378,7 +1487,8 @@ async function claudeCacheProbe(
   if (tail === null) return null;
   const turns = lastTwoTurns(tail.lines);
   // The tail held no assistant turn at all — a session that has only just started, or one turn larger
-  // than the window. The tracker keeps whatever the last successful probe left behind.
+  // than the window. The tracker keeps whatever the last successful probe left behind, and asks
+  // {@link claudeChoiceProbe} for a `/model` chosen before the first message.
   if (turns === null) return null;
   const { entry, message, at, stamp } = turns.newest;
   const usage = asRecord(message.usage) ?? {};
@@ -1394,8 +1504,11 @@ async function claudeCacheProbe(
   if (observed !== undefined) probe.observedTtlSeconds = observed;
   const model = asText(message.model);
   if (model !== undefined) probe.model = model;
-  const chosen = modelChosenAfter(turns);
-  if (chosen !== undefined) probe.selectedModel = chosen;
+  const chosen = modelChoiceAfter(turns);
+  if (chosen !== undefined) {
+    probe.selectedModel = chosen.name;
+    probe.selectedModelAt = chosen.at;
+  }
   // Claude Code stamps `effort` on each assistant record; an `/effort` since then wins (#463).
   const effort = effortChosenAfter(turns) ?? asText(entry.effort);
   if (effort !== undefined) probe.effort = effort;

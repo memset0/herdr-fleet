@@ -1,11 +1,10 @@
 import { useState } from "react";
-import { ChevronRight, Info, TriangleAlert, User, Wrench } from "lucide-react";
+import { Icon } from "@/components/icons/icon";
 
 import { AgentIcon } from "@/components/agent-icon";
+import { JournalImage } from "@/components/journal-image";
 import { MarkdownText } from "@/components/markdown-text";
 import { cn } from "@/lib/utils";
-import { imageSrc } from "@/lib/api";
-import { useAuthedUrl } from "@/lib/authed-url";
 import { splitHighlight } from "@/lib/transcript-search";
 import type { Scope } from "@/lib/scope";
 import type { TranscriptEntry, TranscriptPart } from "@/lib/types";
@@ -63,42 +62,6 @@ function Highlight({ text, query }: { text: string; query: string }) {
 }
 
 /**
- * One image out of the journal: a picture an agent attached, spoke, or a tool returned.
- *
- * It is an ANCHOR to the bytes, not a bare `<img>`. That is what makes it keyboard reachable and
- * long-pressable — the same affordance the mirror's image card has — and it is the only way to see
- * a screenshot at full size on a phone.
- *
- * `imageSrc` decides whether the reference is loadable AT ALL (`lib/api.ts`): a blob path on the
- * host the pane belongs to, or inline bytes, and nothing else. A journal is an agent's own output,
- * so a reference it refuses renders nothing rather than a broken image.
- */
-function JournalImage({
-  ref_,
-  alt,
-  scope,
-}: {
-  ref_: string;
-  alt: string;
-  scope?: Scope;
-}) {
-  // Vetted first, then loaded with the pairing token (lib/authed-url.ts): reads need it (ADR 0086),
-  // and an `<img src>` cannot send it. Nothing is drawn until the bytes are here.
-  const { url } = useAuthedUrl(imageSrc(ref_, scope));
-  if (url === null) return null;
-  return (
-    <a href={url} target="_blank" rel="noopener noreferrer" className="inline-block cursor-zoom-in">
-      <img
-        src={url}
-        alt={alt}
-        className="max-h-96 w-auto max-w-full rounded border object-contain shadow-xs"
-        loading="lazy"
-      />
-    </a>
-  );
-}
-
-/**
  * A tool call: its one-line summary always, its output behind a tap. Collapsed by default because a
  * thread is mostly tool traffic (705 of 914 turns in a real session) and expanding it all would bury
  * the prose you opened the history to read.
@@ -112,23 +75,31 @@ function ToolPart({
   query: string;
   scope?: Scope;
 }) {
-  const [open, setOpen] = useState(false);
+  const [toggled, setToggled] = useState<{ readonly query: string; readonly open: boolean } | null>(null);
   const result = part.result;
   const isError = result?.isError === true;
+  // An empty `result.text` with no image is not expandable — same as no result, so History never
+  // shows a chevron that opens onto an empty border.
+  const expandable = result !== undefined && (result.text !== "" || Boolean(result.imageUrl));
+  // A find hit in the output unfolds the call so the match is visible on screen; a tap overrides
+  // that for the current query without leaving the call stuck open once the search clears.
+  const q = query.trim().toLowerCase();
+  const hit = q !== "" && result !== undefined && result.text.toLowerCase().includes(q);
+  const open = expandable && (toggled !== null && toggled.query === q ? toggled.open : hit);
 
   return (
     <div className="rounded-md border bg-muted/40">
       <button
         type="button"
-        onClick={() => setOpen((v) => !v)}
-        disabled={!result}
-        aria-expanded={result ? open : undefined}
+        onClick={() => expandable && setToggled({ query: q, open: !open })}
+        disabled={!expandable}
+        aria-expanded={expandable ? open : undefined}
         className="flex w-full items-center gap-1.5 px-2 py-1.5 text-left disabled:opacity-100"
       >
         {isError ? (
-          <TriangleAlert className="size-3.5 shrink-0 text-destructive" />
+          <Icon name="error" className="size-3.5 shrink-0 text-destructive" />
         ) : (
-          <Wrench className="size-3.5 shrink-0 text-muted-foreground" />
+          <Icon name="tool" className="size-3.5 shrink-0 text-muted-foreground" />
         )}
         <span className="shrink-0 font-mono text-xs font-semibold">{part.name}</span>
         {part.summary && (
@@ -137,8 +108,9 @@ function ToolPart({
             <Highlight text={part.summary} query={query} />
           </span>
         )}
-        {result && (
-          <ChevronRight
+        {expandable && (
+          <Icon
+            name="disclosure"
             className={`size-3.5 shrink-0 text-muted-foreground transition-transform ${open ? "rotate-90" : ""}`}
           />
         )}
@@ -152,7 +124,7 @@ function ToolPart({
           )}
           {result.text && (
             <pre className="overflow-x-auto px-2 py-1.5 font-mono text-[11px] leading-snug [font-variant-ligatures:none] whitespace-pre-wrap">
-              {result.text}
+              <Highlight text={result.text} query={query} />
               {result.truncated && (
                 <span className="text-muted-foreground">{`\n${t("transcript.outputTruncated")}`}</span>
               )}
@@ -239,7 +211,7 @@ function Turn({
     return (
       <div className="rounded-lg border border-dashed bg-muted/30 px-3 py-2">
         <div className="mb-1 flex items-center gap-1.5 text-[11px] font-semibold label-caps text-muted-foreground">
-          <Info className="size-3" />
+          <Icon name="info" className="size-3" />
           {entry.role === "summary" ? t("transcript.summaryLabel") : t("transcript.systemLabel")}
           {time && ` · ${time}`}
         </div>
@@ -260,7 +232,7 @@ function Turn({
       {showHeader && (
         <div className="mb-1 flex items-center gap-1.5">
           {isUser ? (
-            <User className="size-3.5 text-status-working" />
+            <Icon name="user-turn" className="size-3.5 text-status-working" />
           ) : (
             <AgentIcon agent={agent ?? "claude"} className="size-4" />
           )}
@@ -308,7 +280,7 @@ function HiddenTools({ count, onShow }: { count: number; onShow: () => void }) {
       // the transcript and not as an action the turn is offering.
       className="flex min-h-11 w-full items-center gap-2 text-left text-xs text-muted-foreground transition-colors active:bg-muted/60"
     >
-      <Wrench aria-hidden className="size-3.5 shrink-0" />
+      <Icon name="tool" aria-hidden className="size-3.5 shrink-0" />
       {tn("transcript.tools.hidden", count)}
     </button>
   );

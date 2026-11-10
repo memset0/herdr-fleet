@@ -15,6 +15,7 @@ import type {
   PaneChatResponse,
   PaneChangeDiffResponse,
   PaneChangesResponse,
+  PaneHistoryResponse,
   ServerSummary,
   SessionSummary,
   SnapshotResponse,
@@ -23,9 +24,14 @@ import type {
   TranscriptEntry,
   TranscriptPart,
   WorkspaceView,
+  PinFull,
+  PinRow,
+  LaunchersResponse,
 } from "@/lib/types";
 import { asJsonObject, asJsonString, parseJsonObject, type JsonObject } from "@/lib/json";
 import type { Surface } from "@/lib/surface/surface";
+// The import attribute is what lets Playwright's Node loader read this JSON too.
+import kiroJournalEntries from "@/fixtures/kiro-journal-entries.json" with { type: "json" };
 
 import { censusFor, fixtureMachinesSolo, historyFor } from "./machine-fixtures";
 import type { WalkyReceipt, WalkyRow, WalkySendBody } from "@/lib/walky";
@@ -294,6 +300,42 @@ export const fixtureNewTab: Extract<CreateResponse, { ok: true }> = {
 };
 
 /**
+ * A machine's launcher list with something to offer (M91, the New tab sheet): two agents Collie knows,
+ * one not installed, an operator's agent row that skips prompts, the shell, and one command row. The
+ * default `/api/launchers` world below sends none of this, so every "+" there still makes a bare shell;
+ * a case that wants the sheet serves this. Shared by the unit layer and the browser tier's stub.
+ */
+export const fixtureLaunchersWithAgents: LaunchersResponse = {
+  launchers: [],
+  home: "/home/you",
+  harnesses: [
+    { id: "claude", label: "Claude Code", found: true },
+    { id: "codex", label: "Codex", found: false },
+  ],
+  items: [
+    { key: "harness:claude", start: { harness: "claude" }, group: "agents", label: "Claude Code", harness: "claude", source: "builtin", noPrompts: false, branch: true, available: true },
+    { key: "harness:codex", start: { harness: "codex" }, group: "agents", label: "Codex", harness: "codex", source: "builtin", noPrompts: false, branch: true, available: false, reason: "not_found" },
+    { key: "shell", start: { shell: true }, group: "commands", label: "Shell", source: "builtin", noPrompts: false, branch: true, available: true },
+    { key: "row:htop", start: { command: "htop" }, group: "commands", label: "htop", command: "htop", source: "operator", noPrompts: false, branch: false, available: true },
+  ],
+};
+
+/**
+ * What `POST /api/launch` answers for a start beside a pane: the fresh pane of a new tab in `webapp`
+ * (w1), running what was asked. Shared by the unit layer and the browser tier's stub.
+ */
+export const fixtureLaunchedTab: Extract<CreateResponse, { ok: true }> = {
+  ok: true,
+  pane: {
+    paneId: "w1:p7",
+    workspaceId: "w1",
+    workspaceLabel: "webapp",
+    tabId: "w1:t7",
+    cwd: "/home/you/webapp",
+  },
+};
+
+/**
  * What `POST /api/workspace` answers: the fresh shell pane of a new space, opened in the fixture
  * operator's home. Shared by the unit layer's handler below and the browser tier's stub
  * (e2e/fixtures/api.ts), which swaps in the folder a create named, the way a multiplexer reports it.
@@ -391,6 +433,50 @@ export const fixtureOmpAskBatchChat = ompAskChat("Where should the note go?", [
   },
 ]);
 
+/** The same pane used by the default API fixture, with Kiro's journal availability. */
+export const KIRO_PANE_ID = fixtureAgents[0]!.paneId;
+
+/** A Kiro pane can draw Chat without exposing its session ID or foreground process. */
+export const fixtureKiroSnapshot: SnapshotResponse = {
+  ...fixtureSnapshot,
+  agents: [{ ...fixtureAgents[0]!, agent: "kiro", hasSession: true }],
+  shellPanes: [],
+};
+
+/**
+ * The bridge's Kiro journal parse of the session kiro-cli 2.32.0 saved in
+ * `bridge/journal/fixtures/kiro/messages.jsonl`. The JSON is committed
+ * because the browser runner cannot load the bridge's parser; `bridge/journal/kiro-journal-golden.test.ts`
+ * fails when the parser stops producing it.
+ */
+export const fixtureKiroEntries: TranscriptEntry[] =
+  // SAFETY: `bridge/journal/kiro-journal-golden.test.ts` checks this file equals the Kiro journal's
+  // `parse` output, which is a TranscriptEntry[].
+  kiroJournalEntries as TranscriptEntry[];
+
+/** Kiro's read-only History: every saved entry, on one page. */
+export const fixtureKiroHistory: Extract<PaneHistoryResponse, { available: true }> = {
+  paneId: KIRO_PANE_ID,
+  available: true,
+  entries: fixtureKiroEntries,
+  hasMore: false,
+  total: fixtureKiroEntries.length,
+  fileTruncated: false,
+};
+
+/** Kiro's live Chat window: the same entries, numbered as the default Chat fixture numbers its own. */
+export const fixtureKiroChat: Extract<PaneChatResponse, { available: true }> = {
+  paneId: KIRO_PANE_ID,
+  available: true,
+  page: "live",
+  gen: FIXTURE_CHAT_GEN,
+  rev: 1,
+  head: FIXTURE_SEQ_BASE + fixtureKiroEntries.length - 1,
+  oldest: FIXTURE_SEQ_BASE,
+  hasOlder: false,
+  upserts: fixtureKiroEntries.map((entry, index) => Object.assign({}, entry, { seq: FIXTURE_SEQ_BASE + index })),
+};
+
 /**
  * A journal image reference in the ONE shape `imageSrc` accepts: a blob path on the owning collie,
  * `/api/blobs/<64 hex>` (`lib/api.ts` § BLOB_REF). Anything else is refused there and renders as no
@@ -448,6 +534,38 @@ const BOX_RULE = "─".repeat(40);
  */
 export function paneTextWithDraft(base = "hello from the pane"): string {
   return `${base}\n${BOX_RULE}\n❯ ${typedDraft}\n${BOX_RULE}`;
+}
+
+const AUTH_BOX_INNER = 59;
+/**
+ * The long Authentication box's last address. It is `?c=LAST-CODE`, not `?user_code=ABCD-EFGH`: that
+ * URL is 62 characters and the 61-wide box holds 57 cells per row, so it would break the box's edges.
+ */
+export const AUTH_BOX_LAST_URL = "https://example.awsapps.com/start/#/device?c=LAST-CODE";
+/**
+ * A Claude pane showing a filled Authentication box of `rowCount` text rows over the live input box,
+ * the last row `AUTH_BOX_LAST_URL`. `label` words the filler rows, so two calls draw one box with
+ * other text.
+ */
+export function paneTextWithAuthBox(rowCount: number, label = "Login output row", innerWidth = AUTH_BOX_INNER): string {
+  const row = (text: string): string => `│ ${text.padEnd(innerWidth - 2)} │`;
+  const filler = Array.from({ length: rowCount - 1 }, (_, i) => row(`${label} ${i + 1}`));
+  return [
+    "Claude Code v2.1.307",
+    "",
+    `╭${"─".repeat(innerWidth)}╮`,
+    row("Authentication"),
+    row(""),
+    ...filler,
+    row(AUTH_BOX_LAST_URL),
+    `╰${"─".repeat(innerWidth)}╯`,
+    "",
+    "─".repeat(innerWidth + 2),
+    `❯ ${typedDraft}`,
+    "─".repeat(innerWidth + 2),
+    "  Context: --% │ 💰 $0.00",
+    "  -- INSERT -- ⏵⏵ auto mode on (shift+tab to cycle)",
+  ].join("\n");
 }
 
 // ── The fake bridge's Send Protocol (M56 spec 06) ────────────────────────────────────────────────
@@ -610,14 +728,55 @@ let walkyPosts: WalkySendBody[] = [];
 export function setWalkyRows(rows: readonly WalkyRow[]): void {
   walkyRows = [...rows];
 }
+let walkyTakeBacks: string[] = [];
+/** The take-back routes the fake bridge took in this test (M62 spec 03): `cancel <id>` and `drop <pane> <id>`, oldest first. */
+export function recordedWalkyTakeBacks(): string[] {
+  return [...walkyTakeBacks];
+}
 /** The `POST /api/walky` bodies the fake bridge took in this test, oldest first. */
 export function recordedWalkyPosts(): readonly WalkySendBody[] {
   return walkyPosts;
 }
+// ── The fake bridge's pinned messages (M90) ─────────────────────────────────────────────────────
+// `GET /api/pane/:id/pins` lists what a test set with `setMessagePins` (none by default), newest first, as the
+// bridge does: an excerpt and the length, no text. `GET ?pin=<id>` answers the whole pin, `POST { itemId }`
+// keeps a reply-shaped pin named after the item and answers 201 (200 for a block already pinned), and
+// `DELETE ?pin=<id>` drops one and answers 204.
+let messagePins: PinFull[] = [];
+let messagePinPosts: string[] = [];
+let messagePinMint = 0;
+/** The pins the fake bridge holds for every pane, oldest first on the way in. */
+export function setMessagePins(pins: readonly PinFull[]): void {
+  messagePins = [...pins];
+}
+/** The item ids `POST /api/pane/:id/pins` took in this test, oldest first. */
+export function messagePinItemIds(): readonly string[] {
+  return messagePinPosts;
+}
+/** The pins the fake bridge holds now, oldest first. */
+export function heldMessagePins(): readonly PinFull[] {
+  return messagePins;
+}
+/** A pin as a test writes one down: only what it cares about is named. */
+export function fixturePin(over: Partial<PinFull> & { itemId: string }): PinFull {
+  return { id: `pin-${over.itemId}`, kind: "reply", text: `text of ${over.itemId}`, anchor: `text of ${over.itemId}`, pinnedAt: 1_700_000_000_000, ...over };
+}
+/** Reset between tests (msw.ts afterEach). */
+export function resetMessagePins(): void {
+  messagePins = [];
+  messagePinPosts = [];
+  messagePinMint = 0;
+}
+function pinRowOf(pin: PinFull): PinRow {
+  const { text, ...rest } = pin;
+  return { ...rest, excerpt: text.slice(0, 400), textLength: text.length };
+}
+
 /** Reset between tests (msw.ts afterEach). */
 export function resetWalky(): void {
   walkyRows = [];
   walkyPosts = [];
+  walkyTakeBacks = [];
 }
 function walkyReceipt(id: string, to: string): WalkyReceipt {
   return { id, state: "accepted", verified: "local", at: Date.now(), by: to.split("/")[0] ?? "solo", target: to };
@@ -937,6 +1096,28 @@ export const handlers = [
   // The session page's recent sends (M56 spec 09): none, unless a test says otherwise.
   http.get("/api/send/receipts", () => HttpResponse.json({ receipts: [] })),
   http.get(/\/api\/pane\/[^/]+\/walky/, () => HttpResponse.json({ messages: walkyRows })),
+  http.get(/\/api\/pane\/[^/]+\/pins$/, ({ request }) => {
+    const wanted = new URL(request.url).searchParams.get("pin");
+    if (wanted === null) return HttpResponse.json({ pins: messagePins.toReversed().map(pinRowOf) });
+    const found = messagePins.find((pin) => pin.id === wanted);
+    if (found === undefined) return HttpResponse.json({ error: "pin.not_found", code: "pin.not_found", message: "that pin does not exist" }, { status: 404 });
+    return HttpResponse.json({ pin: found });
+  }),
+  http.post(/\/api\/pane\/[^/]+\/pins$/, async ({ request }) => {
+    const itemId = asJsonString(parseJsonObject(await request.text())?.itemId) ?? "";
+    messagePinPosts.push(itemId);
+    const held = messagePins.find((pin) => pin.itemId === itemId);
+    if (held !== undefined) return HttpResponse.json({ pin: held }, { status: 200 });
+    messagePinMint += 1;
+    const made = fixturePin({ itemId, id: `made-${messagePinMint}`, pinnedAt: 1_800_000_000_000 + messagePinMint });
+    messagePins.push(made);
+    return HttpResponse.json({ pin: made }, { status: 201 });
+  }),
+  http.delete(/\/api\/pane\/[^/]+\/pins$/, ({ request }) => {
+    const wanted = new URL(request.url).searchParams.get("pin");
+    messagePins = messagePins.filter((pin) => pin.id !== wanted);
+    return new HttpResponse(null, { status: 204 });
+  }),
   http.post("/api/walky", async ({ request }) => {
     const body = parseJsonObject(await request.text());
     const posted: WalkySendBody = {
@@ -946,6 +1127,7 @@ export const handlers = [
     };
     const replyTo = asJsonString(body?.replyTo);
     if (replyTo !== undefined) posted.replyTo = replyTo;
+    if (body?.wake === true) posted.wake = true;
     walkyPosts.push(posted);
     if (posted.to === "all") {
       return HttpResponse.json({ receipts: ["bluefin/w1:p1", "minibuch/w2:p1"].map((to) => walkyReceipt(posted.id, to)) });
@@ -957,6 +1139,17 @@ export const handlers = [
   }),
   // No agents, no shell panes, no refusals; a test that needs more overrides it with server.use(...).
   http.get("/api/walky/who", () => HttpResponse.json({ targets: [], skipped: [], refusals: null })),
+  // The take-backs (M62 spec 03): each answers one `taken` result for the row's own target.
+  http.post("/api/walky/:id/cancel", ({ params }) => {
+    const id = String(params.id);
+    walkyTakeBacks.push(`cancel ${id}`);
+    return HttpResponse.json({ results: [{ target: "local/w1:p1", result: "taken", receipt: { ...walkyReceipt(id, "local/w1:p1"), state: "inbox-only", reason: "cancelled by sender" } }] });
+  }),
+  http.post("/api/pane/:pane/walky/:id/drop", ({ params }) => {
+    const id = String(params.id);
+    walkyTakeBacks.push(`drop ${String(params.pane)} ${id}`);
+    return HttpResponse.json({ results: [{ target: "local/w1:p1", result: "taken", receipt: { ...walkyReceipt(id, "local/w1:p1"), state: "inbox-only", reason: "dropped by the pane's owner" } }] });
+  }),
   http.get("/api/snapshot", () => HttpResponse.json(fixtureSnapshot)),
   http.get(/\/api\/pane\/[^/]+$/, () =>
     HttpResponse.json({ paneId: "w1:p1", text: paneTextWithDraft(), truncated: false, revision: 1 }),
@@ -1084,11 +1277,11 @@ export const handlers = [
     return HttpResponse.json({ snoozedUntil });
   }),
   http.get("/api/notifications/prefs", () =>
-    HttpResponse.json({ blocked: true, done: false, updates: true, cache: false, machines: true }),
+    HttpResponse.json({ blocked: true, done: false, individual: true, updates: true, cache: false, machines: true }),
   ),
-  http.post<never, Partial<{ blocked: boolean; done: boolean; updates: boolean; cache: boolean }>>("/api/notifications/prefs", async ({ request }) => {
+  http.post<never, Partial<{ blocked: boolean; done: boolean; individual: boolean; updates: boolean; cache: boolean }>>("/api/notifications/prefs", async ({ request }) => {
     const patch = await request.json();
-    return HttpResponse.json({ blocked: true, done: false, updates: true, cache: false, machines: true, ...patch });
+    return HttpResponse.json({ blocked: true, done: false, individual: true, updates: true, cache: false, machines: true, ...patch });
   }),
   // The prompt-cache watch list (ADR 0042). The default world watches NOTHING and has the global switch
   // off, which is a fresh install: a test that wants a watched pane overrides these three.
@@ -1112,6 +1305,18 @@ export const handlers = [
   ),
   http.post("/api/pair", () =>
     HttpResponse.json({ error: "no-pending" }, { status: 400 }),
+  ),
+  // The anonymous install count (M86 spec 02). The default world is a CI run: off, so no notice
+  // stands on the dashboard and no test meets a card it did not ask for.
+  http.get("/api/telemetry", () =>
+    HttpResponse.json({ on: false, decidedBy: "ci", setting: null, next: null }),
+  ),
+  // The trouble tally (M86 spec 05): the bridge answers 204 whether or not it counted. A trouble card
+  // in any test posts here once, so the default world takes it quietly.
+  http.post("/api/telemetry/trouble", () => new HttpResponse(null, { status: 204 })),
+  // The report sheet's setup block, read by the trouble signal too.
+  http.get("/api/report/context", () =>
+    HttpResponse.json({ collie: "1.27.0", line: "stable", os: "linux", arch: "x64", mux: "herdr", harness: "claude", screenable: false }),
   ),
   http.post("/api/update/check", () =>
     HttpResponse.json({

@@ -198,14 +198,159 @@ describe("detectPromptSelect — the plan-approval feedback row is an INPUT, in 
     expect(model!.feedback).toBeUndefined();
   });
 
-  it("AskUserQuestion's free-text row is modelled as a field Collie never types into", () => {
-    // "Type something." is never a button. Measured on Claude Code 2.1.283: with the pointer on it a
-    // digit is typed into the field, so it is modelled with the `free-text` purpose, which locks the
-    // other buttons while focused and never offers the plan flow's editor or keystroke plan.
+  it("AskUserQuestion's free-text row is modelled as the answer field Collie types into", () => {
+    // "Type something." is never a button. With the pointer on it a digit is typed into the field, so
+    // it locks the other buttons while focused; it carries the `answer` purpose (ADR 0113) and where
+    // the pointer sits relative to it, which the walk onto a filled field reads.
     const model = detectPromptSelect(fixtureLines("claude--select-menu.txt"))!;
     expect(model.family).toBe("select");
     expect(model.options.map((o) => o.label)).not.toContain("Type something.");
-    expect(model.feedback).toEqual({ key: expect.any(String), focused: false, text: "", purpose: "free-text" });
+    expect(model.feedback).toEqual({
+      key: expect.any(String),
+      focused: false,
+      text: "",
+      purpose: "answer",
+      pointer: "above",
+    });
+  });
+
+  describe("the AskUserQuestion answer field on Claude Code 2.1.299", () => {
+    const field = (name: string) => detectPromptSelect(fixtureLines(name))?.feedback;
+
+    it("focused and empty", () => {
+      expect(field("claude--v2299-ask-field-single-focused-empty.txt")).toEqual({
+        key: "4",
+        focused: true,
+        text: "",
+        purpose: "answer",
+        pointer: "on",
+      });
+    });
+
+    it("focused, holding a short answer", () => {
+      expect(field("claude--v2299-ask-field-single-focused-typed.txt")).toEqual({
+        key: "4",
+        focused: true,
+        text: "Teal, like the sea",
+        purpose: "answer",
+        pointer: "on",
+      });
+    });
+
+    it("holding text with the pointer moved up onto an option", () => {
+      expect(field("claude--v2299-ask-field-single-typed-off-row.txt")).toEqual({
+        key: "4",
+        focused: false,
+        text: "Teal, like the sea",
+        purpose: "answer",
+        pointer: "above",
+      });
+    });
+
+    it("a value wrapped onto two display lines is rejoined exactly", () => {
+      const name = "claude--v2299-ask-field-single-focused-wrapped.txt";
+      const text =
+        "A red panda, because it is small and climbs trees and has a striped tail and a round face and it eats bamboo " +
+        "most of the day and sleeps in the branches when it is warm, which seems like a very sensible way to live if " +
+        "you ask me, honestly the best of all the animals";
+      // The capture's own last display line, so the expected sentence is the one on screen.
+      expect(fixtureText(name)).toContain("you ask me, honestly the best of all the animals");
+      expect(field(name)).toEqual({ key: "3", focused: true, text, purpose: "answer", pointer: "on" });
+    });
+
+    it("a value wrapped onto three display lines is rejoined exactly", () => {
+      const twenty =
+        "one two three four five six seven eight nine ten eleven twelve thirteen fourteen fifteen sixteen seventeen " +
+        "eighteen nineteen twenty";
+      expect(field("claude--v2299-ask-field-single-focused-three-lines.txt")).toEqual({
+        key: "3",
+        focused: true,
+        text: [twenty, twenty, twenty].join(" "),
+        purpose: "answer",
+        pointer: "on",
+      });
+    });
+
+    it("a value wrapped onto twenty display lines of a wide pane keeps the dialog and is rejoined exactly", () => {
+      // The layout of a live capture on Claude Code 2.1.306 in a 153x48 pane: a 2834-character answer
+      // re-flowed on word boundaries one column short of the row, continuation rows indented five columns, options 1 and 2 left 28
+      // rows above the footer (grammar/ASK_FIELD_NOTES.md, "Long answers").
+      const sentence = "да по поводу deep research я думаю что нужно сначала собрать аналоги и посмотреть их кабинеты.";
+      const text = Array(40).fill(sentence).join(" ").slice(0, 2834).trimEnd();
+      const rows: string[] = [];
+      for (const word of text.split(" ")) {
+        const last = rows.length - 1;
+        if (last >= 0 && rows[last]!.length + 1 + word.length <= 147) rows[last] += ` ${word}`;
+        else rows.push(word);
+      }
+      // Twenty continuation rows put option 1 more than 24 rows above the footer.
+      expect(rows.length).toBeGreaterThanOrEqual(20);
+      const screen = [
+        "❯ Ask me which color I prefer.",
+        "─".repeat(153),
+        " ☐ Color",
+        "",
+        "Which color do you prefer?",
+        "",
+        "  1. Red",
+        "     Red",
+        "  2. Blue",
+        "     Blue",
+        `❯ 3. ${rows[0]}`,
+        ...rows.slice(1).map((row) => `     ${row}`),
+        "─".repeat(153),
+        "  4. Chat about this",
+        "",
+        "Enter to select · ↑/↓ to navigate · ctrl+g to edit in VS Code · Esc to cancel",
+      ].join("\n");
+      expect(detectPromptSelect(splitLines(parseAnsi(screen)))?.feedback).toEqual({
+        key: "3",
+        focused: true,
+        text,
+        purpose: "answer",
+        pointer: "on",
+      });
+    });
+
+    it("focusing the field keeps the dialog's identity, though the footer gains its ctrl+g hint", () => {
+      const offRow = detectPromptSelect(fixtureLines("claude--v2299-ask-field-single-typed-off-row.txt"))!;
+      const focused = detectPromptSelect(fixtureLines("claude--v2299-ask-field-single-focused-typed.txt"))!;
+      expect(fixtureText("claude--v2299-ask-field-single-focused-typed.txt")).toContain("ctrl+g to edit in Notepad");
+      expect(promptsSameIdentity(offRow, focused)).toBe(true);
+      // The byte-faithful signature still sees the change, so a committing key is checked against it.
+      expect(offRow.signature).not.toBe(focused.signature);
+    });
+
+    it("a changed question is still another dialog", () => {
+      const name = "claude--v2299-ask-field-single-focused-typed.txt";
+      // Every occurrence: the first is the agent's prompt above the dialog, not the dialog's question.
+      const other = fixtureText(name).replaceAll("Which color do you prefer?", "Which colour do you like?");
+      expect(other).not.toBe(fixtureText(name));
+      const a = detectPromptSelect(fixtureLines(name))!;
+      const b = detectPromptSelect(splitLines(parseAnsi(other)))!;
+      expect(promptsSameIdentity(a, b)).toBe(false);
+    });
+
+    it("the plan footer's path after the hint is still compared", () => {
+      const name = "claude--plan-approval.txt";
+      const other = fixtureText(name).replace("velvet-toasting-turtle.md", "other-plan-entirely.md");
+      expect(other).not.toBe(fixtureText(name));
+      const a = detectPromptSelect(fixtureLines(name))!;
+      const b = detectPromptSelect(splitLines(parseAnsi(other)))!;
+      expect(promptsSameIdentity(a, b)).toBe(false);
+    });
+
+    it("every capture lifts a prompt-select block", () => {
+      for (const name of [
+        "claude--v2299-ask-field-single-focused-empty.txt",
+        "claude--v2299-ask-field-single-focused-typed.txt",
+        "claude--v2299-ask-field-single-typed-off-row.txt",
+        "claude--v2299-ask-field-single-focused-wrapped.txt",
+        "claude--v2299-ask-field-single-focused-three-lines.txt",
+      ]) {
+        expect(detectPromptSelect(fixtureLines(name)), name).not.toBeNull();
+      }
+    });
   });
 
   it("coreSignature survives the flow's OWN first keystroke, where signature must not", () => {
@@ -593,6 +738,47 @@ describe("detectPromptSelectRegion — the dialog's subject", () => {
     }
   });
 
+  // ── A read with no styling (herdr-core, M78 spec 09) ─────────────────────────────────────────
+  // The core paints no bold, so the title row is told by its text shape; a styled read keeps the bold.
+  it("the core's captures of a permission card have their edge, so a tap has a region to bind to", () => {
+    for (const name of ["claude--v21314-core-permission--w120.txt", "claude--v21314-core-permission--w60.txt"]) {
+      const region = detectPromptSelectRegion(fixtureLines(name))!;
+      expect(region.model.askRegion, name).toMatch(/Bash command/);
+      expect(region.model.subject?.[0]?.segments.map((s) => s.text).join(""), name).toBe("Bash command");
+    }
+  });
+
+  const plainDialog = (title: string, body: string[]): StyledLine[] =>
+    splitLines(parseAnsi(["● Some earlier output", "─".repeat(40), ` ${title}`, ...body, "", " Do you want to proceed?", " ❯ 1. Yes", "   2. No", "", " Esc to cancel"].join("\n")));
+
+  it("a plain read takes a known title, a subagent's title and a short title over a body as the edge", () => {
+    for (const title of ["Read file", "Tool use", "Bash command · from the general-purpose agent", "Notebook edit"]) {
+      const region = detectPromptSelectRegion(plainDialog(title, [" some/path.ts"]))!;
+      expect(region.model.askRegion, title).not.toBeNull();
+    }
+    // A known title needs no body.
+    expect(detectPromptSelectRegion(plainDialog("Web fetch", []))!.model.askRegion).not.toBeNull();
+  });
+
+  it("a plain read does not take prose, a marker row or a bare short heading as a title", () => {
+    for (const [title, body] of [
+      ["Summary of the changes made today", [" more prose"]],
+      ["● Bash(touch x)", [" more prose"]],
+      ["the next steps", [" more prose"]],
+      ["Done.", [" more prose"]],
+      ["Next steps", []],
+    ] as const) {
+      const region = detectPromptSelectRegion(plainDialog(title, [...body]))!;
+      expect(region.model.askRegion, title).toBeNull();
+    }
+  });
+
+  it("a styled read keeps the bold test: a plain-looking title among painted rows is not an edge", () => {
+    // The same title shape, not bold, on a screen that carries colour elsewhere: no edge.
+    const texts = ["\u001b[31m● Some earlier output\u001b[0m", "─".repeat(40), " Read file", " some/path.ts", "", " Do you want to proceed?", " ❯ 1. Yes", "   2. No", "", " Esc to cancel"];
+    expect(detectPromptSelectRegion(splitLines(parseAnsi(texts.join("\n"))))!.model.askRegion).toBeNull();
+  });
+
   // ── The stepper chip is chrome ───────────────────────────────────────────────────────────────
   it("AskUserQuestion: the `☐ Color Theme` chip is not subject, and the question is unchanged", () => {
     const lines = fixtureLines("claude--select-menu.txt");
@@ -831,4 +1017,103 @@ describe("detectPromptSelectRegion: an AskUserQuestion whose question has no que
     expect(stripped).not.toBe(text);
     expect(detectPromptSelectRegion(splitLines(parseAnsi(stripped)))).toBeNull();
   });
+
+  it("a chip header that ends in a question mark is not read as the question", () => {
+    const region = detectPromptSelectRegion(fixtureLines("claude--v2304-ask-chip-question-mark.txt"));
+    expect(region).not.toBeNull();
+    expect(region!.model.family).toBe("select");
+    expect(region!.model.question).toBe(
+      "The staging build passed every check. Pick how to proceed with the rollout.",
+    );
+    expect(region!.model.subject).toBeUndefined();
+    expect(region!.model.options.map((o) => o.label)).toEqual([
+      "Deploy now (Recommended)",
+      "Hold for review",
+      "Chat about this",
+    ]);
+  });
 });
+
+// Claude Code 2.1.304 single-question AskUserQuestion under a `☐ <header>` chip: when the question
+// carries a "?" and spans two paragraphs (separated by a bare `│` gutter row or a blank row) or wraps
+// past six rows (`MAX_QUESTION_ROWS`), `questionUnderChip` joins the full question below the chip so
+// the upper rows are neither dropped nor misclassified as `model.subject`.
+describe("detectPromptSelect: chip-bounded multi-paragraph and >6-row questions", () => {
+  const FIXTURE = "claude--v2304-ask-two-paragraph--w80.txt";
+
+  it("joins a two-paragraph 7-row question under `☐ Release` without leaking the first row into subject", () => {
+    const region = detectPromptSelectRegion(fixtureLines(FIXTURE));
+    expect(region).not.toBeNull();
+    const { model, startLine } = region!;
+    expect(model.family).toBe("select");
+    expect(model.question).toBe(
+      "The staging candidate passed all 24 smoke checks and the migration dry run on " +
+        "the replica database (see https://ci.example.test/runs/42?tab=checks for the " +
+        "full timing report, query plans, lock durations, and rollback verification " +
+        "steps across both regions). " +
+        "Which environment should we promote this build to next, and should the rollout " +
+        "pause after the first region?",
+    );
+    expect(model.subject).toBeUndefined();
+    expect(lineText(fixtureLines(FIXTURE)[startLine]!)).toMatch(/^─+$/);
+    expect(model.askRegion).not.toBeNull();
+    expect(model.askRegion!.split("\n")[0]).toMatch(/^─+$/);
+    expect(model.options.map((o) => o.label)).toEqual([
+      "Production",
+      "Canary",
+      "Hold",
+      "Chat about this",
+    ]);
+  });
+
+  it("joins a question that wraps past 6 rows and carries a '?' URL in its first paragraph", () => {
+    const raw = [
+      "─".repeat(60),
+      " ☐ Architecture ",
+      "",
+      "│ Context line 1: see https://example.com/docs?tab=api for details.",
+      "│ Context line 2: the existing worker pool runs 4 threads.",
+      "│ Context line 3: memory usage peaks during batch imports.",
+      "│ Context line 4: latency p99 must stay under 150ms.",
+      "",
+      "│ Given the constraints above, we have three migration paths",
+      "│ that trade off throughput against memory overhead.",
+      "│ Which migration path should we take?",
+      "",
+      "❯ 1. Worker threads (Recommended)",
+      "     Shared memory ring buffer",
+      "  2. Child processes",
+      "     Isolated heap per worker",
+      "  3. Type something.",
+      "─".repeat(60),
+      "  4. Chat about this",
+      "",
+      "Enter to select · ↑/↓ to navigate · Esc to cancel",
+    ].join("\n");
+    const m = detectPromptSelect(splitLines(parseAnsi(raw)));
+    expect(m).not.toBeNull();
+    expect(m!.question).toContain("Context line 1: see https://example.com/docs?tab=api");
+    expect(m!.question).toContain("Which migration path should we take?");
+    expect(m!.subject).toBeUndefined();
+    expect(m!.askRegion).not.toBeNull();
+    expect(m!.askRegion!.split("\n")[0]).toBe("─".repeat(60));
+  });
+
+  it("ignores a stray `☐` in scrollback above the dialog's top `─` rule", () => {
+    const raw = [
+      " ☐ Earlier task item from scrollback",
+      "Some earlier prose without a question mark.",
+      "─".repeat(60),
+      "✅ Do you want to proceed?",
+      "❯ 1. Yes",
+      "  2. No",
+      "",
+      "Enter to select · ↑/↓ to navigate · Esc to cancel",
+    ].join("\n");
+    const m = detectPromptSelect(splitLines(parseAnsi(raw)));
+    expect(m).not.toBeNull();
+    expect(m!.question).toBe("✅ Do you want to proceed?");
+    expect(m!.question).not.toContain("Some earlier prose");
+  });
+});
+

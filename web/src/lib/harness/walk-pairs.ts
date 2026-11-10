@@ -59,6 +59,10 @@ export const WALK_PAIRS: readonly WalkPair[] = [
   ["omp", "omp--v18-4-ask-single.txt", "omp--v18-4-ask-single-moved.txt"],
   ["omp", "omp--v18-8-ask-single-described.txt", "omp--v18-8-ask-single-described-moved.txt"],
   ["omp", "omp--v18-10-ask-batch.txt", "omp--v18-10-ask-batch-moved.txt"],
+  ["omp", "omp--v18-16-0-ask-single-glyph-hide--w200.txt", "omp--v18-16-0-ask-single-glyph-hide-moved--w200.txt"],
+  // omp 18.16.0's plan review (omp/plan-review.ts): one `Down`, and a two-`Down` walk under the slider.
+  ["omp", "omp--v18-16-0-plan-review--w80.txt", "omp--v18-16-0-plan-review-moved--w80.txt"],
+  ["omp", "omp--v18-16-0-plan-review-slider--w140.txt", "omp--v18-16-0-plan-review-slider-moved--w140.txt"],
   // omp `/resume` picker. The unboxed pair differs in the ages too (`1 minute ago` against
   // `2 minutes ago`); `coreSignature` blanks them, so the pair holds.
   ["omp", "omp--v18-4-resume.txt", "omp--v18-4-resume-moved.txt"],
@@ -93,6 +97,8 @@ export const WALK_PAIRS: readonly WalkPair[] = [
   ["omp", "omp--v18-4-switch-overcontext.txt", "omp--v18-4-switch-overcontext-moved.txt"],
   ["omp", "omp--v18-4-switch-search-short.txt", "omp--v18-4-switch-search-short-moved.txt"],
   ["omp", "omp--v18-4-switch-top-edge.txt", "omp--v18-4-switch-wrapped.txt"],
+  // The same picker in omp 18.17.0's `nerd` preset (private-use pointer, dot, icons and keycaps), one `Down` apart.
+  ["omp", "omp--v18-17-0-nerd-switch--w120.txt", "omp--v18-17-0-nerd-switch-moved--w120.txt"],
   // opencode permission dialog: horizontal chips, the pointer is a background colour and not a glyph,
   // so the TEXT of each pair is identical and only the option plans differ (Right × d, then Enter).
   // `promptsEqual` still tells them apart because it compares the exact plans (prompt-model.ts).
@@ -110,6 +116,9 @@ export const WALK_PAIRS: readonly WalkPair[] = [
   ["pi", "pi--v110-question-narrow.txt", "pi--v110-question-narrow-moved.txt"],
   ["pi", "pi--v0871-question-plain.txt", "pi--v0871-question-plain-moved.txt"],
   ["pi", "pi--v110-question-plain.txt", "pi--v110-question-plain-moved.txt"],
+  // The same stock `question` on pi 1.3.0 through a herdr-core bridge, a read with no styling: the
+  // pointer moved from 1 to 3 by two Down presses (M78 spec 07, live lab 2026-10-30).
+  ["pi", "pi--v130-core-question--w120.txt", "pi--v130-core-question-moved--w120.txt"],
   // pi's stock `questionnaire` example: one question, then both pages of a tabbed one.
   ["pi", "pi--v0871-questionnaire-single.txt", "pi--v0871-questionnaire-single-moved.txt"],
   ["pi", "pi--v110-questionnaire-single.txt", "pi--v110-questionnaire-single-moved.txt"],
@@ -126,6 +135,45 @@ export const WALK_PAIRS: readonly WalkPair[] = [
   // pi's example permission-gate (pi 0.87.1), pi's own selector: Down at 120 columns, Up at 80.
   ["pi", "pi--v0871-permission-gate.txt", "pi--v0871-permission-gate-moved.txt"],
   ["pi", "pi--v0871-permission-gate-narrow.txt", "pi--v0871-permission-gate-narrow-moved.txt"],
+  // gentle-pi 4.2.0's review-consent screen (pi 1.3.0): no rule frame, footer last; the Effect paragraph follows the pointer.
+  ["pi", "pi--v130-gentle-review-consent.txt", "pi--v130-gentle-review-consent-moved.txt"],
+  // gentle-pi 4.6.0 on pi 1.5.0 (issue 712): the hanging Effect paragraph and the status row under the footer; moved is derived (fixtures README).
+  ["pi", "pi--v150-gentle-review-consent--w119.txt", "pi--v150-gentle-review-consent-moved--w119.txt"],
+  // A test selector under Gentle Shell 4.5.1 (pi 1.4.0) on herdr-core, its pointer on each of two choices (issue 660).
+  ["pi", "pi--v140-gentle-float-dialog--w100.txt", "pi--v140-gentle-float-dialog-moved--w100.txt"],
+  // Kiro V3 2.33.0: the startup workspace trust dialog, before and after one Down at each width.
+  ["kiro", "kiro--v3-workspace-trust-continue-w120.txt", "kiro--v3-workspace-trust-exit-w120.txt"],
+  ["kiro", "kiro--v3-workspace-trust-continue-w60.txt", "kiro--v3-workspace-trust-exit-w60.txt"],
+  ["kiro", "kiro--v3-workspace-trust-continue-w40.txt", "kiro--v3-workspace-trust-exit-w40.txt"],
+  // Kiro V3 2.32.0: the same shell request with Allow, Always allow and Deny pointed.
+  ["kiro", "kiro--v3-approval-allow-w120.txt", "kiro--v3-approval-deny-w120.txt"],
+  ["kiro", "kiro--v3-approval-always-w120.txt", "kiro--v3-approval-deny-w120.txt"],
+  ["kiro", "kiro--v3-approval-allow-w60.txt", "kiro--v3-approval-deny-w60.txt"],
+  ["kiro", "kiro--v3-approval-denied-request-allow-w120.txt", "kiro--v3-approval-denied-request-deny-w120.txt"],
+  ["kiro", "kiro--v3-shell-args-allow-w120.txt", "kiro--v3-shell-args-deny-w120.txt"],
+  ["kiro", "kiro--v3-shell-args-allow-w60.txt", "kiro--v3-shell-args-deny-w60.txt"],
+  ["kiro", "kiro--v3-shell-bare-allow-w120.txt", "kiro--v3-shell-bare-deny-w120.txt"],
+  ["kiro", "kiro--v3-shell-wrapped-allow-w120.txt", "kiro--v3-shell-wrapped-deny-w120.txt"],
+  ["kiro", "kiro--v3-shell-wrapped-allow-w60.txt", "kiro--v3-shell-wrapped-deny-w60.txt"],
+  // Installed V3 file tools: Allow and Deny with the complete read/diff preview unchanged.
+  ["kiro", "kiro--v3-read-allow-w120.txt", "kiro--v3-read-deny-w120.txt"],
+  ["kiro", "kiro--v3-read-allow-w60.txt", "kiro--v3-read-deny-w60.txt"],
+  ["kiro", "kiro--v3-read-denied-request-allow-w120.txt", "kiro--v3-read-denied-request-deny-w120.txt"],
+  ["kiro", "kiro--v3-write-allow-w120.txt", "kiro--v3-write-deny-w120.txt"],
+  ["kiro", "kiro--v3-write-allow-w60.txt", "kiro--v3-write-deny-w60.txt"],
+  ["kiro", "kiro--v3-write-lines-allow-w120.txt", "kiro--v3-write-lines-deny-w120.txt"],
+  ["kiro", "kiro--v3-write-denied-request-allow-w120.txt", "kiro--v3-write-denied-request-deny-w120.txt"],
+  ["kiro", "kiro--v3-replace-allow-w120.txt", "kiro--v3-replace-deny-w120.txt"],
+  ["kiro", "kiro--v3-replace-allow-w60.txt", "kiro--v3-replace-deny-w60.txt"],
+  ["kiro", "kiro--v3-replace-denied-request-allow-w120.txt", "kiro--v3-replace-denied-request-deny-w120.txt"],
+  ["kiro", "kiro--v3-read-wrapped-allow-w120.txt", "kiro--v3-read-wrapped-deny-w120.txt"],
+  ["kiro", "kiro--v3-read-wrapped-allow-w60.txt", "kiro--v3-read-wrapped-deny-w60.txt"],
+  // Kiro V3 2.32.0 with tools trusted: write and replace panels also offer Always allow.
+  ["kiro", "kiro--v3-write-trusted-allow-w120.txt", "kiro--v3-write-trusted-deny-w120.txt"],
+  ["kiro", "kiro--v3-write-trusted-always-w120.txt", "kiro--v3-write-trusted-deny-w120.txt"],
+  ["kiro", "kiro--v3-replace-trusted-allow-w120.txt", "kiro--v3-replace-trusted-deny-w120.txt"],
+  // Codex 0.167.0 hook-trust prompt (codex/hooks.ts): the pointer on Review hooks, then on Trust all.
+  ["codex", "codex--v0167-hooks-review--w80.txt", "codex--v0167-hooks-review-moved--w80.txt"],
 ];
 
 /**
@@ -187,5 +235,17 @@ export const WALK_GAPS = {
   "omp | select | Pick a colour": {
     since: "2026-10-03",
     reason: "no pointer-only pair: the two captures differ by a `✎ note` mark, which is note state, not the pointer",
+  },
+  "omp | select | Which of these would be most useful for your work right now?": {
+    since: "2026-10-25",
+    reason:
+      "no second capture yet: one 18.12.6 capture of an Ask with option previews, pointer on the first row; " +
+      "ask-dialog.ts draws a preview under its option whatever the pointer, and ask.test.ts derives the moved screen",
+  },
+  "omp | select | What work should I plan?": {
+    since: "2026-10-25",
+    reason:
+      "no second capture yet: one 18.12.6 capture of the plan-mode Ask, pointer on the first row; the grammar is " +
+      "the previews dialog's, whose moved screen ask.test.ts derives",
   },
 } satisfies Record<string, WalkGap>;

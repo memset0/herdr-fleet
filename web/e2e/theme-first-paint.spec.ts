@@ -1,9 +1,7 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-
 import { expect, test } from "@playwright/test";
 
 import { installApiStub } from "./fixtures/api";
+import { collieHalves } from "./fixtures/collie-theme";
 
 // A PINNED THEME PAINTS IN ITSELF ON THE FIRST FRAME (M57). public/theme-init.js reads the design
 // blob and the theme library and sets the inline properties before the bundle's module script runs.
@@ -19,15 +17,13 @@ test.beforeEach(async ({ page }, testInfo) => {
   await installApiStub(page);
 });
 
-const web = resolve(import.meta.dirname, "..");
-const collie = JSON.parse(readFileSync(resolve(web, "src/themes/collie.json"), "utf8"));
-
+// A version 1 file: the 43 required tokens, and not the optional `pane-active` (ADR 0120).
 const theme = {
   version: 1,
   id: "midnight",
   name: "Midnight",
-  light: collie.light,
-  dark: { ...collie.dark, background: "#123456" },
+  light: collieHalves.light,
+  dark: { ...collieHalves.dark, background: "#123456", secondary: "#123456" },
 };
 
 async function seed(page: import("@playwright/test").Page) {
@@ -52,12 +48,16 @@ test("an imported theme is on the page before the bundle runs", async ({ page })
     return {
       background: getComputedStyle(html).getPropertyValue("--background"),
       inline: html.style.length,
+      paneActive: html.style.getPropertyValue("--pane-active"),
       attribute: html.getAttribute("data-theme"),
       body: getComputedStyle(document.body).backgroundColor,
     };
   });
   expect(seen.background).toContain("#123456");
-  expect(seen.inline).toBe(43);
+  // 44: the 43 before, plus the inline `--ground-image: none` an imported theme that names no ground gets (d0f225b95).
+  expect(seen.inline).toBe(44);
+  // The theme leaves the optional token out, so index.css's pair holds and nothing is set inline.
+  expect(seen.paneActive).toBe("");
   expect(seen.attribute).toBeNull();
 });
 
@@ -108,6 +108,55 @@ test("a device on the default theme gets no attribute and no inline property", a
   expect(seen).toEqual({ style: null, attribute: null });
 });
 
+test("a device that stored the retired collie-new paints the default on the first frame", async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem("collie:design:v1", JSON.stringify({ font: "atkinson", theme: "collie-new" })));
+  await page.route("**/assets/*.js", (route) => route.abort());
+  await page.goto("/");
+  const seen = await page.evaluate(() => ({
+    style: document.documentElement.getAttribute("style"),
+    attribute: document.documentElement.getAttribute("data-theme"),
+    band: getComputedStyle(document.documentElement).getPropertyValue("--band-ground"),
+    secondary: getComputedStyle(document.documentElement).getPropertyValue("--secondary"),
+  }));
+  // The stylesheet alone paints the band: --band-ground resolves to --secondary, under the dark scheme here.
+  expect(seen).toMatchObject({ style: null, attribute: null });
+  expect(seen.band).toBe(seen.secondary);
+  expect(seen.band).toContain(".003 80");
+});
+
+// THE DEFAULT FACE IS ATKINSON (2026-11-06), on the first frame, with the bundle blocked. Nothing stored
+// is a fresh phone; `{ theme: "collie" }` is the same device; a stored `aldrich` is a deliberate pick.
+async function firstFrameFace(page: import("@playwright/test").Page, stored: string | null) {
+  if (stored !== null) await page.addInitScript((blob) => localStorage.setItem("collie:design:v1", blob), stored);
+  await page.route("**/assets/*.js", (route) => route.abort());
+  await page.goto("/");
+  return page.evaluate(() => ({
+    classes: document.documentElement.className,
+    stack: getComputedStyle(document.documentElement).getPropertyValue("--font-sans").trim(),
+    body: getComputedStyle(document.body).fontFamily,
+  }));
+}
+
+test("a fresh phone paints Atkinson on the first frame", async ({ page }) => {
+  const seen = await firstFrameFace(page, null);
+  expect(seen.classes).not.toContain("font-");
+  expect(seen.stack).toMatch(/^"Atkinson Hyperlegible Next"/);
+  expect(seen.body).toMatch(/^"?Atkinson Hyperlegible Next/);
+});
+
+test("a device with only theme collie stored paints Atkinson on the first frame", async ({ page }) => {
+  const seen = await firstFrameFace(page, JSON.stringify({ theme: "collie" }));
+  expect(seen.classes).not.toContain("font-");
+  expect(seen.stack).toMatch(/^"Atkinson Hyperlegible Next"/);
+});
+
+test("a device that stored aldrich keeps Aldrich on the first frame", async ({ page }) => {
+  const seen = await firstFrameFace(page, JSON.stringify({ font: "aldrich" }));
+  expect(seen.classes).toContain("font-aldrich");
+  expect(seen.stack).toMatch(/^"Aldrich"/);
+  expect(seen.body).toMatch(/^"?Aldrich/);
+});
+
 test("a stored theme with a hostile value paints nothing from that token", async ({ page }) => {
   const hostile = { ...theme, dark: { ...theme.dark, background: "url(https://x.test/a.png)", foreground: "#abcdef" } };
   await page.addInitScript(
@@ -130,7 +179,7 @@ test("a stored theme with a hostile value paints nothing from that token", async
   expect(seen.foreground).toContain("#abcdef");
 });
 
-test("setting 43 properties before paint costs well under 5 ms", async ({ page }, testInfo) => {
+test("setting 44 properties before paint costs well under 5 ms", async ({ page }, testInfo) => {
   await seed(page);
   await page.route("**/assets/*.js", (route) => route.abort());
   await page.goto("/");
@@ -161,9 +210,10 @@ test("the running app keeps the theme and moves the browser-chrome colour with i
         [...document.querySelectorAll<HTMLMetaElement>('meta[name="theme-color"]')].map((m) => m.content),
       ),
     )
-    .toEqual(["#f5f5f5", "#123456"]);
+    .toEqual(["#e4e3e0", "#123456"]);
   const inline = await page.evaluate(() => document.documentElement.style.length);
-  expect(inline).toBe(43);
+  // 44: 43 plus the inline `--ground-image: none` of a theme that names no ground (d0f225b95).
+  expect(inline).toBe(44);
 });
 
 // UNDER A MOUNT (ADR 0052). theme-init.js holds no path, so it should not care, but the shell has to
@@ -185,6 +235,7 @@ test.describe("under /collie/", () => {
     }));
     expect(seen.script).toBe("/collie/theme-init.js");
     expect(seen.background).toContain("#123456");
-    expect(seen.inline).toBe(43);
+    // 44: the 43 before, plus the inline `--ground-image: none` an imported theme that names no ground gets (d0f225b95).
+  expect(seen.inline).toBe(44);
   });
 });

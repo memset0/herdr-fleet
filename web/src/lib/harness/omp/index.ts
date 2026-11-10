@@ -3,10 +3,12 @@
 // (markers.ts) live alongside this file; this module composes them into the HarnessAdapter block and
 // chrome re-surfacing surfaces. The `/resume` picker grammar is resume.ts, the `ask` tool's
 // single-select grammar is ask.ts, the tool-approval grammar is approval.ts, the compact model picker
-// grammar is switch.ts, and the modal gate that lets the unread-dialog card stand over every other omp
-// modal is modal.ts.
+// grammar is switch.ts, the plan-mode review grammar is plan-review.ts, and the modal gate that lets
+// the unread-dialog card stand over every other omp modal is modal.ts.
 //
-// This adapter is TIER 1 EVERYWHERE EXCEPT FOUR SCREENS. `ompBuildBlocks` lifts the `/resume` session
+// This adapter is TIER 1 EVERYWHERE EXCEPT FIVE SCREENS. The fifth is omp's plan review (plan-review.ts,
+// added 2026-11-07 against omp 18.16.0; its header carries its own corpus and choreography), and the
+// rest of this paragraph is about the first four. `ompBuildBlocks` lifts the `/resume` session
 // picker (resume.ts, .adr/0076), Ask single-select questions and batch review (ask.ts,
 // .adr/0077), the `bash` and `write` tool-approval dialog (approval.ts, .adr/0078) and the compact
 // session-only model picker that `/switch` and Alt+P open (switch.ts, .adr/0079) as `prompt-select`
@@ -99,7 +101,7 @@
 // last non-blank row. Each declines on any modal and on every other shape's tail.
 
 import { trimTrailingBlank, type Block, type StyledLine } from "../../blocks";
-import type { HarnessAdapter } from "../types";
+import type { DialogDetector, HarnessAdapter } from "../types";
 import { locatePiComposer, piComposerPrompt, piDraft } from "./pi-shape";
 import {
   extractGlyphInputDraft,
@@ -130,6 +132,7 @@ import { detectApprovalRegion } from "./approval";
 import { detectAskSelectRegion } from "./ask";
 import { detectResumePickerRegion } from "./resume";
 import { detectSwitchPickerRegion } from "./switch";
+import { detectPlanReviewRegion } from "./plan-review";
 
 /**
  * omp's block pipeline: the `/resume` session picker (resume.ts, .adr/0076), the `ask` tool's
@@ -154,13 +157,23 @@ import { detectSwitchPickerRegion } from "./switch";
  * a contract Claude's `/model` picker is pinned against. The unread-dialog card (`cancelKey` below)
  * delivers the way out, and `composerReady` already delivers the safety half.
  */
+/** The detectors `ompBuildBlocks` runs, in its order, for the unread-dialog card's report (ADR 0123). */
+const OMP_DIALOG_DETECTORS: readonly DialogDetector[] = [
+  { name: "resume-picker", detect: detectResumePickerRegion },
+  { name: "ask-select", detect: detectAskSelectRegion },
+  { name: "approval", detect: detectApprovalRegion },
+  { name: "switch-picker", detect: detectSwitchPickerRegion },
+  { name: "plan-review", detect: detectPlanReviewRegion },
+];
+
 export function ompBuildBlocks(lines: StyledLine[]): Block[] {
-  // The four lifted screens never share a tail: each is anchored on its own bottom border and footer.
+  // The five lifted screens never share a tail: each is anchored on its own bottom border and footer.
   const lifted =
     detectResumePickerRegion(lines) ??
     detectAskSelectRegion(lines) ??
     detectApprovalRegion(lines) ??
-    detectSwitchPickerRegion(lines);
+    detectSwitchPickerRegion(lines) ??
+    detectPlanReviewRegion(lines);
   if (lifted !== null) {
     const before = trimTrailingBlank(lines.slice(0, lifted.startLine));
     const blocks: Block[] = [];
@@ -249,6 +262,7 @@ export const ompAdapter: HarnessAdapter = {
   // (modal.ts). A composer never has that, so the ZWJ pane shows no card.
   cancelKey: "Escape",
   modalOnScreen: ompModalOnScreen,
+  dialogDetectors: OMP_DIALOG_DETECTORS,
   // …and the exact on-screen draft region the destructive pre-clear is bound to on the wire: the
   // box's bottom prompt row or all of the rule composer's prompt rows. The box scanner declines when
   // a long palette pushes that row out of range; the rule region ends one status row from the tail.

@@ -1,6 +1,12 @@
+import { readFileSync } from "node:fs";
+import { fileURLToPath } from "node:url";
+
 import type { Page, Route } from "@playwright/test";
 
-import type { MachineAlerts } from "@/lib/types";
+import type { StartLaunchBody } from "@/lib/api";
+import { itemsOf, type ChatItem } from "@/lib/chat-items";
+import type { Locale } from "@/lib/i18n/locale";
+import type { MachineAlerts, PaneChatResponse, PaneHistoryResponse, PinFull, SnapshotResponse } from "@/lib/types";
 import { TOUR_STORAGE_KEY, TOUR_VERSION } from "@/lib/tour";
 import {
   fixtureChangeDiff,
@@ -13,6 +19,8 @@ import {
   fixtureFileRead,
   fixtureFilesDir,
   FIXTURE_FILES_UNKNOWN,
+  fixtureLaunchedTab,
+  fixtureLaunchersWithAgents,
   fixtureNewSpace,
   fixtureNewTab,
   fixtureSnapshot,
@@ -32,6 +40,9 @@ import { censusFor, fixtureMachines, fixtureMachinesSolo, historyFor } from "@/t
 // MSW is deliberately NOT used in the browser. It installs a service worker of its own and this app
 // ships one; two workers on one scope is a fight, not a fixture. The MSW handler array stays the
 // unit layer's, and this module re-states the ROUTING (nine lines of it) rather than the data.
+
+/** The locale pin. A BARE string under this key, not JSON — `src/lib/i18n/index.ts:44`. */
+const LOCALE_STORAGE_KEY = "collie:locale:v1";
 
 /** `/api/update/check` reports the bridge's own version, which `SnapshotResponse` does not carry.
  *  It is level with `latest` in the default world, so the two only ever have to agree with each
@@ -61,11 +72,72 @@ interface CreateSpaceBody {
 const STUB_HOME = fixtureNewSpace.pane.cwd;
 
 /**
+ * The pinned messages of the stub's pane (M90), in memory, one set for each page. A pin is a copy the bridge makes from
+ * the pane's own journal, so the stub copies the same way: {@link installPaneWorld} hands it the chat answer it serves,
+ * and a POST names an item of it by its Chat id. A page with no pane world has no journal, so a POST finds no block.
+ */
+interface PinStub {
+  readonly pins: PinFull[];
+  items: readonly ChatItem[];
+  minted: number;
+}
+
+const pinStubs = new WeakMap<Page, PinStub>();
+
+function pinStubOf(page: Page): PinStub {
+  const held = pinStubs.get(page);
+  if (held !== undefined) return held;
+  const made: PinStub = { pins: [], items: [], minted: 0 };
+  pinStubs.set(page, made);
+  return made;
+}
+
+function pinRefusal(route: Route, status: 404 | 409, code: string): Promise<void> {
+  return fulfillJson(route, { error: code, code, message: code }, status);
+}
+
+/** A pin as the list answers it: everything but the text, with an excerpt and the length (`bridge/pins/routes.ts`). */
+function pinRowOf(pin: PinFull) {
+  const { text, ...rest } = pin;
+  return { ...rest, excerpt: text.slice(0, 400), textLength: text.length };
+}
+
+/** `GET`, `POST` and `DELETE` on `/api/pane/:id/pins`, as `bridge/pins/routes.ts` answers them. */
+async function answerPins(route: Route, method: string, stub: PinStub): Promise<void> {
+  const url = new URL(route.request().url());
+  const wanted = url.searchParams.get("pin");
+  if (method === "GET" && wanted === null) {
+    return fulfillJson(route, { pins: stub.pins.toReversed().map(pinRowOf) });
+  }
+  if (method === "GET") {
+    const found = stub.pins.find((pin) => pin.id === wanted);
+    return found === undefined ? pinRefusal(route, 404, "pin.not_found") : fulfillJson(route, { pin: found });
+  }
+  if (method === "DELETE") {
+    const at = stub.pins.findIndex((pin) => pin.id === wanted);
+    if (at >= 0) stub.pins.splice(at, 1);
+    return route.fulfill({ status: 204 });
+  }
+  // SAFETY: the body is the app's own: `lib/api.ts`'s `pinItem` is the only caller and it posts `{ itemId }`.
+  const { itemId } = route.request().postDataJSON() as { itemId: string };
+  const held = stub.pins.find((pin) => pin.itemId === itemId);
+  if (held !== undefined) return fulfillJson(route, { pin: held }, 200);
+  const item = stub.items.find((candidate) => candidate.id === itemId);
+  if (item === undefined) return pinRefusal(route, 404, "pin.item_not_found");
+  if (item.kind !== "user" && item.kind !== "reply" && item.kind !== "thinking" && item.kind !== "notice") return pinRefusal(route, 409, "pin.not_pinnable");
+  stub.minted += 1;
+  const made: PinFull = { id: `pin-${String(stub.minted)}`, itemId, kind: item.kind, text: item.text, anchor: item.text.slice(0, 80), pinnedAt: Date.now() };
+  if (item.ts !== undefined) made.ts = item.ts;
+  stub.pins.push(made);
+  return fulfillJson(route, { pin: made }, 201);
+}
+
+/**
  * Answer the one request. Split out of the route so the dispatch reads as a table and so an
  * unmatched path is a loud 501 rather than a silent fall-through to the static server, which would
  * hand the app `index.html` for a JSON fetch and fail somewhere far away from the cause.
  */
-async function answer(route: Route, path: string): Promise<void> {
+async function answer(route: Route, path: string, pins: PinStub): Promise<void> {
   const method = route.request().method();
 
   if (path === "/api/snapshot") return fulfillJson(route, fixtureSnapshot);
@@ -108,6 +180,7 @@ async function answer(route: Route, path: string): Promise<void> {
       fileTruncated: false,
     });
   }
+  if (/^\/api\/pane\/[^/]+\/pins$/.test(path)) return answerPins(route, method, pins);
   if (/^\/api\/pane\/[^/]+\/subagent\/[^/]+$/.test(path)) {
     return fulfillJson(route, { paneId: "w1:p1", agentId: "a000000", available: false });
   }
@@ -223,8 +296,9 @@ async function answer(route: Route, path: string): Promise<void> {
  */
 export async function installApiStub(page: Page): Promise<void> {
   await seedTourSeen(page);
+  const pins = pinStubOf(page);
   await page.route("**/api/**", async (route) => {
-    await answer(route, new URL(route.request().url()).pathname);
+    await answer(route, new URL(route.request().url()).pathname, pins);
   });
 }
 
@@ -295,6 +369,126 @@ export async function installMachinesWorld(page: Page): Promise<{ posted: { id: 
   return { posted };
 }
 
+/** A `POST /api/launch` the stub received: the machine it was addressed to, and the body. */
+export interface SentLaunch {
+  host: string | null;
+  body: StartLaunchBody;
+}
+
+/**
+ * Give every machine launcher rows to offer (M91): `/api/launchers` answers
+ * `fixtureLaunchersWithAgents`, so a "+" opens the New tab sheet, and `POST /api/launch` answers
+ * `fixtureLaunchedTab`. Returns the launches posted, in order.
+ *
+ * Call it AFTER {@link installApiStub}: Playwright checks the newest handler first.
+ */
+export async function installLauncherWorld(page: Page): Promise<{ launches: SentLaunch[] }> {
+  const launches: SentLaunch[] = [];
+  await page.route((url) => url.pathname === "/api/launchers", (route) => fulfillJson(route, fixtureLaunchersWithAgents));
+  await page.route(
+    (url) => url.pathname === "/api/launch",
+    (route) => {
+      // SAFETY: the body is the app's own: `lib/api.ts`'s `startLaunch` is the only caller and it posts a `StartLaunchBody`.
+      const body = route.request().postDataJSON() as StartLaunchBody;
+      launches.push({ host: new URL(route.request().url()).searchParams.get("host"), body });
+      return fulfillJson(route, fixtureLaunchedTab);
+    },
+  );
+  return { launches };
+}
+
+/** A `POST /api/pane/:id/keys` body, as `lib/api.ts`'s `sendKeys` posts it. */
+export interface SentKeys {
+  readonly keys: readonly string[];
+  readonly expected_prompt?: string;
+  readonly expected_styled?: string;
+}
+
+/** A terminal transition: on screen `on`, the keys `keys` turn the pane into screen `to`. */
+export interface PaneStep {
+  readonly on: string;
+  readonly keys: readonly string[];
+  readonly to: string;
+}
+
+/** What {@link installPaneWorld} draws: one agent pane, its journal, and its screens by name. */
+export interface PaneWorldOptions {
+  readonly paneId: string;
+  readonly snapshot: SnapshotResponse;
+  readonly chat: PaneChatResponse;
+  /** The History answer. The default stub's own transcript when absent. */
+  readonly history?: PaneHistoryResponse;
+  readonly screens: Readonly<Record<string, string>>;
+  readonly start: string;
+  readonly script?: readonly PaneStep[];
+}
+
+/** What a case reads back from {@link installPaneWorld}. */
+export interface PaneWorld {
+  /** Every keys body the app posted, in order. */
+  readonly sent: SentKeys[];
+  /** The path of every write the app made to the pane, keys included, in order. */
+  readonly writes: string[];
+  /** Change the screen the next read returns, as the terminal would change on its own. */
+  show(name: string): void;
+}
+
+/** A pane screen from the corpus the unit layer reads, `src/fixtures/panes/<name>.txt`, for the
+ *  `screens` of {@link installPaneWorld}. */
+export function paneCapture(name: string): string {
+  return readFileSync(fileURLToPath(new URL(`../../src/fixtures/panes/${name}.txt`, import.meta.url)), "utf8");
+}
+
+/**
+ * A pane whose screen follows the keys the app sends. A static screen would refuse a guarded walk,
+ * because each read after the arrows must show where they landed. The stub accepts every keys POST
+ * and records it; whether a binding is right is the unit layer's to check
+ * (`src/lib/harness/prompt-binding-contract.test.ts` and the bridge's prompt-binding tests).
+ *
+ * Call it AFTER {@link installApiStub}: Playwright checks the newest handler first.
+ */
+export async function installPaneWorld(page: Page, world: PaneWorldOptions): Promise<PaneWorld> {
+  const pane = `/api/pane/${encodeURIComponent(world.paneId)}`;
+  const sent: SentKeys[] = [];
+  const writes: string[] = [];
+  let showing = world.start;
+
+  await page.route((url) => url.pathname === "/api/snapshot", (route) => fulfillJson(route, world.snapshot));
+  await page.route((url) => url.pathname === `${pane}/chat`, (route) => fulfillJson(route, world.chat));
+  // The journal a pin is copied from is the one the pane's Chat reads.
+  if (world.chat.available) pinStubOf(page).items = world.chat.upserts.flatMap((entry) => itemsOf(entry));
+  const history = world.history;
+  if (history !== undefined) await page.route((url) => url.pathname === `${pane}/history`, (route) => fulfillJson(route, history));
+  await page.route(
+    (url) => url.pathname === pane,
+    (route) => fulfillJson(route, { paneId: world.paneId, text: world.screens[showing], truncated: false, revision: 1 }),
+  );
+  await page.route(
+    (url) => url.pathname.startsWith(`${pane}/`),
+    async (route) => {
+      const request = route.request();
+      if (request.method() === "GET") return route.fallback();
+      const path = new URL(request.url()).pathname;
+      writes.push(path);
+      if (path !== `${pane}/keys`) return route.fallback();
+      // SAFETY: the body is the app's own: `lib/api.ts`'s `sendKeys` is the only caller of this
+      // endpoint, and it posts exactly `{ keys, expected_prompt?, expected_styled?, … }`.
+      const body = request.postDataJSON() as SentKeys;
+      sent.push(body);
+      const step = world.script?.find((s) => s.on === showing && s.keys.join("+") === body.keys.join("+"));
+      if (step !== undefined) showing = step.to;
+      return fulfillJson(route, { ok: true });
+    },
+  );
+  return {
+    sent,
+    writes,
+    show: (name) => {
+      showing = name;
+    },
+  };
+}
+
 /**
  * Fill a message's `{slot}`s, the way the app's own `t()` does.
  *
@@ -310,6 +504,20 @@ export function fill(template: string, vars: Readonly<Record<string, string | nu
     out = out.split(`{${slot}}`).join(String(value));
   }
   return out;
+}
+
+/**
+ * Pin the locale before the first navigation. There is no URL parameter and no `Accept-Language`
+ * path in this app; the storage key is the only mechanism, and it has to be written before the
+ * bundle's first script runs, which is what `addInitScript` is for.
+ */
+export async function pinLocale(page: Page, locale: Locale): Promise<void> {
+  await page.addInitScript(
+    ([key, value]) => {
+      window.localStorage.setItem(key, value);
+    },
+    [LOCALE_STORAGE_KEY, locale],
+  );
 }
 
 /**

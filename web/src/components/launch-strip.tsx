@@ -1,4 +1,4 @@
-import { Loader2 } from "lucide-react";
+import { Icon } from "@/components/icons/icon";
 
 import { useCrew } from "@/components/crew-provider";
 import { Button } from "@/components/ui/button";
@@ -93,12 +93,12 @@ export function LaunchStrip({ open, onOpenChange, scope }: LaunchStripProps) {
                     item: launcher,
                     machine: scope?.host ?? "",
                     folder: suffix ?? "~",
-                    go: () => void launch(launcher.command),
+                    go: () => void launch(launcher.command, undefined, launcher.kind === "agent" ? launcher.harness : undefined),
                   })
                 }
               >
                 <span className="flex items-center gap-1.5">
-                  {pending && <Loader2 className="size-4 animate-spin" />}
+                  {pending && <Icon name="busy" className="size-4 animate-spin" />}
                   <span>{launcher.label}</span>
                   {suffix && <span className="font-mono text-xs text-muted-foreground">{suffix}</span>}
                 </span>

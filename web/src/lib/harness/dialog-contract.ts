@@ -34,7 +34,7 @@ import {
   unreadDialogsSameIdentity,
   type UnreadDialogModel,
 } from "./unread-dialog-model";
-import { wizardsEqual, type WizardModel } from "./wizard-model";
+import { wizardsEqual, wizardsSameIdentity, type WizardModel } from "./wizard-model";
 
 /** The model each interactive block kind carries. Keys are exactly the non-`raw` `Block["kind"]`s —
  *  a new interactive kind that lands without an entry here fails to typecheck in `dialogModelOf`. */
@@ -63,8 +63,8 @@ export type DialogKind = keyof DialogModels;
  * `autocomplete` it would have locked the composer out of a pane whose input box is demonstrably live.
  */
 export function blockOwnsKeyboard(block: Block): boolean {
-  // A menu lifted off a notice ABOVE a live input box (`MenuModel.liveBox`) is the one card whose
-  // screen leaves the keyboard to the box: the notice's keys act only on a box holding one digit.
+  // A menu lifted off a notice ABOVE a live input box (`MenuModel.liveBox`) leaves the keyboard to the
+  // box: the notice's keys act only on a box holding one digit.
   if (block.kind === "menu" && block.menu.liveBox !== undefined) return false;
   return block.kind in DIALOG_CONTRACT;
 }
@@ -91,6 +91,7 @@ export function dialogNounOf(blocks: readonly Block[]): DialogNoun | null {
         return "dialog";
       case "raw":
       case "autocomplete":
+      case "box-text":
         break;
     }
   }
@@ -184,9 +185,12 @@ export const DIALOG_CONTRACT: DialogContract = {
     tail: (m) => m.bindTail,
   },
   wizard: {
-    // Every wizard key commits too — a digit selects AND advances; Left/Right change the step.
+    // Every wizard key commits too — a digit selects AND advances; Left/Right change the step. The
+    // answer recipe (lib/answer-field.ts) moves the pointer and fills the field itself, so its
+    // mid-flight polls key on the identity that ignores both; its entry guard still takes the
+    // byte-faithful `wizardsEqual`, so a field that changed since the render refuses there.
     commits: wizardsEqual,
-    identity: wizardsEqual,
+    identity: wizardsSameIdentity,
     signature: (m) => m.signature,
     region: (m) => m.signature,
   },

@@ -1,3 +1,4 @@
+import { readAgentLaunch } from "@/lib/agent-startup";
 import { cleanup, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
@@ -129,6 +130,17 @@ function declares(capabilities: Partial<Record<MuxCapability, boolean>>): void {
   server.use(http.get("/api/config", () => HttpResponse.json({ push: false, vapidPublicKey: "", mux })));
 }
 
+/** Serve an `/api/config` whose `createWorktree` answer depends on the `?host=` asked (`lead` for none). */
+function declaresByHost(createWorktree: Record<string, boolean>): void {
+  server.use(
+    http.get("/api/config", ({ request }) => {
+      const host = new URL(request.url).searchParams.get("host") ?? "lead";
+      const mux: MuxConfig = { name: "reference", capabilities: { createWorktree: createWorktree[host] }, unsupportedKeys: [], notes: {} };
+      return HttpResponse.json({ push: false, vapidPublicKey: "", mux });
+    }),
+  );
+}
+
 /** A plan for `~/src/app`, on main, the pane on fix-old; the folder answers follow the query. */
 function servePlan(seen: URLSearchParams[] = []): void {
   server.use(
@@ -146,6 +158,9 @@ function servePlan(seen: URLSearchParams[] = []): void {
         branchValid: branch !== "a..b",
         defaultTarget: { path: `/home/op/.herdr/worktrees/app/${slug}`, exists: false },
       };
+      // A default folder the create would refuse: with git's state of it, or a plain folder without.
+      if (branch === "taken") plan.defaultTarget = { path: `/home/op/.herdr/worktrees/app/${slug}`, exists: true, reason: "that folder holds branch y" };
+      if (branch === "plain") plan.defaultTarget = { path: `/home/op/.herdr/worktrees/app/${slug}`, exists: true };
       if (parent === "~/.config") plan.parentTarget = { ok: false, error: "hidden", code: "worktree.folder_hidden" };
       else if (parent !== null) plan.parentTarget = { ok: true, path: `/home/op/trees/${slug}` };
       return HttpResponse.json(plan);
@@ -253,6 +268,63 @@ describe("the New page: the address", () => {
     mount({ entries: [`/new?pane=${encodeURIComponent("w9:p9")}`], agents: [PANE] });
     expect(await screen.findByRole("switch", { name: /New worktree/ })).toHaveAttribute("aria-checked", "false");
     expect(screen.getByRole("textbox", { name: "Folder" })).toHaveValue("");
+  });
+});
+
+describe("the New page: ?beside= (an agent in this space)", () => {
+  const beside = `/new?beside=${encodeURIComponent("w1:p1")}`;
+
+  it("starts on that pane's folder, with no worktree block and no machine select, titled for the space", async () => {
+    serveLaunchers();
+    mount({ entries: [beside], agents: [PANE], servers: roster });
+    expect(await screen.findByRole("heading", { name: "New in this space" })).toBeInTheDocument();
+    await agentSelect();
+    expect(screen.getByRole("textbox", { name: "Folder" })).toHaveValue("/home/op/src/app");
+    expect(screen.queryByRole("switch", { name: /New worktree/ })).toBeNull();
+    expect(screen.queryByRole("combobox", { name: "Host" })).toBeNull();
+  });
+
+  it("sends the pane as the launch route's paneId, with the request id, and lands on the new pane as a tab", async () => {
+    serveLaunchers();
+    const bodies: unknown[] = [];
+    serveLaunch(bodies);
+    const router = mount({ entries: [beside], agents: [PANE] });
+    await waitFor(async () => expect(await agentSelect()).toHaveValue("harness:claude"));
+    await userEvent.click(screen.getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(router.state.location.pathname).toBe("/pane/w9%3Ap1"));
+    expect(bodies).toEqual([
+      { harness: "claude", cwd: "/home/op/src/app", paneId: "w1:p1", requestId: expect.stringMatching(/^[0-9a-f-]{36}$/) },
+    ]);
+  });
+
+  it("on a crew, finds the pane on the address's own machine, not the lead's pane with the same id", async () => {
+    serveLaunchers();
+    const onLead: AgentView = { ...PANE, host: "lead", cwd: "/home/op/lead-repo" };
+    const onMember: AgentView = { ...PANE, host: "mini", cwd: "/home/op/mini-repo" };
+    mount({ entries: [`/new?machine=mini&beside=${encodeURIComponent("w1:p1")}`], agents: [onLead, onMember], servers: roster });
+    expect(await screen.findByRole("heading", { name: "New in this space" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Folder" })).toHaveValue("/home/op/mini-repo");
+  });
+
+  it("on a crew, the lead's own pane matches an address with no machine", async () => {
+    serveLaunchers();
+    const onLead: AgentView = { ...PANE, host: "lead", cwd: "/home/op/lead-repo" };
+    const onMember: AgentView = { ...PANE, host: "mini", cwd: "/home/op/mini-repo" };
+    mount({ entries: [beside], agents: [onMember, onLead], servers: roster });
+    expect(await screen.findByRole("heading", { name: "New in this space" })).toBeInTheDocument();
+    expect(screen.getByRole("textbox", { name: "Folder" })).toHaveValue("/home/op/lead-repo");
+  });
+
+  it("a pane that is gone leaves the plain page: a new space, no paneId", async () => {
+    serveLaunchers();
+    const bodies: unknown[] = [];
+    serveLaunch(bodies);
+    mount({ entries: [`/new?beside=${encodeURIComponent("w9:p9")}`], agents: [PANE] });
+    await waitFor(async () => expect(await agentSelect()).toHaveValue("harness:claude"));
+    expect(screen.getByRole("heading", { name: "New" })).toBeInTheDocument();
+    await userEvent.click(screen.getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(bodies).toHaveLength(1));
+    expect(bodies[0]).not.toHaveProperty("paneId");
   });
 });
 
@@ -448,6 +520,7 @@ describe("the New page: Start", () => {
     expect(summary()).toHaveTextContent("Codex in ~/src/app");
     await userEvent.click(screen.getByRole("button", { name: "Start" }));
     await waitFor(() => expect(router.state.location.pathname).toBe("/pane/w9%3Ap1"));
+    expect(readAgentLaunch(router.state.location.state, "w9:p1")?.harness).toBe("codex");
     expect(bodies).toEqual([{ harness: "codex", cwd: "~/src/app", requestId: expect.stringMatching(/^[0-9a-f-]{36}$/) }]);
     // The page was REPLACED by the pane, so Back from the pane does not land on a used form.
     await router.navigate(-1);
@@ -480,6 +553,7 @@ describe("the New page: Start", () => {
     await userEvent.click(await screen.findByRole("button", { name: /Again: Codex/ }));
     await waitFor(() => expect(bodies).toHaveLength(2));
     expect(bodies[1]).toMatchObject({ harness: "codex" });
+    await waitFor(() => expect(readAgentLaunch(router.state.location.state, "w9:p1")?.harness).toBe("codex"));
   });
 
   it("an older Collie starts Shell through its space create", async () => {
@@ -651,6 +725,35 @@ describe("the New page: New worktree", () => {
     expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
   });
 
+  it("a default folder git lists in another state says which, and Start waits", async () => {
+    serveLaunchers();
+    servePlan();
+    mount({ entries: [`/new?pane=${encodeURIComponent("w1:p1")}`], agents: [PANE] });
+    const name = await screen.findByRole("textbox", { name: "Branch name" });
+    await userEvent.clear(name);
+    await userEvent.type(name, "taken");
+    await waitFor(() =>
+      expect(screen.getByTestId("new-page-target")).toHaveTextContent(
+        "~/.herdr/worktrees/app/taken already exists: that folder holds branch y. Pick another branch name or folder.",
+      ),
+    );
+    expect(screen.getByRole("button", { name: "Start" })).toBeDisabled();
+  });
+
+  it("a plain default folder keeps the short sentence", async () => {
+    serveLaunchers();
+    servePlan();
+    mount({ entries: [`/new?pane=${encodeURIComponent("w1:p1")}`], agents: [PANE] });
+    const name = await screen.findByRole("textbox", { name: "Branch name" });
+    await userEvent.clear(name);
+    await userEvent.type(name, "plain");
+    await waitFor(() =>
+      expect(screen.getByTestId("new-page-target")).toHaveTextContent(
+        "~/.herdr/worktrees/app/plain already exists. Pick another branch name or folder.",
+      ),
+    );
+  });
+
   it("a name git refuses says so, and Start waits", async () => {
     serveLaunchers();
     servePlan();
@@ -675,15 +778,47 @@ describe("the New page: New worktree", () => {
     mount();
     const toggle = await screen.findByRole("switch", { name: /New worktree/ });
     await waitFor(() => expect(toggle).toBeDisabled());
-    expect(await screen.findByText("needs Herdr")).toBeInTheDocument();
+    expect(await screen.findByText("This machine cannot open a space, or has no git.")).toBeInTheDocument();
   });
 
-  it("on a member the block stays, disabled, and says it is only on the lead", async () => {
+  // ADR 0126: a worktree is made on the machine the page addresses, so a member's own declaration decides.
+  it("on a member that can make one, the switch is on offer, and the plan and the create go to that member", async () => {
     serveLaunchers();
+    declaresByHost({ lead: false, mini: true });
+    const plans: URLSearchParams[] = [];
+    servePlan(plans);
+    const creates: URL[] = [];
+    server.use(
+      http.post("/api/worktree", ({ request }) => {
+        creates.push(new URL(request.url));
+        return HttpResponse.json({
+          ok: true,
+          alreadyOpen: false,
+          launcherStarted: true,
+          pane: { paneId: "w7:p1", workspaceId: "w7", workspaceLabel: "app", tabId: "w7:t1", cwd: "/home/op/trees/x" },
+        });
+      }),
+    );
+    mount({ entries: ["/new?machine=mini"], servers: roster });
+    const toggle = await screen.findByRole("switch", { name: /New worktree/ });
+    await waitFor(() => expect(toggle).toBeEnabled());
+    expect(screen.queryByText(/only on/)).toBeNull();
+    await userEvent.click(toggle);
+    await waitFor(() => expect(plans.length).toBeGreaterThan(0));
+    expect(plans.at(-1)!.get("host")).toBe("mini");
+    await waitFor(() => expect(screen.getByTestId("new-page-target")).toHaveTextContent("New folder"));
+    await userEvent.click(screen.getByRole("button", { name: "Start" }));
+    await waitFor(() => expect(creates).toHaveLength(1));
+    expect(creates[0]!.searchParams.get("host")).toBe("mini");
+  });
+
+  it("on a member that cannot make one, the switch is off and disabled, and it says why", async () => {
+    serveLaunchers();
+    declaresByHost({ lead: true, mini: false });
     mount({ entries: ["/new?machine=mini"], servers: roster });
     const toggle = await screen.findByRole("switch", { name: /New worktree/ });
     await waitFor(() => expect(toggle).toBeDisabled());
-    expect(await screen.findByText("only on bluefin")).toBeInTheDocument();
+    expect(await screen.findByText("This machine cannot open a space, or has no git.")).toBeInTheDocument();
     expect(toggle).toHaveAttribute("aria-checked", "false");
   });
 });

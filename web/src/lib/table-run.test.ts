@@ -298,6 +298,9 @@ describe("tableRuns — the whole pane corpus", () => {
       "claude--box-table-vs16-emoji.txt 0..10",
       "claude--trust-prompt-unnumbered.txt 5..10",
       "claude--trust-prompt.txt 5..10",
+      // The same Bluefin motd table in the scrollback of a running Claude Code 2.1.310 turn (the prompt
+      // echo capture, 2026-10-25): a real table again, at the same rows.
+      "claude--v2-1-310-working-echo-numbered--w120.txt 5..10",
       // THE SCREEN ADR 0072 WAS TAKEN FOR (discussion #301). Claude's dynamic-workflow view: the
       // phase list on the left, the running agents on the right, 226 columns wide. The reporter saw
       // it on a phone as a band of stacked rules with `· 74…` cut off the right edge, which is what
@@ -355,6 +358,16 @@ describe("tableRuns — the whole pane corpus", () => {
       "omp--slash-palette--filtered.txt 2..20",
       "omp--slash-palette.txt 2..20",
       "omp--tree.txt 2..20",
+      // omp 18.16.0's plan review with the Contents sidebar (a plan with two headings): the sidebar and
+      // the plan body are a two-pane box, so the raw block above the plan card pans like the splash. The
+      // clipped 80-column capture is declined, and with no card over it its raw block is claimed too.
+      "omp--v18-16-0-plan-review-contents--w140.txt 0..51",
+      "omp--v18-16-0-plan-review-slider--w140.txt 0..49",
+      "omp--v18-16-0-plan-review-slider-clipped--w80.txt 0..49",
+      "omp--v18-16-0-plan-review-slider-moved--w140.txt 0..49",
+      // omp 18.18.0's plan review under the `nerd` preset, the same two-pane box.
+      "omp--v18-18-0-nerd-plan-review--w250.txt 0..48",
+      "omp--v18-18-0-nerd-plan-review-moved--w250.txt 0..48",
       "omp--v18-4-ask-note-editor.txt 2..20",
       "omp--v18-4-ask-single-moved.txt 2..20",
       "omp--v18-4-ask-single.txt 2..20",
@@ -392,10 +405,18 @@ describe("tableRuns — the whole pane corpus", () => {
       "omp--v18-rule-idle.txt 2..20",
       "omp--v18-rule-wrapped.txt 2..20",
       "omp--working.txt 2..20",
+      // pi 1.3.0's welcome splash on a fresh session (issue 594 captures), the same two-pane shape as
+      // omp's: the logo and model on the left, Tips and Recent sessions on the right. The first key
+      // clears it (pi--v130-powerline-welcome-gone--w254.txt has none).
+      "pi--v130-powerline-goal-widget-idle--w254.txt 1..14",
+      "pi--v130-powerline-welcome-idle--w254.txt 1..14",
       // A box table printed by a shell in a Herdr 0.9.3 pane, with ⚠️ and ❤️ (a text-default emoji
       // plus U+FE0F) in boxed rows. Herdr draws each one two columns wide, so every wall after them
       // stands where the anchor's junctions do. Scoring them as one column wrapped the table again.
       "shell--box-table-vs16-emoji.txt 2..9",
+      // The same Bluefin motd table in a fresh pane the rig typed an omp launch line into (omp gang,
+      // 2026-10-25), before omp drew anything: a real table again.
+      "shell--omp-launch-window.txt 3..8",
       // The Bluefin motd's two-column command table (`│` walls, a `┼` rule under the header) over a
       // starship prompt, in a plain shell pane on the dev lane, 2026-10-17. A real table.
       "shell--starship-bluefin-motd--w117.txt 5..10",

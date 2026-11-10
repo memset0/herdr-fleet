@@ -65,7 +65,7 @@ import { cropRawColumns, type ColumnRange } from "../column-range";
 import { MAX_TAIL_LINES } from "../tail-lines";
 import { trailingTaskChecklistStart } from "../task-checklist";
 import { findInputFrame, plainRows } from "../surface/frame";
-import { loadProfiles } from "../surface/profile";
+import { loadProfiles, requireProfile } from "../surface/profile";
 import {
   DIALOG_CONTRACT,
   dialogComparators,
@@ -198,6 +198,11 @@ function lastNonBlank(lines: StyledLine[]): number {
 /** Whether a block is a menu lifted off a notice above a live box (`MenuModel.liveBox`). */
 function isNoticeMenu(block: Block): boolean {
   return block.kind === "menu" && block.menu.liveBox !== undefined;
+}
+
+/** Whether a block is the keyless card a titled box above the live input box lifts as. */
+function isBoxText(block: Block): boolean {
+  return block.kind === "box-text";
 }
 
 /** The notice heads a profile marks `letters`: a card lifted off one of them prints single letters, not digits. */
@@ -356,6 +361,32 @@ function perturbRegion<K extends DialogKind>(
   return null;
 }
 
+/**
+ * Whether ANY single-row perturbation of the dialog's region (as {@link perturbRegion} makes them) still
+ * lifts the same number of models with the SAME signature: the race guard would be blind to that change.
+ * For a dialog with no free-text row the answer must be false, because every change stops the lift.
+ */
+function perturbationsLeaveItBlind<K extends DialogKind>(adapter: HarnessAdapter, name: string, kind: K): boolean {
+  const lines = loadLines(name);
+  const blocks = adapter.buildBlocks(lines);
+  const count = modelsIn(blocks, kind).length;
+  const region = blocks.find((b) => dialogModelOf(b, kind) !== null)!;
+  const start = lines.length - region.lines.length;
+  const footer = lastNonBlank(lines);
+  const signature = DIALOG_CONTRACT[kind].signature;
+  const before = signature(modelsIn(blocks, kind).at(-1)!);
+  for (const i of range(start, lines.length)) {
+    if (i === footer || lineIsBlank(lines[i]!)) continue;
+    for (const withinText of [false, true]) {
+      const perturbed = perturbLine(lines, i, withinText);
+      if (perturbed === lines) continue; // a row with no letter or digit: nothing to change
+      const after = modelsIn(adapter.buildBlocks(perturbed), kind);
+      if (after.length === count && signature(after.at(-1)!) === before) return true;
+    }
+  }
+  return false;
+}
+
 function range(from: number, to: number): number[] {
   return Array.from({ length: Math.max(0, to - from) }, (_, i) => from + i);
 }
@@ -419,7 +450,9 @@ export function isValidHerdrKey(key: string): boolean {
 // (harness/autocomplete-model.ts), so the block emits nothing, races nothing, and has no row in the
 // dialog contract. Its fixtures still take the fail-closed and tail-anchoring legs above, which is
 // where a popup grammar could actually do harm.
-const KEYLESS_FUTURE_KINDS = new Set<string>(["autocomplete"]);
+//
+// `box-text` is the other: the Authentication box's text and links are shown, and nothing is sent.
+const KEYLESS_FUTURE_KINDS = new Set<string>(["autocomplete", "box-text"]);
 
 /**
  * Every keystroke an interactive block can emit, walked off its model + the family's control
@@ -590,10 +623,16 @@ export function describeAdapterConformance(
      *  to "a region exists exactly when the composer is ready": the sweep goes out unbound there,
      *  and the list says so in the test output rather than in a silent null. */
     unboundComposerFixtures?: string[];
+    /** Dialogs whose region holds no free-text row, so no row can change and still lift (omp's `Allow
+     *  tool: goal`: a title, two choices and a footer, nothing else). The perturbation test cannot
+     *  find a row that keeps the lift and moves the signature; instead it checks the stronger fact
+     *  that EVERY perturbation either stops the lift or moves the signature, never neither. */
+    fixedRegionFixtures?: string[];
   },
 ): void {
   const { ownFixtures, foreignFixtures, neutralFixtures } = opts;
   const unbound = opts.unboundComposerFixtures ?? [];
+  const fixedRegion = new Set(opts.fixedRegionFixtures ?? []);
 
   describe(`HarnessAdapter conformance — ${adapter.agent}`, () => {
     describe("conservative detection (fail-closed on foreign + neutral buffers)", () => {
@@ -695,7 +734,25 @@ export function describeAdapterConformance(
           // input box under it, whose status rows cannot be told from output walked as status rows. Its
           // binding region runs through the box's bottom edge, so the bridge binds the tap only while
           // that box still stands inside its tail window: the leg below holds both halves of that.
-          expect(interactiveBlocks(adapter.buildBlocks(scrolled)).filter((b) => !isNoticeMenu(b))).toEqual([]);
+          //
+          // A `box-text` card is exempt for its own reason. It emits no keystroke, so a stale card costs a
+          // wrong or expired link and never a key typed into a terminal, and under a live frame output rows
+          // cannot be told from status rows. The leg below holds the one rule that bounds the stale case.
+          expect(interactiveBlocks(adapter.buildBlocks(scrolled)).filter((b) => !isNoticeMenu(b) && !isBoxText(b))).toEqual([]);
+        });
+      }
+
+      const boxTextFixtures = ownFixtures.filter((fixture) => adapter.buildBlocks(loadLines(fixture)).some(isBoxText));
+      if (adapter.agent === "claude") {
+        it("claude's own fixtures lift at least one box-text card", () => {
+          expect(boxTextFixtures).not.toEqual([]);
+        });
+      }
+      for (const name of boxTextFixtures) {
+        it(`${name}: a box-text card is buried once ordinary output passes the status-row cap under the input box`, () => {
+          const statusRowCap = requireProfile(adapter.agent).idle.volatile.below.maxRows;
+          const output = Array.from({ length: statusRowCap + 1 }, (_, i) => textLine(`output row ${String(i)}`));
+          expect(adapter.buildBlocks([...loadLines(name), ...output]).some(isBoxText)).toBe(false);
         });
       }
 
@@ -938,6 +995,10 @@ export function describeAdapterConformance(
 
           it(`${name}: a perturbed region moves the signature and fails the committing check`, () => {
             const before = modelsOf(adapter, name, kind).at(-1)!;
+            if (fixedRegion.has(name)) {
+              expect(perturbationsLeaveItBlind(adapter, name, kind), `${name}: a perturbed row still lifts with the same signature`).toBe(false);
+              return;
+            }
             const probe = perturbRegion(adapter, name, kind);
             expect(
               probe,

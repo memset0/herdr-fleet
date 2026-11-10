@@ -74,11 +74,27 @@ export function maskTodoList<T extends { text: string; activeForm?: string }>(to
 
 /**
  * A pane's running subagents with their descriptions masked. The description is the text the agent
- * wrote when it started the subagent, so it can hold a path, a command or a key. The id, the type,
- * the model and the times are Claude Code's own.
+ * wrote when it started the subagent, so it can hold a path, a command or a key. On a Claude row the
+ * id, the type, the model and the times are Claude Code's own. A row read from the journal
+ * (`transcript: false`) takes its id from a job name the agent chose, so that id is masked too.
  */
-export function maskSubagentList<T extends { description: string }>(subagents: readonly T[]): T[] {
-  return subagents.map((subagent) => ({ ...subagent, description: redactText(subagent.description) }));
+export function maskSubagentList<T extends { description: string; agentId?: string; transcript?: false }>(
+  subagents: readonly T[],
+): T[] {
+  return subagents.map((subagent) => {
+    const masked = { ...subagent, description: redactText(subagent.description) };
+    if (subagent.transcript === false && subagent.agentId !== undefined) masked.agentId = redactText(subagent.agentId);
+    return masked;
+  });
+}
+
+/**
+ * A pane's background jobs with their words masked. The command is a line the agent ran, and a key
+ * passed on a command line is the commonest leak there is; the label is text the agent wrote, and the
+ * job id may be a name it chose. Exit codes and times are numbers.
+ */
+export function maskJobList<T extends { id: string; label: string; command: string }>(jobs: readonly T[]): T[] {
+  return jobs.map((job) => ({ ...job, id: redactText(job.id), label: redactText(job.label), command: redactText(job.command) }));
 }
 
 /** The pane fields an agent or a program wrote, which the mask reaches. */
@@ -86,17 +102,19 @@ interface PaneWords {
   terminalTitle?: string;
   todos?: readonly { text: string; activeForm?: string }[];
   subagents?: readonly { description: string }[];
+  jobs?: readonly { id: string; label: string; command: string }[];
 }
 
-/** A pane with its program-set title, its todo list and its subagents masked, whichever it carries. */
+/** A pane with its program-set title, its todo list, its subagents and its jobs masked, whichever it carries. */
 function maskPaneWords<P extends PaneWords>(pane: P): P {
   const titled = maskTerminalTitle(pane);
   const listed = titled.todos === undefined ? titled : { ...titled, todos: maskTodoList(titled.todos) };
-  return listed.subagents === undefined ? listed : { ...listed, subagents: maskSubagentList(listed.subagents) };
+  const agents = listed.subagents === undefined ? listed : { ...listed, subagents: maskSubagentList(listed.subagents) };
+  return agents.jobs === undefined ? agents : { ...agents, jobs: maskJobList(agents.jobs) };
 }
 
 /**
- * A snapshot with every pane's program-set title, todo list and subagents masked. The lead's merged
+ * A snapshot with every pane's program-set title, todo list, subagents and jobs masked. The lead's merged
  * snapshot carries its members' panes as the members sent them, so a member that does not mask sent
  * them in clear.
  */
@@ -116,4 +134,31 @@ export function maskSnapshotTitles<
  */
 export function maskSentAnswer<T extends { entries: readonly { line: string }[] }>(answer: T): T {
   return { ...answer, entries: answer.entries.map((entry) => ({ ...entry, line: redactText(entry.line) })) };
+}
+
+/** The words of one pin (M90): its text or, in a list, its excerpt; its anchor; and the one-line input of a tool card. */
+interface PinWords {
+  text?: string;
+  excerpt?: string;
+  anchor?: string;
+  tool?: { name: string; input?: string };
+}
+
+/**
+ * A pin with every word that leaves it masked. The file keeps the log's own words; only what leaves is
+ * masked. Each mask is as wide as what it hides, so a `textLength` beside them stays true.
+ */
+export function maskPin<P extends PinWords>(pin: P): P {
+  const masked = { ...pin };
+  if (pin.text !== undefined) masked.text = redactText(pin.text);
+  if (pin.excerpt !== undefined) masked.excerpt = redactText(pin.excerpt);
+  if (pin.anchor !== undefined) masked.anchor = redactText(pin.anchor);
+  if (pin.tool?.input === undefined) return masked;
+  return { ...masked, tool: { ...pin.tool, input: redactText(pin.tool.input) } };
+}
+
+/** A pins answer, the list of a GET or the one pin of a POST or a GET by id, with every pin masked. */
+export function maskPinsAnswer<T extends { pins?: readonly PinWords[]; pin?: PinWords }>(answer: T): T {
+  const listed = answer.pins === undefined ? answer : { ...answer, pins: answer.pins.map(maskPin) };
+  return listed.pin === undefined ? listed : { ...listed, pin: maskPin(listed.pin) };
 }

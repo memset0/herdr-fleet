@@ -1,12 +1,16 @@
-import { createContext, useCallback, useContext, useMemo, useSyncExternalStore, type ReactNode } from "react";
+import { createContext, useCallback, useContext, useMemo, useState, useSyncExternalStore, type ReactNode } from "react";
 
+import { FileContent, type FileImages, type FileText } from "@/components/file-preview";
+import { BottomSheet } from "@/components/ui/sheet";
 import { useNav } from "@/hooks/use-nav";
-import { FILES_EXIST_MAX, fetchFilesExist, isApiErrorStatus, isRefusalStatus } from "@/lib/api";
+import { FILES_EXIST_MAX, fetchFileImage, fetchFilesExist, isApiErrorStatus, isRefusalStatus } from "@/lib/api";
 import { isLostLatched } from "@/lib/connection-health";
 import { paneFilesRoot, resolveFilePathLink, type PrintedPath, type RootPane, type RootWorkspace } from "@/lib/file-paths";
+import { baseName, isRasterImagePath } from "@/lib/files-view";
 import { useLaunchers } from "@/lib/launchers";
 import { filesPath } from "@/lib/nav";
 import type { Scope } from "@/lib/scope";
+import { snapshotsTaken } from "@/lib/snapshot-clock";
 
 // A path the agent printed, opened in the Files view (ADR 0088). The screen that knows which pane
 // the text belongs to provides an opener; the chat prose, the tool cards and the terminal mirror ask
@@ -22,17 +26,45 @@ import type { Scope } from "@/lib/scope";
 // has no answer for is queued, and the queue goes out 150 ms after the last addition, deduped, at most
 // 64 paths a request. Until then, and for good on an absent answer, the path is plain text; a link
 // never turns back into text while the view stays open. Offline, or after a failure, nothing is asked.
+//
+// A REFUSAL IS NOT FOREVER. Every failure holds the asking for `FILE_EXIST_RETRY_MS`, so a device that
+// may not read (no read tier) is never asked once per poll. A 4xx other than 404 (a gate) then
+// stays refused until the next live snapshot arrives AFTER that hold (`lib/snapshot-clock.ts`): that
+// snapshot proves the connection and the build are back, and a bridge that was updated, or a pairing
+// that was repaired, would otherwise stay unasked until a page reload. A 404 or 501 (an older bridge,
+// a member the lead cannot forward to) asks again when the hold ends, since a snapshot says nothing
+// new about the route.
 
 /** One tap target: `href` for a middle-click or a long-press copy, `onOpen` for the tap. */
 export interface FileLinkTarget {
   href: string;
   onOpen: () => void;
+  /**
+   * Set when the path is a raster picture on the pane's disk: the provider the caller sits in then
+   * answers a tap by showing it in a sheet over the screen, and `onOpen` stays the way to Files for
+   * a provider that does not.
+   */
+  image?: PaneImageTarget;
 }
 
 /** Where a printed path leads, or null when it leads nowhere Files can open. */
-export type FileLinkOpener = (found: PrintedPath) => FileLinkTarget | null;
+export type FileLinkOpener = ((found: PrintedPath) => FileLinkTarget | null) & {
+  /** Names the pane, scope and root the opener belongs to, so a switch to another pane closes an open image sheet. */
+  paneKey?: string;
+};
+
+function paneImageKey(paneId: string, scope: Scope, root: string): string {
+  return `${scope.host ?? ""}\0${scope.session ?? ""}\0${paneId}\0${root}`;
+}
 
 const FileLinkContext = createContext<FileLinkOpener | null>(null);
+
+export interface PaneImageTarget {
+  paneId: string;
+  scope: Scope;
+  root: string;
+  rel: string;
+}
 
 /** The opener of the screen the caller sits in, or null when that screen has none. */
 export function useFileLinks(): FileLinkOpener | null {
@@ -40,7 +72,59 @@ export function useFileLinks(): FileLinkOpener | null {
 }
 
 export function FileLinksProvider({ value, children }: { value: FileLinkOpener | null; children: ReactNode }) {
-  return <FileLinkContext.Provider value={value}>{children}</FileLinkContext.Provider>;
+  // The provider owns the sheet's target. The opener it hands down turns a picture's target into a tap
+  // that sets it, so the tap reaches this state through the context and no other way.
+  const [target, setTarget] = useState<PaneImageTarget | null>(null);
+  // No opener, no sheet: a target set before the opener went away must not come back with the next one.
+  // The same goes for a target that belongs to another pane than the opener's.
+  const paneKey = value?.paneKey;
+  const foreign = target !== null && paneKey !== undefined && paneImageKey(target.paneId, target.scope, target.root) !== paneKey;
+  if (target !== null && (value === null || foreign)) setTarget(null);
+  const closeSheet = useCallback(() => setTarget(null), []);
+  const opener = useMemo<FileLinkOpener | null>(() => {
+    if (value === null) return null;
+    const wrapped: FileLinkOpener = (found) => {
+      const link = value(found);
+      if (link === null || link.image === undefined) return link;
+      const image = link.image;
+      return { href: link.href, onOpen: () => setTarget(image) };
+    };
+    if (paneKey !== undefined) wrapped.paneKey = paneKey;
+    return wrapped;
+  }, [value, paneKey]);
+  return (
+    <FileLinkContext.Provider value={opener}>
+      {children}
+      {target !== null && <PaneImageSheet target={target} onClose={closeSheet} />}
+    </FileLinkContext.Provider>
+  );
+}
+
+function PaneImageSheet({ target, onClose }: { target: PaneImageTarget; onClose: () => void }) {
+  const file = useMemo<FileText>(
+    () => ({
+      available: true,
+      root: "",
+      path: target.rel,
+      size: 0,
+      binary: true,
+      truncated: false,
+      text: "",
+    }),
+    [target],
+  );
+  const images = useMemo<FileImages>(
+    () => ({
+      bytes: (path, signal) => fetchFileImage({ kind: "pane", paneId: target.paneId }, path, target.scope, signal),
+      text: async () => null,
+    }),
+    [target],
+  );
+  return (
+    <BottomSheet open onClose={onClose} title={baseName(target.rel)}>
+      <FileContent file={file} view="preview" images={images} />
+    </BottomSheet>
+  );
 }
 
 /** A plain click is the screen's to handle; a modified one (new tab, copy) is the browser's. */
@@ -90,8 +174,8 @@ class FileExistenceStore {
   private timer: ReturnType<typeof setTimeout> | null = null;
   private controller = new AbortController();
   private attached = false;
-  /** The route is not there (a member, an older bridge) or refused: nothing more is asked. */
-  private refused = false;
+  /** The bridge refused the route: nothing more is asked until a live snapshot arrives after this count, and the hold has passed. */
+  private refusedAt: number | null = null;
   private quietUntil = 0;
   private onAnswer: () => void = () => {};
   /**
@@ -129,9 +213,17 @@ class FileExistenceStore {
       this.absentAt.delete(rel);
     }
     if (this.answers.has(rel) || this.queued.has(rel) || this.asking.has(rel)) return;
-    if (this.refused || Date.now() < this.quietUntil || isLostLatched()) return;
+    if (this.isRefused() || Date.now() < this.quietUntil || isLostLatched()) return;
     this.queued.add(rel);
     this.arm();
+  }
+
+  /** Whether a refusal still stands: it ends with the first live snapshot taken after it (the hold is `quietUntil`'s). */
+  private isRefused(): boolean {
+    if (this.refusedAt === null) return false;
+    if (snapshotsTaken() === this.refusedAt) return true;
+    this.refusedAt = null;
+    return false;
   }
 
   private attach(onAnswer: () => void): void {
@@ -176,10 +268,12 @@ class FileExistenceStore {
       }
     } catch (error) {
       if (signal.aborted) return;
-      // A 4xx is an answer about the route, not this moment: an older bridge, a member the lead
-      // cannot forward to (501), a device the gate refuses. Anything else may pass: wait, then ask.
-      if (isRefusalStatus(error) || isApiErrorStatus(error, 501)) this.refused = true;
-      else this.quietUntil = Date.now() + FILE_EXIST_RETRY_MS;
+      // A 4xx is an answer about the route, not this moment: a device the gate refuses, an older
+      // bridge, a member the lead cannot forward to (501). The first kind waits for the next live
+      // snapshot; a missing route (404, 501) and anything that may pass (a timeout, a 5xx, no
+      // network) wait a fixed time, then ask again.
+      this.quietUntil = Date.now() + FILE_EXIST_RETRY_MS;
+      if (isRefusalStatus(error) && !isApiErrorStatus(error, 404)) this.refusedAt = snapshotsTaken();
     } finally {
       for (const p of paths) this.asking.delete(p);
     }
@@ -276,7 +370,7 @@ export function usePaneFileLinks({
     const at: Scope = {};
     if (host !== undefined) at.host = host;
     if (session !== undefined) at.session = session;
-    return ({ path, line }) => {
+    const opener: FileLinkOpener = ({ path, line }) => {
       const rel = resolveFilePathLink({ path, root, cwd, home });
       if (rel === null) return null;
       if (existence === null) return null;
@@ -285,7 +379,11 @@ export function usePaneFileLinks({
         return null;
       }
       const href = filesPath(paneId, at, line === undefined ? { path: rel } : { path: rel, line });
-      return { href, onOpen: () => nav.down(href, { viaLink: true }) };
+      const onOpen = () => nav.down(href, { viaLink: true });
+      if (line !== undefined || !isRasterImagePath(rel)) return { href, onOpen };
+      return { href, onOpen, image: { paneId, scope: at, root, rel } };
     };
+    opener.paneKey = paneImageKey(paneId, at, root);
+    return opener;
   }, [root, cwd, home, paneId, host, session, nav, existence]);
 }

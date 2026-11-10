@@ -1,6 +1,6 @@
+import { Icon } from "@/components/icons/icon";
 import { useMemo, useRef, useState } from "react";
 import { useLocation } from "react-router";
-import { ArrowLeft, Lock } from "lucide-react";
 
 import { AgentIcon } from "@/components/agent-icon";
 import { RouteHeader } from "@/components/app-header";
@@ -40,8 +40,10 @@ import type { Recipe } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { mintRequestId } from "@/lib/worktree-name";
 
-// "ADD YOUR OWN" (M48 spec 02, ADR 0094): a page below the New page, for a launcher this phone adds
-// on ONE machine. Agent has two ways, a recipe (a harness and chips, the line built for you) and a
+// "ADD YOUR OWN" (M48 spec 02, ADR 0094): a page below the New page, for a launcher this phone adds.
+// Since ADR 0127 point 4 the row is the CREW's: add, rename and remove go to the lead, whichever machine
+// the page names, and the lead's row serves every machine. The machine in the query stays where the
+// first run lands (the New page it goes back to is that machine's). Agent has two ways, a recipe (a harness and chips, the line built for you) and a
 // written command (off until the operator turns it on); Command is the written way only. On success
 // the page goes back to /new with the new row chosen. Where it was opened from rides in the query
 // (`?kind=`, `?machine=`, `?pane=`, `?s=`), like the New page's own, so a reload keeps it.
@@ -66,10 +68,18 @@ function NewAddPage({ search }: { search: string }) {
   const at = useMemo(() => readNewAt(search), [search]);
   const scope: Scope = { host: at.machine, session: at.session };
   const { servers } = useCrew();
-  const machineId = at.machine ?? leadHost(servers);
-  const named = servers.find((s) => s.id === machineId);
+  const leadId = leadHost(servers);
+  const machineId = at.machine ?? leadId;
   // Said only on a crew: a solo install has one machine and needs no name for it.
-  const machine = servers.length > 1 && named !== undefined ? named.name || named.id : t("launcherAdd.thisMachine");
+  const nameOf = (id: string | undefined): string => {
+    const named = servers.find((s) => s.id === id);
+    return servers.length > 1 && named !== undefined ? named.name || named.id : t("launcherAdd.thisMachine");
+  };
+  // The switches, recipes and caps on this page are the lead's `adding` block (ADR 0127), so "turned
+  // off on ..." names the lead, not the machine the first run lands on.
+  const leadName = nameOf(leadId);
+  // A member's answer lists its own pre-0127 rows beside the lead's. Those are not the lead's to change.
+  const memberView = machineId !== undefined && leadId !== undefined && machineId !== leadId;
 
   const launchers = useLaunchers(scope);
   const loaded = launchers.loadedFor === launchersKey(scope);
@@ -143,14 +153,14 @@ function NewAddPage({ search }: { search: string }) {
     setBusy(true);
     setError(null);
     try {
-      const res = await addLauncher(ask, requestId.current, scope);
+      const res = await addLauncher(ask, requestId.current);
       if (!res.ok) {
         setError({ print, message: describeApiError(res) });
         return;
       }
       // Back to the New page, the new row chosen. `side` replaces this entry, so Back from there
       // lands on the page that opened the New page, not on this form again.
-      nav.side(newPath({ machine: at.machine, pane: at.pane, session: at.session, pick: rowKey(res.row) }));
+      nav.side(newPath({ machine: at.machine, pane: at.pane, beside: at.beside, session: at.session, pick: rowKey(res.row) }));
     } catch (e) {
       setError({ print, message: describeThrownError(e) });
     } finally {
@@ -174,10 +184,10 @@ function NewAddPage({ search }: { search: string }) {
               variant="ghost"
               size="icon"
               className="size-11"
-              onClick={() => nav.up(newPath({ machine: at.machine, pane: at.pane, session: at.session }))}
+              onClick={() => nav.up(newPath({ machine: at.machine, pane: at.pane, beside: at.beside, session: at.session }))}
               aria-label={backLabel}
             >
-              <ArrowLeft className="size-5" />
+              <Icon name="back" className="size-5" />
             </Button>
             <h1 className="min-w-0 truncate text-lg font-semibold tracking-tight">{t("newPage.add")}</h1>
           </>
@@ -196,7 +206,7 @@ function NewAddPage({ search }: { search: string }) {
 
         {addsOff ? (
           <Notice tone="caution" variant="box" announce="none">
-            {t("launcherAdd.addsOff", { machine })}
+            {t("launcherAdd.addsOff", { machine: leadName })}
           </Notice>
         ) : null}
 
@@ -276,9 +286,9 @@ function NewAddPage({ search }: { search: string }) {
                   data-testid="launcher-add-off"
                   className="flex items-start gap-3 rounded-md border border-dashed border-border px-3 py-3 text-muted-foreground"
                 >
-                  <Lock className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+                  <Icon name="locked" className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
                   <div className="flex flex-col gap-1">
-                    <span className="text-sm font-medium text-foreground">{t("launcherAdd.off.title", { machine })}</span>
+                    <span className="text-sm font-medium text-foreground">{t("launcherAdd.off.title", { machine: leadName })}</span>
                     <span className="text-xs leading-snug">{t("launcherAdd.off.reason")}</span>
                   </div>
                 </div>
@@ -303,7 +313,7 @@ function NewAddPage({ search }: { search: string }) {
           {t("launcherAdd.how.link")}
         </button>
 
-        <LauncherAddedList items={loaded ? launchers.items : null} scope={scope} machine={machine} onChanged={launchers.reload} />
+        <LauncherAddedList items={loaded ? launchers.items : null} memberView={memberView} onChanged={launchers.reload} />
       </BandMain>
 
       <BottomBar className="flex flex-col gap-2 px-4">
@@ -316,7 +326,7 @@ function NewAddPage({ search }: { search: string }) {
               key: "summary",
               node: (
                 <p className="line-clamp-2 h-10 text-sm leading-5 text-muted-foreground" data-testid="launcher-add-summary">
-                  {t("launcherAdd.summary", { machine })}
+                  {t("launcherAdd.summary")}
                 </p>
               ),
             },

@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 
 import { computeEtag } from "../http-cache.ts";
+import type { JsonValue } from "../json.ts";
 import type { PaneWire, SessionSummary, SnapshotResponse, TabView, WorkspaceView } from "../types.ts";
 import { NARROW_VIEW } from "../sessions.ts";
 import {
@@ -96,6 +97,17 @@ const peerBody: PeerSnapshotBody = body({
 const SELF = { id: "desk", name: "the herd" };
 
 // ── The lead's own roster label (§9.2: "operator-chosen label", never the crew's name) ──────────
+
+describe("a member's pin count (M90)", () => {
+  const parsed = (pins: JsonValue) =>
+    // SAFETY: a test body shaped as a member's snapshot; `pins` is deliberately of any type, the member's word.
+    parsePeerSnapshot({ sessions: [], agents: [{ ...pane({ paneId: "w1:p1" }), pins }], shellPanes: [], workspaces: [], tabs: [] } as never)?.agents[0];
+
+  test("keeps a whole number above zero and drops everything else", () => {
+    expect(parsed(3)?.pins).toBe(3);
+    for (const bad of [0, -1, 1.5, "3", null, true]) expect(parsed(bad) !== undefined && "pins" in parsed(bad)!).toBe(false);
+  });
+});
 
 describe("leadLabel — the lead's servers[].name is a machine label, not the crew's name", () => {
   test("a bare short hostname passes through unchanged", () => {
@@ -206,6 +218,38 @@ describe("mergeSnapshot — reachable / unreachable / incompatible, never confla
       lastSeenAt: 0,
     });
     expect(merged.agents.every((p) => p.host === "desk")).toBe(true);
+  });
+
+  test("each row carries the multiplexer it drives: the lead's own, and a member's banked one", () => {
+    const merged = mergeSnapshot(localBody(), {
+      self: { ...SELF, mux: "herdr" },
+      peers: [
+        contribution({ state: state({ memberId: "laptop", mux: "herdr-core" }) }),
+        contribution({ state: state({ memberId: "old-box" }) }),
+      ],
+      now: NOW,
+    });
+    expect(merged.servers!.find((s) => s.id === "desk")!.mux).toBe("herdr");
+    expect(merged.servers!.find((s) => s.id === "laptop")!.mux).toBe("herdr-core");
+    // A member that never said, and a lead that names none, carry no `mux` key at all.
+    expect("mux" in merged.servers!.find((s) => s.id === "old-box")!).toBe(false);
+    expect("mux" in mergeSnapshot(localBody(), { self: SELF, peers: [], now: NOW }).servers![0]!).toBe(false);
+  });
+
+  test("each row carries the host name: the lead's own, and a member's banked one (M77 spec 01)", () => {
+    const merged = mergeSnapshot(localBody(), {
+      self: { ...SELF, host: "bluefin" },
+      peers: [
+        contribution({ state: state({ memberId: "laptop", host: "minibuch" }) }),
+        contribution({ state: state({ memberId: "old-box" }) }),
+      ],
+      now: NOW,
+    });
+    expect(merged.servers!.find((s) => s.id === "desk")!.host).toBe("bluefin");
+    expect(merged.servers!.find((s) => s.id === "laptop")!.host).toBe("minibuch");
+    // A member that never said, and a lead whose OS gives no name, carry no `host` key at all.
+    expect("host" in merged.servers!.find((s) => s.id === "old-box")!).toBe(false);
+    expect("host" in mergeSnapshot(localBody(), { self: SELF, peers: [], now: NOW }).servers![0]!).toBe(false);
   });
 
   test("the lead's own entry is present, first, and always current", () => {
@@ -592,6 +636,30 @@ describe("parsePeerSnapshot — a peer contributes rows, never claims", () => {
     expect(parsed.shellPanes[0]!.instance).toBe("zz00");
   });
 
+  test("a session's display label is kept only as a string, cleaned and capped by the lead's rule", () => {
+    const parsed = parsePeerSnapshot({
+      sessions: [
+        { ...session({ name: "a" }), label: "Видео" },
+        { ...session({ name: "b" }), label: `x‮y${"z".repeat(100)}` },
+        { ...session({ name: "c" }), label: { evil: true } },
+        { ...session({ name: "d" }), label: "​" },
+        session({ name: "e" }),
+      ],
+      agents: [],
+      shellPanes: [],
+    })!;
+    expect(parsed.sessions.map((s) => s.label)).toEqual(["Видео", `x y${"z".repeat(45)}`, undefined, undefined, undefined]);
+    expect("label" in parsed.sessions[2]!).toBe(false);
+
+    // The label survives the merge beside the lead's host tag; the name is still the identity.
+    const merged = mergeSnapshot(localBody(), {
+      self: SELF,
+      peers: [contribution({ state: state({ memberId: "laptop" }), body: parsed })],
+      now: NOW,
+    });
+    expect(merged.sessions.find((s) => s.host === "laptop" && s.name === "a")?.label).toBe("Видео");
+  });
+
   test("a body missing any of the three PANE lists is not a snapshot to salvage", () => {
     expect(parsePeerSnapshot(null)).toBeNull();
     expect(parsePeerSnapshot("nope")).toBeNull();
@@ -914,5 +982,18 @@ describe("asks on a peer's pane", () => {
     expect(fromPeer?.turnId).toBe("turn-02-a");
     expect(fromPeer?.asks).toEqual([ask]);
     expect("turnId" in (merged.agents.find((p) => p.paneId === "w1:p1") ?? {})).toBe(false);
+  });
+});
+
+describe("mergeSnapshot — a member's walky off flag (M89, §21)", () => {
+  test("a pane's `walkyOff` reaches the phone through the merge, and an on pane stays without the key", () => {
+    const merged = mergeSnapshot(localBody(), {
+      self: SELF,
+      peers: [contribution({ state: state({ memberId: "laptop" }), body: { ...peerBody, agents: [pane({ paneId: "w2:p1", walkyOff: true }), pane({ paneId: "w2:p2" })] } })],
+      now: NOW,
+    });
+    const of = (paneId: string) => merged.agents.find((row) => row.paneId === paneId && row.host === "laptop");
+    expect(of("w2:p1")?.walkyOff).toBe(true);
+    expect("walkyOff" in of("w2:p2")!).toBe(false);
   });
 });

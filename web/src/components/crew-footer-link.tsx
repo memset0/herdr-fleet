@@ -1,12 +1,13 @@
-import { ChevronRight, Network } from "lucide-react";
 
 import { useCrew } from "@/components/crew-provider";
 import { useNav } from "@/hooks/use-nav";
 import { useLocale } from "@/hooks/use-locale";
 import { t, tn } from "@/lib/i18n";
+import { groupByHost, hasSharedHost } from "@/lib/machines";
 import { crewPath } from "@/lib/nav";
 import type { Scope } from "@/lib/scope";
 import { cn } from "@/lib/utils";
+import { Icon } from "@/components/icons/icon";
 
 /**
  * The dashboard's way into /crew — the third entry point, beside the switcher sheet's footer and the
@@ -39,10 +40,19 @@ export function CrewFooterLink({ scope, className }: { scope?: Scope; className?
   // the host switcher uses. The census page fetches crew status; a footer line must not, or every
   // dashboard poll would drag a second request behind it for a caption.
   const reachable = servers.filter((s) => s.reachable).length;
-  const counts = {
-    machines: tn("crew.summary.machines", servers.length),
-    reachable: t("crew.summary.reachable", { count: reachable }),
-  };
+  // M77: when a host runs two instances, the rows overstate the machines. Count machines, and say how
+  // many of the instances answer, in the words the crew page's caption uses. Without a shared host the
+  // text is exactly what it was.
+  const machines = groupByHost(servers);
+  const counts = hasSharedHost(machines)
+    ? {
+        machines: tn("crew.summary.machines", machines.length),
+        reachable: t("crew.summary.instancesReachable", { reachable, total: servers.length }),
+      }
+    : {
+        machines: tn("crew.summary.machines", servers.length),
+        reachable: t("crew.summary.reachable", { count: reachable }),
+      };
 
   return (
     <button
@@ -54,9 +64,9 @@ export function CrewFooterLink({ scope, className }: { scope?: Scope; className?
         className,
       )}
     >
-      <Network className="size-3 shrink-0" />
+      <Icon name="crew" className="size-3 shrink-0" />
       <span>{t("crew.footer.label", counts)}</span>
-      <ChevronRight className="size-3 shrink-0" />
+      <Icon name="row-go" className="size-3 shrink-0" />
     </button>
   );
 }

@@ -56,12 +56,26 @@ export interface FleetGatewayConfig {
 export interface FleetSchema1LeadConfig extends FleetGatewayConfig {
   readonly schemaVersion: 1;
   readonly role: "lead";
-  readonly collie: FleetLoopbackEndpoint;
+  readonly collie: FleetCollieEndpoint;
 }
 
 export interface FleetNativePackLifecycle {
   readonly mode: "native-pack";
   readonly packState: "collie";
+}
+
+interface MutableFleetCollieEndpoint {
+  host: "127.0.0.1" | "::1";
+  port: number;
+  mux?: "herdr" | "herdr-core";
+  coreSocket?: string;
+  coreSession?: string;
+}
+
+export interface FleetCollieEndpoint extends FleetLoopbackEndpoint {
+  readonly mux?: "herdr" | "herdr-core";
+  readonly coreSocket?: string;
+  readonly coreSession?: string;
 }
 
 export interface FleetLoopbackEndpoint {
@@ -130,7 +144,7 @@ export interface FleetSchema2LeadConfig extends FleetGatewayConfig {
   readonly schemaVersion: 2;
   readonly role: "lead";
   readonly lifecycle: FleetNativePackLifecycle;
-  readonly collie: FleetLoopbackEndpoint;
+  readonly collie: FleetCollieEndpoint;
   readonly reachability: readonly FleetReachabilityEntry[];
 }
 
@@ -138,7 +152,7 @@ export interface FleetSchema2PeerConfig {
   readonly schemaVersion: 2;
   readonly role: "peer";
   readonly lifecycle: FleetNativePackLifecycle;
-  readonly collie: FleetLoopbackEndpoint;
+  readonly collie: FleetCollieEndpoint;
   readonly transport: FleetTransportConfig | FleetExternalTransportConfig;
   /** Absent unless the Peer declared a `[terminal]` table; never defaulted into existence. */
   readonly terminal?: FleetTerminalConfig;
@@ -305,13 +319,23 @@ function proxyConfig(value: JsonValue | undefined): FleetGatewayConfig["proxy"] 
   return { clientIpHeader: header };
 }
 
-function collieConfig(value: JsonValue | undefined): FleetLoopbackEndpoint {
+function collieConfig(value: JsonValue | undefined): FleetCollieEndpoint {
   const raw = table(value, "collie");
-  exactKeys(raw, ["host", "port"], "collie");
-  return {
+  exactKeys(raw, ["host", "port", "mux", "core_socket", "core_session"], "collie");
+  if (raw.mux !== undefined && raw.mux !== "herdr" && raw.mux !== "herdr-core") throw new Error("collie.mux must be herdr or herdr-core");
+  const coreSocket = raw.core_socket === undefined ? undefined : text(raw.core_socket, "collie.core_socket");
+  const coreSession = raw.core_session === undefined ? undefined : text(raw.core_session, "collie.core_session");
+  if (coreSocket !== undefined && !isAbsolute(coreSocket)) throw new Error("collie.core_socket must be absolute");
+  if (coreSession !== undefined && !/^[A-Za-z0-9_-]{1,64}$/.test(coreSession)) throw new Error("collie.core_session must be a safe name");
+  if (raw.mux !== "herdr-core" && (coreSocket !== undefined || coreSession !== undefined)) throw new Error("Core endpoint settings require collie.mux=herdr-core");
+  const endpoint: MutableFleetCollieEndpoint = {
     host: loopbackHost(raw.host, "collie.host"),
     port: integer(raw.port, "collie.port", 1, 65_535),
   };
+  if (raw.mux === "herdr" || raw.mux === "herdr-core") endpoint.mux = raw.mux;
+  if (coreSocket !== undefined) endpoint.coreSocket = coreSocket;
+  if (coreSession !== undefined) endpoint.coreSession = coreSession;
+  return endpoint;
 }
 
 /**

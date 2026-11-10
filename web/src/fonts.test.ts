@@ -12,7 +12,7 @@ import {
 import { acceptOperatorFonts, operatorFontCss, operatorFontUrl } from "@/lib/operator-fonts";
 import { DEFAULT_UI_FONT_URL, FONT_URLS, UI_COMPANION_FONT_URLS, UI_FONT_URLS } from "@/lib/sw-routes";
 
-// Collie ships eight webfonts: two Nerd Font symbol subsets, five UI typefaces and a Cyrillic companion. The design
+// Collie ships nine webfonts: two Nerd Font symbol subsets, six UI typefaces and a Cyrillic companion. The design
 // rests on facts that are silent when broken: the stylesheet, the service worker and the disk agree
 // on which files exist; the symbol faces stay range-restricted so they stay lazy; the UI face is
 // preloaded and metric-matched so its swap moves nothing; and none of them re-enters the precache.
@@ -39,6 +39,35 @@ describe("bundled fonts", () => {
   it("declares one symbol face per private-use plane", () => {
     expect(css).toContain("unicode-range: U+E000-F8FF");
     expect(css).toContain("unicode-range: U+F0000-F1AFF");
+  });
+
+  // Off the space, so it never sets the line; off the two-cell emoji, so the phone draws those.
+  it("keeps the terminal-symbol face to one-cell symbols", () => {
+    const range = /font-family: "Terminal Symbols";[\s\S]*?unicode-range: ([^;]+);/.exec(css)?.[1];
+    const inRange = (cp: number) =>
+      range!.split(",").some((r) => {
+        const [lo, hi = lo] = r.trim().slice(2).split("-").map((h) => Number.parseInt(h, 16));
+        return cp >= lo! && cp <= hi!;
+      });
+    expect(inRange(0x23bf)).toBe(true); // ⎿
+    expect(inRange(0x29c9)).toBe(true); // ⧉
+    for (const cp of [0x20, 0x231a, 0x231b, 0x2329, 0x232a, 0x23e9, 0x23ec, 0x23f0, 0x23f3]) {
+      expect(inRange(cp)).toBe(false);
+    }
+  });
+
+  // pyftsubset strips nameIDs above 6 unless told to keep them, which would silently drop the OFL
+  // copyright/trademark/licence records (0, 7, 13, 14) before the rename loop runs.
+  it("preserves OFL name records in build-terminal-symbols.py and ships both symbol licences", () => {
+    const buildScript = readFileSync(resolve(root, "../scripts/build-terminal-symbols.py"), "utf8");
+    expect(buildScript).toContain("--name-IDs=0,1,2,3,4,5,6,7,13,14");
+
+    const license = read("public/fonts/LICENSE.txt");
+    expect(license).toContain("The MIT License (MIT)");
+    expect(license).toContain("Copyright (c) 2014 Ryan L McIntyre");
+    expect(license).toContain("Copyright (c) 2020 cormullion (https://github.com/cormullion/juliamono)");
+    expect(license).toContain("Terminal Symbols");
+    expect(license).toContain("SIL OPEN FONT LICENSE Version 1.1");
   });
 
   // Drift here is the whole failure mode: the SW sweeps every font-cache entry it can't name, so a
@@ -95,7 +124,7 @@ describe("the UI typefaces", () => {
   // stack. Put the stand-in last and it never renders; leave it out and the swap reflows.
   it("puts the stand-in between the webfont and the plain system stack", () => {
     const stack = /--font-sans:\s*([\s\S]*?);/.exec(css)?.[1] ?? "";
-    expect(stack).toMatch(/^\s*"Aldrich",\s*"Aldrich Fallback",/);
+    expect(stack).toMatch(/^\s*"Atkinson Hyperlegible Next",\s*"Atkinson Hyperlegible Next Fallback",/);
     expect(stack).toContain("system-ui");
   });
 
@@ -119,7 +148,7 @@ describe("the UI typefaces", () => {
   // splash render in the system font and the app change voice on hand-off — which is the exact bug
   // this splash block exists to prevent, just for a different reader.
   it("re-declares every shipped face for the pre-CSS boot splash", () => {
-    for (const family of ["Space Grotesk", "IBM Plex Sans", "Geist", "Atkinson Hyperlegible Next", "Aldrich"]) {
+    for (const family of ["Space Grotesk", "IBM Plex Sans", "Geist", "Atkinson Hyperlegible Next", "Nunito", "Aldrich"]) {
       expect(html).toContain(`font-family: "${family}";`);
       expect(html).toContain(`font-family: "${family} Fallback";`);
     }
@@ -132,7 +161,8 @@ describe("the UI typefaces", () => {
     expect(html).toContain(":root.font-grotesk");
     expect(html).toContain(":root.font-plex");
     expect(html).toContain(":root.font-geist");
-    expect(html).toContain(":root.font-atkinson");
+    expect(html).toContain(":root.font-nunito");
+    expect(html).toContain(":root.font-aldrich");
   });
 
   it("is small enough to sit on the critical path", () => {
@@ -187,6 +217,7 @@ describe("the Cyrillic companion", () => {
     "IBM Plex Sans Fallback",
     "Geist Fallback",
     "Atkinson Hyperlegible Next Fallback",
+    "Nunito Fallback",
   ])(
     "keeps the %s stand-in off Cyrillic with a Latin-only range, in both copies",
     (family) => {
@@ -291,7 +322,7 @@ describe("operator fonts stay off the shipped path", () => {
     const sheet = operatorFontCss([{ family: "Departure Mono", basename: "d.woff2" }], "op:gone.woff2");
     expect(sheet).not.toContain("--font-operator-family");
     expect(sheet).toBe("");
-    expect(cssRootOperatorStack()).toContain('var(--font-operator-family, "Aldrich")');
+    expect(cssRootOperatorStack()).toContain('var(--font-operator-family, "Atkinson Hyperlegible Next")');
   });
 
   function cssRootOperatorStack(): string {
@@ -362,9 +393,9 @@ describe("theme-init.js and lib/design.ts agree", () => {
 
 // ── What the three theme faces do not draw ──────────────────────────────────────────────────────
 //
-// IBM Plex Sans, Geist and Atkinson Hyperlegible Next ship as Latin and Latin Extended subsets
+// IBM Plex Sans, Geist, Atkinson Hyperlegible Next and Nunito ship as Latin and Latin Extended subsets
 // (U+0020-017F and a few marks). Cyrillic and CJK text under Nightwatch, Daylight or Harbour falls
-// to the system face, and only Aldrich, the default, has a Cyrillic companion. That is a decision,
+// to the system face, and only Aldrich, a choice since 2026-11-06, has a Cyrillic companion. That is a decision,
 // not an accident, and it is silent when it breaks: a future subset that grew a Cyrillic range
 // would change the page's metrics for a language nobody tested. So this reads the files, not the
 // stylesheet. It parses the WOFF2 container just far enough to read the `cmap` table (the one table
@@ -447,7 +478,8 @@ describe("the Latin-only theme faces", () => {
   const faces = [
     ["plex", "ui-ibm-plex-sans-3.201-latin.woff2", "font-plex"],
     ["geist", "ui-geist-1.800-latin.woff2", "font-geist"],
-    ["atkinson", "ui-atkinson-hyperlegible-next-2.001-latin.woff2", "font-atkinson"],
+    ["atkinson", "ui-atkinson-hyperlegible-next-2.001-latin.woff2", ""],
+    ["nunito", "ui-nunito-3.602-latin.woff2", "font-nunito"],
   ] as const;
 
   // The control: the same reader finds Cyrillic in the one face that has it, so an empty answer above
@@ -472,9 +504,11 @@ describe("the Latin-only theme faces", () => {
   // The system stack is what draws the text the face cannot. A face whose stack ended at its own name
   // would paint a Russian or Japanese string in the browser's default serif.
   it.each(faces)("the %s stack names a system fallback after the face and its stand-in", (_name, _file, cls) => {
-    const block = new RegExp(`:root\\.${cls}\\s*\\{([^}]*)\\}`).exec(css)?.[1] ?? "";
+    // The default face (Atkinson) wears no class: its stack is the first `--font-sans` in the @theme block.
+    const block = cls === "" ? css : (new RegExp(`:root\\.${cls}\\s*\\{([^}]*)\\}`).exec(css)?.[1] ?? "");
     const stack = /--font-sans:\s*([\s\S]*?);/.exec(block)?.[1] ?? "";
-    expect(stack).toMatch(/Fallback",\s*ui-sans-serif,\s*system-ui/);
+    // Fleet inserts an optional CJK face without changing the Latin/system fallback order.
+    expect(stack.replaceAll("var(--font-ui-cjk),", "")).toMatch(/Fallback",\s*ui-sans-serif,\s*system-ui/);
     expect(stack.trim().endsWith("sans-serif")).toBe(true);
   });
 });

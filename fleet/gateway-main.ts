@@ -1,5 +1,4 @@
-import { createTodoistService } from "./todoist/service.ts";
-import { createTodoistStore } from "./todoist/store.ts";
+import { CorePaneFitController } from "./manual-pane-fit/core.ts";
 import { dirname, isAbsolute, join } from "node:path";
 
 import { GATEWAY_TOKEN_ENV } from "./collie-pairing.ts";
@@ -64,7 +63,7 @@ async function main(): Promise<void> {
       : createLocalPaneFit({
           source: snapshots,
           socketPath,
-          controller: new ManualPaneFitControllerManager({ binary: herdr }),
+          controller: process.env.COLLIE_MUX === "herdr-core" ? new CorePaneFitController() : new ManualPaneFitControllerManager({ binary: herdr }),
         });
   const server = startGateway({
     config,
@@ -72,7 +71,6 @@ async function main(): Promise<void> {
     collieToken,
     // Beside the private configuration, not in the state directory: bindings are the operator's own
     // choice, and a wiped state directory must not quietly return them to stock defaults.
-    todoist: createTodoistService({ store: createTodoistStore(join(dirname(configPath), "todoist.json")), origin: config.public.origin }),
     tags: createTagStore(join(dirname(configPath), "pane-tags.json")),
     viewState: createViewStateStore(join(dirname(configPath), "panel-slots.json")),
     settings: createSettingsStore(settingsPathFor(dirname(configPath))),

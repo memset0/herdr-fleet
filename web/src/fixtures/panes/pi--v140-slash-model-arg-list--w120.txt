@@ -1,0 +1,40 @@
+
+ [0m[38;2;228;138;122m[48;2;79;142;179m▀[0m[38;2;228;138;122m▀█[0m  [0m[38;2;130;130;130mv1.4.0[0m                                                                                                            
+ [0m[38;2;79;142;179m█▀[0m [0m[38;2;234;182;93m█[0m [0m[38;2;130;130;130mescape[0m[38;2;160;160;160m interrupt · [0m[38;2;130;130;130mctrl+c/ctrl+d[0m[38;2;160;160;160m clear/exit · [0m[38;2;130;130;130m/[0m[38;2;160;160;160m commands · [0m[38;2;130;130;130m![0m[38;2;160;160;160m bash · [0m[38;2;130;130;130mctrl+o[0m[38;2;160;160;160m more[0m                                   
+ [0m[38;2;130;130;130mPress ctrl+o to show full startup help and loaded resources.[0m                                                           
+                                                                                                                        
+ [0m[38;2;130;130;130mPi can explain its own features and look up its docs. Ask it how to use or extend Pi.[0m                                  
+
+[0m[38;2;167;167;0m[Skills][0m                                                                                                                
+[0m[38;2;130;130;130m  agent-browser[0m                                                                                                         
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+[0m[38;2;112;112;112m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+/model haiku[0m[7m [0m                                                                                                           
+[0m[38;2;112;112;112m────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────[0m
+[0m[38;2;228;101;225m→ anthropic/claude-haiku-4.5      openrouter[0m                                                                            
+  anthropic/claude-haiku-5.5[0m[38;2;160;160;160m      openrouter[0m                                                                            
+  anthropic/claude-haiku-4.5:bat[0m[38;2;160;160;160m  openrouter[0m                                                                            
+  anthropic/claude-haiku-5.5:bat[0m[38;2;160;160;160m  openrouter[0m                                                                            
+  ~anthropic/claude-haiku-latest[0m[38;2;160;160;160m  openrouter[0m                                                                            
+[0m[38;2;160;160;160m  (1/23)[0m                                                                                                                
+[0m[38;2;130;130;130m~/.cache/collie-lab/hotfix-629-pi140/project-1.4.0[0m
+[0m[38;2;130;130;130m0.0%/200k (auto)                                                               anthropic/claude-haiku-4.5 • thinking off[0m

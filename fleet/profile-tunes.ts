@@ -28,5 +28,12 @@ export function withNoticeHint(profile: Profile): Profile {
 
 /** Every Fleet tune, applied to one parsed profile. */
 export function fleetProfile(profile: Profile): Profile {
-  return withNoticeHint(withEnterSubmit(profile));
+  return profilePolicyEnabled() ? withNoticeHint(withEnterSubmit(profile)) : profile;
 }
+
+/** Test seam for upstream fixtures; production keeps the Fleet profile policy. */
+interface ProfileTuning { enabled: boolean; resolve?: () => boolean }
+export const profileTuning: ProfileTuning = { enabled: true };
+
+/** Stable cache key shared by bridge and browser profile loading. */
+export function profilePolicyEnabled(): boolean { return profileTuning.resolve?.() ?? profileTuning.enabled; }

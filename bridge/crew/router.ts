@@ -1,3 +1,4 @@
+import { hostname } from "node:os";
 import type { AuditLog } from "../audit.ts";
 import type { JsonObject, JsonValue } from "../json.ts";
 import {
@@ -22,6 +23,7 @@ import { CREW_MACHINE_FIELD } from "../machine-stats.ts";
 import type { MachineSample } from "../types.ts";
 import { LEAD_LINE_HEADER, LEAD_RELEASE_HEADER, UPDATE_TURN_HEADER } from "./follow.ts";
 import { apiPathFor } from "./forward.ts";
+import { leadLabel } from "./merge.ts";
 import { HOST_PARAM } from "./registry.ts";
 import {
   adoptLead,
@@ -32,12 +34,14 @@ import {
   enrollPeer,
   isDemotionRefused,
   isLeading,
+  isEnrollRefusal,
   parseEnrollRequest,
   parseRosterEntry,
   recordSignedRequest,
   removeMember,
   CREW_PROTOCOL_VERSION,
   type DemotionRefused,
+  type EnrollRefusal,
 } from "./enrollment.ts";
 import { randomToken, type RandomSource } from "./identity.ts";
 import {
@@ -51,6 +55,7 @@ import {
 } from "./signing.ts";
 import type { PinnedDeputy } from "./admission.ts";
 import { parsePairingSync, type SyncedDevice, type PairingSync } from "./standby-devices.ts";
+import { LAUNCHERS_DIGEST_FIELD, parseLaunchersCopy, type CopiedRow } from "./standby-launchers.ts";
 import {
   checkTakeoverClaim,
   commitTakeover,
@@ -63,6 +68,7 @@ import {
 import type { TrustedMember, TrustStore, TrustStoreData, Warrant } from "./trust-store.ts";
 import { checkWarrantPush, currentWarrant, parseWarrant, storeWarrant, warrantReportOf, type WarrantRefusal } from "./warrant.ts";
 import { deposedStateFrom, isDepositionProof, selfHeal, type DeposedState } from "./deposed.ts";
+import { cleanHost } from "./machine-host.ts";
 import { selectView, type SnapshotView } from "../sessions.ts";
 import type { MuxConfig, SessionCard, SnapshotResponse } from "../types.ts";
 import { WALKY_ACK_HEADER, WALKY_REPORT_FIELD, type CrewAnswer } from "../walky/crew.ts";
@@ -108,6 +114,17 @@ export const CREW_MUX_FIELD = "mux";
  * block for every session"**, which is what every lead read before the field existed.
  */
 export const CREW_SESSIONS_FIELD = "sessions";
+
+/**
+ * The three OPTIONAL fields a `snapshot` answer carries beside the body (M76 spec 04, M77 spec 01,
+ * 1.25.0): `mux`, the registry name of the multiplexer this member drives, `panes`, how many agent
+ * panes it serves, and `host`, the machine's own host name. **Absent means "this answer said
+ * nothing"**, never an empty multiplexer, never zero panes and never a machine with no name: a member
+ * whose bridge has not read its multiplexer yet sends no `panes` at all.
+ */
+export const CREW_STATUS_MUX_FIELD = "mux";
+export const CREW_PANES_FIELD = "panes";
+export const CREW_STATUS_HOST_FIELD = "host";
 
 /**
  * The OPTIONAL field a `hello` answer carries its Surface reader version on (M56 spec 09): one small
@@ -170,6 +187,13 @@ export const CREW_TAKEOVER_PATH = "/crew/v1/takeover";
  * front door for its own operator (RFC §16, decision 5; pairing is always on, ADR 0086).
  */
 export const CREW_PAIRING_PATH = "/crew/v1/pairing";
+/**
+ * `POST` — the lead sends the crew's launcher rows to the DEPUTY ONLY (ADR 0127 point 5, §18.14).
+ *
+ * They land in `standby-launchers.json`, a read-only copy, **never** merged into this collie's own
+ * `launchers.toml` or `launchers-added.json`. The deputy serves them only while it leads.
+ */
+export const CREW_LAUNCHERS_COPY_PATH = "/crew/v1/launchers-copy";
 /**
  * `POST` — a member hands its lead one walky talky message to deliver and route (§21). Signed per
  * §8.6, because it travels peer → lead, and answered only by a collie that leads.
@@ -325,6 +349,10 @@ export interface CrewSurface {
   readonly sessions?: SessionCardSource;
   /** This collie's Surface reader version, for `hello` (M56 spec 09). Absent on a build that computes no Surface. */
   readonly surfaceVersion?: number | undefined;
+  /** The agent panes this machine serves, for its `snapshot` answer (M76 spec 04). See {@link CrewRouterDeps.panes}. */
+  readonly panes?: () => number | null;
+  /** This machine's own host name, for its `snapshot` answer (M77 spec 01). See {@link CrewRouterDeps.host}. */
+  readonly host?: () => string | null;
 }
 
 /**
@@ -357,11 +385,21 @@ export interface StandbySurface {
    * it is true and stops seeing it the moment they fix it.
    */
   readonly syncedCollision: () => readonly string[];
+  /**
+   * The digest of the launcher-row copy this collie holds, or `null` when it holds none (ADR 0127
+   * point 5). Reported on `hello` and `snapshot` beside `pairingDigest`, for the same reason. Optional:
+   * absent, this collie keeps no copy and `POST /crew/v1/launchers-copy` refuses.
+   */
+  readonly copyDigest?: () => string | null;
+  /** Replace `standby-launchers.json` wholesale with what `from`, this collie's lead, sent. */
+  readonly applyCopy?: (copy: { from: string; crewId: string; rows: readonly CopiedRow[] }) => Promise<void>;
 }
 
 export interface CrewRouterDeps {
   readonly store: TrustStore;
   readonly audit: AuditLog | null;
+  /** This machine's hostname, for the lead's own display name when a joiner asks for it. Absent: `os.hostname`. */
+  readonly hostname?: () => string;
   /** Absent ⇒ `/crew/v1/snapshot` 404s like any unimplemented route. */
   readonly snapshot?: SnapshotSource;
   /** Absent ⇒ the per-pane/tab/workspace half of §5's table 404s. */
@@ -510,6 +548,20 @@ export interface CrewRouterDeps {
    */
   readonly machineStats?: () => MachineSample | null;
   /**
+   * **How many agent panes this machine serves**, published beside the snapshot body (M76 spec 04).
+   *
+   * `null` ⇒ the machine cannot count right now (its bridge has not read the multiplexer yet), and
+   * the field is omitted. It is never sent as `0`: a lead reads absence as "not reported", and zero
+   * as "reported, and nothing is running".
+   */
+  readonly panes?: () => number | null;
+  /**
+   * **This machine's own host name**, published beside the snapshot body (M77 spec 01), so the lead
+   * can tell which members run on one machine. `null` or absent ⇒ the field is omitted, which the
+   * lead reads as "this member did not say" and groups nothing on.
+   */
+  readonly host?: () => string | null;
+  /**
    * §20's two REQUEST headers reaching through: the lead's own settled release, and the turn.
    *
    * A **notification**, not a route: this collie decides for itself whether any of it means
@@ -626,6 +678,8 @@ type HelloBody = {
   warrantActiveGeneration?: number;
   pairingDigest?: string;
   pairingCollision?: string[];
+  /** The digest of the launcher-row copy this peer holds (ADR 0127 point 5). See {@link LAUNCHERS_DIGEST_FIELD}. */
+  [LAUNCHERS_DIGEST_FIELD]?: string;
   /** This peer's own capability declaration (§7.1's amendment of 2026-09-08). See {@link CREW_MUX_FIELD}. */
   mux?: MuxConfig;
   /** This peer's session cards (M55, 2026-10-13). See {@link CREW_SESSIONS_FIELD}. */
@@ -831,6 +885,20 @@ function resolveDial(
   return null;
 }
 
+/** The lead refuses a joiner's name (CREW_PROTOCOL.md §8.2, 1.25.0): 422, never 409, which old joiners read as a protocol mismatch. */
+function enrollLabelRefusedResponse(refusal: EnrollRefusal): Response {
+  return new Response(
+    JSON.stringify({ error: refusal.message, code: refusal.refused, label: refusal.label, takenBy: refusal.takenBy }),
+    {
+      status: 422,
+      headers: {
+        "content-type": "application/json; charset=utf-8",
+        [PROTOCOL_HEADER]: String(CREW_PROTOCOL_VERSION),
+      },
+    },
+  );
+}
+
 export function createCrewRouter(deps: CrewRouterDeps): CrewHandler {
   const transportPinned = deps.transportPinned ?? false;
   const membershipChanged = (): void => deps.onMembershipChange?.();
@@ -998,6 +1066,9 @@ export function createCrewRouter(deps: CrewRouterDeps): CrewHandler {
       // nothing else — no hash, no token, no device count.
       const clash = deps.standby?.syncedCollision() ?? [];
       if (clash.length > 0) hello.pairingCollision = [...clash];
+      // ADR 0127 point 5: the launcher copy's digest, read the same absent-means-nothing-held way.
+      const copy = deps.standby?.copyDigest?.() ?? null;
+      if (copy !== null) hello[LAUNCHERS_DIGEST_FIELD] = copy;
       // M22/03: what THIS machine's multiplexer can do, so the lead can answer `/api/config?host=`
       // for this member without forwarding a config read (ADR 0011 keeps the crew link the only
       // cross-machine transport, and `forward.ts` keeps `config` off the forwarded list).
@@ -1036,6 +1107,9 @@ export function createCrewRouter(deps: CrewRouterDeps): CrewHandler {
     }
     if (pathname === CREW_PAIRING_PATH && req.method === "POST") {
       return pairingSync(req, signedBody, verdict.member, verdict.self, data);
+    }
+    if (pathname === CREW_LAUNCHERS_COPY_PATH && req.method === "POST") {
+      return launchersCopy(req, signedBody, verdict.member, verdict.self, data);
     }
     if (pathname === CREW_TAKEOVER_PATH && req.method === "POST") {
       // A takeover arriving at a collie that still believes it LEADS is a deposition, not a witness
@@ -1131,7 +1205,10 @@ export function createCrewRouter(deps: CrewRouterDeps): CrewHandler {
       // finding" — the closed reading. It rides the sweep's own answer rather than the sync's, so the
       // lead sees it while it is true instead of for the one sweep a push happened to land on.
       const clash = deps.standby?.syncedCollision() ?? [];
-      const withReport = clash.length === 0 ? withDigest : { ...withDigest, pairingCollision: [...clash] };
+      const withClash = clash.length === 0 ? withDigest : { ...withDigest, pairingCollision: [...clash] };
+      // ADR 0127 point 5: the launcher copy's digest, in the same seat and for the same reason.
+      const copy = deps.standby?.copyDigest?.() ?? null;
+      const withReport = copy === null ? withClash : { ...withClash, [LAUNCHERS_DIGEST_FIELD]: copy };
       // §19: this machine's own update preflight, in the same seat, for the same reason. The lead's
       // `X-Crew-Preflight: fresh` is passed on as a REQUEST — a peer that honours it answers with a
       // freshly-run report, and one that does not answers with an older one and an `asOf` saying so.
@@ -1158,12 +1235,23 @@ export function createCrewRouter(deps: CrewRouterDeps): CrewHandler {
       // one, which the lead reads as "not reported", never as an idle machine (§7.1).
       const load = deps.machineStats?.() ?? null;
       const withLoad = load === null ? withVersion : { ...withVersion, [CREW_MACHINE_FIELD]: load };
+      // M76 spec 04: the multiplexer's registry name and the agent pane count, in that same seat. The
+      // name is the one `hello`'s block already carries (`deps.mux`), so the two cannot disagree; the
+      // count is omitted while the machine cannot count, which the lead reads as "not reported".
+      const muxName = deps.mux?.()?.name ?? "";
+      const paneCount = deps.panes?.() ?? null;
+      const withMux = muxName === "" ? withLoad : { ...withLoad, [CREW_STATUS_MUX_FIELD]: muxName };
+      const withPanes = paneCount === null ? withMux : { ...withMux, [CREW_PANES_FIELD]: paneCount };
+      // M77 spec 01: the machine's own name, in that same seat. Cleaned by the one reading the lead
+      // applies on receipt, so what leaves here is what the lead would bank.
+      const hostName = cleanHost(deps.host?.() ?? null);
+      const withHost = hostName === null ? withPanes : { ...withPanes, [CREW_STATUS_HOST_FIELD]: hostName };
       // §21: the receipts this member wrote for messages from elsewhere that its lead has not acked,
       // in that same seat, with the cursor of the newest. The lead's ack (a REQUEST header, lower-case
       // lookup) is applied first, so what it already read is gone. Omitted when nothing is held, which
       // the lead reads as "nothing to report" (§7.1). A report on the exchange, never a stored state.
       const walkyReport = deps.walky?.report?.(headerValue(req, WALKY_ACK_HEADER.toLowerCase())) ?? null;
-      const withWalky = walkyReport === null ? withLoad : { ...withLoad, [WALKY_REPORT_FIELD]: walkyReport };
+      const withWalky = walkyReport === null ? withHost : { ...withHost, [WALKY_REPORT_FIELD]: walkyReport };
       // §20's two REQUEST headers, read LAST and answered with nothing. They are additive-optional
       // and absent-means-closed: a build with no `onFollow` ignores both, which is a correct peer,
       // and a peer that reads them still decides for itself. Handed over synchronously and never
@@ -1500,6 +1588,38 @@ export function createCrewRouter(deps: CrewRouterDeps): CrewHandler {
   }
 
   /**
+   * `POST /crew/v1/launchers-copy` — the lead sends the crew's launcher rows to the DEPUTY (ADR 0127
+   * point 5, §18.14).
+   *
+   * The pairing sync's two role questions, both of which must answer yes: the caller is this collie's
+   * own lead, and this collie holds a verified warrant naming itself. What lands is
+   * `standby-launchers.json`, a copy this collie serves only while it leads, never merged into its own
+   * lists. A collie that keeps no copy (no `applyCopy`) refuses it like any other non-deputy.
+   */
+  async function launchersCopy(
+    req: Request,
+    cached: string | null,
+    from: TrustedMember,
+    self: string,
+    data: TrustStoreData | null,
+  ): Promise<Response> {
+    const standby = deps.standby;
+    if (data === null || data.crew === null || data.lead === null || data.lead.memberId !== from.memberId) {
+      return refuse(CREW_LAUNCHERS_COPY_PATH, "not-a-crew-member");
+    }
+    if (standby?.applyCopy === undefined || !standby.warrantsSelf()) {
+      return refuse(CREW_LAUNCHERS_COPY_PATH, "not-a-crew-member");
+    }
+    const rows = parseLaunchersCopy(await readJson(req, cached));
+    if (rows === null) return badRequest(self, "a launcher copy needs `rows`, each a clean launcher row");
+    await standby.applyCopy({ from: from.memberId, crewId: data.crew.crewId, rows });
+    return new Response(JSON.stringify({ rows: rows.length, applied: true }), {
+      status: 200,
+      headers: crewResponseHeaders(self),
+    });
+  }
+
+  /**
    * `POST /crew/v1/warrant` **at a collie that still believes it leads** — §18.12's deposition.
    *
    * Four clauses, and every one of them is a question about material this collie already holds:
@@ -1679,21 +1799,30 @@ export function createCrewRouter(deps: CrewRouterDeps): CrewHandler {
     // single-use token the operator carried out of band, and the pin is trust-on-first-use at this
     // instant — `parseEnrollRequest` has already refused a payload whose certificate and fingerprint
     // are not the same certificate, so what is pinned is what the joiner will actually present.
-    const response = await commitCrewChange(deps.store, deps.audit, (data) =>
-      data === null
-        ? null
-        : enrollPeer(
-            data,
-            {
-              fingerprint: parsed.fingerprint,
-              certPem: parsed.certPem,
-              address: parsed.address,
-              label: parsed.label ?? invite.label,
-            },
-            now(),
-            random,
-          ),
-    );
+    // A refused name writes nothing, so it travels out of the commit in a variable: the store's
+    // `update` takes a change or null, and null already means "not a crew member" below.
+    let refusal: EnrollRefusal | null = null;
+    const response = await commitCrewChange(deps.store, deps.audit, (data) => {
+      if (data === null) return null;
+      const outcome = enrollPeer(
+        data,
+        {
+          fingerprint: parsed.fingerprint,
+          certPem: parsed.certPem,
+          address: parsed.address,
+          label: parsed.label ?? invite.label,
+        },
+        now(),
+        random,
+        leadLabel((deps.hostname ?? hostname)(), data.self.memberId),
+      );
+      if (!isEnrollRefusal(outcome)) return outcome;
+      refusal = outcome;
+      return null;
+    });
+    // The token proved good above, so this answer is not an oracle for an unauthenticated caller.
+    // 422, not 409: a pre-1.25.0 `crew join` reads every 409 as a protocol mismatch.
+    if (refusal !== null) return enrollLabelRefusedResponse(refusal);
     if (response === null) return refuse(CREW_ENROLL_PATH, "not-a-crew-member");
 
     // The peer is in the roster on disk; this process still holds the one it booted with (§8.2's

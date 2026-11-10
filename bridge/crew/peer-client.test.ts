@@ -26,6 +26,7 @@ import {
   parseMuxReport,
   parseSessionCards,
   parseSurfaceVersion,
+  parsePeerStatus,
   parsePeerVersion,
   sweepPeers,
   takeDataBudget,
@@ -220,6 +221,12 @@ describe("crewUrl — an address is a machine, never a URL with extras", () => {
   test("an explicit scheme is kept; params ride the query", () => {
     expect(crewUrl("http://127.0.0.1:8787", "snapshot", { session: "work" })).toBe(
       "http://127.0.0.1:8787/crew/v1/snapshot?session=work",
+    );
+  });
+
+  test("a list param rides the query once per value (ADR 0127's folder questions)", () => {
+    expect(crewUrl("laptop.example", "launchers", { cwd: ["~/a", "/srv/b"], session: "work" })).toBe(
+      "https://laptop.example/crew/v1/launchers?cwd=%7E%2Fa&cwd=%2Fsrv%2Fb&session=work",
     );
   });
 
@@ -1432,6 +1439,31 @@ describe("PeerClient — pairing_label_collision, the other 409 (§18.14)", () =
   });
 });
 
+describe("PeerClient — the launcher copy to the deputy (ADR 0127 point 5)", () => {
+  const rows = [{ command: "make test", label: "Tests", kind: "command" as const, noPrompts: false }];
+
+  test("a 2xx is applied, and the body is `{ rows }` on the launchers-copy route", async () => {
+    const { fetch, calls } = replying({ rows: 1, applied: true });
+    expect(await client(fetch).launchersCopy(laptop, rows)).toBe("applied");
+    expect(calls[0]?.url).toContain("/crew/v1/launchers-copy");
+    expect(calls[0]?.init.method).toBe("POST");
+    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({ rows });
+  });
+
+  test("a 404 is a deputy before the route: its router answers an unknown path so", async () => {
+    expect(await client(replying({ error: "not found" }, { status: 404, protocol: OURS }).fetch).launchersCopy(laptop, rows)).toBe("no_route");
+  });
+
+  test("any other answer, or none, is a failure the next sweep decides again", async () => {
+    expect(await client(replying({ error: "x" }, { status: 400, protocol: OURS }).fetch).launchersCopy(laptop, rows)).toBe("failed");
+    expect(await client(replying("", { status: 401, protocol: OURS }).fetch).launchersCopy(laptop, rows)).toBe("failed");
+    const dead: CrewFetch = async () => {
+      throw new Error("ECONNREFUSED");
+    };
+    expect(await client(dead).launchersCopy(laptop, rows)).toBe("failed");
+  });
+});
+
 describe("PeerClient — every dial is attested (§8.6)", () => {
   const key = material("desk").keyPem;
   const withDial = (over: { sign?: PeerClientDeps["sign"] } = {}) => ({
@@ -1495,6 +1527,39 @@ describe("PeerClient — every dial is attested (§8.6)", () => {
     const { fetch, calls } = replying({ protocol: 2, member: "laptop" });
     await client(fetch).hello(laptop);
     expect(new Headers(calls[0]!.init.headers).get(DIAL_HEADER)).toBeNull();
+  });
+});
+
+describe("parsePeerStatus, the sweep's mux and panes siblings (M76 spec 04)", () => {
+  test("a carried name and count are read, and a zero is a zero", () => {
+    expect(parsePeerStatus({ bridge: {}, mux: "herdr", panes: 4 })).toEqual({ mux: "herdr", panes: 4, host: null });
+    expect(parsePeerStatus({ mux: "  tmux ", panes: 0 })).toEqual({ mux: "tmux", panes: 0, host: null });
+  });
+
+  test("absent, blank or malformed means the answer SAID NOTHING, so each reads as null", () => {
+    expect(parsePeerStatus({ bridge: {}, agents: [] })).toEqual({ mux: null, panes: null, host: null });
+    expect(parsePeerStatus({ mux: "", panes: -1 })).toEqual({ mux: null, panes: null, host: null });
+    expect(parsePeerStatus({ mux: 7, panes: "3" })).toEqual({ mux: null, panes: null, host: null });
+    expect(parsePeerStatus({ panes: 1.5 })).toEqual({ mux: null, panes: null, host: null });
+    expect(parsePeerStatus(["herdr"])).toEqual({ mux: null, panes: null, host: null });
+    expect(parsePeerStatus(null)).toEqual({ mux: null, panes: null, host: null });
+  });
+});
+
+describe("parsePeerStatus, the host sibling (M77 spec 01)", () => {
+  test("a carried host name is read trimmed, beside mux and panes", () => {
+    expect(parsePeerStatus({ mux: "herdr", panes: 4, host: " minibuch " })).toEqual({ mux: "herdr", panes: 4, host: "minibuch" });
+  });
+
+  test("absent, blank or malformed means the answer SAID NOTHING about the host", () => {
+    expect(parsePeerStatus({ mux: "herdr" }).host).toBeNull();
+    expect(parsePeerStatus({ host: "" }).host).toBeNull();
+    expect(parsePeerStatus({ host: "   " }).host).toBeNull();
+    expect(parsePeerStatus({ host: 7 }).host).toBeNull();
+    expect(parsePeerStatus({ host: ["a"] }).host).toBeNull();
+    expect(parsePeerStatus({ host: "a".repeat(254) }).host).toBeNull();
+    expect(parsePeerStatus({ host: "box\nname" }).host).toBeNull();
+    expect(parsePeerStatus(null).host).toBeNull();
   });
 });
 

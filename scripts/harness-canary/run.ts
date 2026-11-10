@@ -18,7 +18,8 @@ import { hermes } from "./agents/hermes";
 import { agy } from "./agents/agy";
 import { omp } from "./agents/omp";
 import { muse } from "./agents/muse";
-import { launchedThrough, type AgentProfile } from "./agents/profile";
+import { kiro } from "./agents/kiro";
+import { launchedThrough, resolveBinary, versionCommandThrough, type AgentProfile } from "./agents/profile";
 import { CANARY_SESSION, CanarySession, listSessions } from "./herdr";
 import { canaryJournals } from "./journal";
 import { loadKnownGaps } from "./known-gaps";
@@ -30,17 +31,17 @@ import { runAgent } from "./scenarios";
 import { installTransport } from "./transport";
 import { DEFAULT_SCENARIOS, applyKnownGaps, exitCode, notReachedCase, recordable, renderTable, scenarioResult, type ScenarioResult } from "./verdict";
 
-const PROFILES = { claude, codex, opencode, pi, grok, hermes, agy, omp, muse } satisfies Record<CanaryAgent, AgentProfile>;
+const PROFILES = { claude, codex, opencode, pi, grok, hermes, agy, omp, muse, kiro } satisfies Record<CanaryAgent, AgentProfile>;
 const REPO_ROOT = fileURLToPath(new URL("../..", import.meta.url)).replace(/[\\/]$/, "");
 
 function log(line: string): void {
   console.log(line);
 }
 
-/** The installed version: the first x.y.z the version command prints, or null when it will not run. */
-function installedVersion(profile: AgentProfile): string | null {
+/** The installed version: the first x.y.z the version command prints through `bin`, or null when it will not run. */
+function installedVersion(profile: AgentProfile, bin: string): string | null {
   try {
-    const r = Bun.spawnSync([...profile.versionCommand], { stdout: "pipe", stderr: "pipe", timeout: 5000 });
+    const r = Bun.spawnSync([...versionCommandThrough(profile, bin)], { stdout: "pipe", stderr: "pipe", timeout: 5000 });
     return /\d+\.\d+\.\d+/.exec(`${r.stdout.toString()} ${r.stderr.toString()}`)?.[0] ?? null;
   } catch {
     return null;
@@ -136,16 +137,19 @@ async function main(options: CanaryOptions): Promise<number> {
     // of the canary has always been this checkout's (README § "Proof against 1.13.1").
     const journals = canaryJournals();
     adapters = new Map(options.agents.map((a) => [a, readers.adapterFor(a) !== undefined]));
-    const usesProfileLaunch = options.scenarios.some((s) => DEFAULT_SCENARIOS.includes(s));
+    const usesProfileLaunch = options.scenarios.some((s) => DEFAULT_SCENARIOS.includes(s) || s === "bar");
     for (const agent of options.agents) {
-      // Only the default scenarios start through the profile; `dialogs`, `busy` and `options` type
-      // their own lines, so a launcher is neither used nor credited when none of those run.
+      // Only the default scenarios and `bar` start through the profile; `dialogs`, `busy` and
+      // `options` type their own lines, so a launcher is neither used nor credited when none of those run.
       const launcher = usesProfileLaunch ? viaLauncher(options.via, agent) : null;
-      // The version comes from the profile's own command on PATH, never through the launcher; the
-      // canary does not check that a launcher runs that same binary.
-      const profile = launcher === null ? PROFILES[agent] : launchedThrough(PROFILES[agent], launcher);
+      // The agent's own binary, resolved once (profile.ts, resolveBinary). The version is read from it and,
+      // without a launcher, the launch line calls it by path: label and process name one binary. With a
+      // launcher the version still comes from the own binary, never through the launcher; the canary does
+      // not check that a launcher runs that same binary.
+      const binary = resolveBinary(PROFILES[agent].versionCommand[0] ?? agent);
+      const profile = launcher !== null ? launchedThrough(PROFILES[agent], launcher) : binary !== null ? launchedThrough(PROFILES[agent], binary) : PROFILES[agent];
       if (launcher !== null) launchers.set(agent, launcher);
-      const version = installedVersion(profile);
+      const version = binary === null ? null : installedVersion(PROFILES[agent], binary);
       versions.set(agent, version ?? "not installed");
       log(`${agent} ${version ?? "(not installed)"}${adapters.get(agent) ? "" : ", no adapter: raw mirror, one-step send"}${launcher === null ? (options.via === null ? "" : usesProfileLaunch ? ", own binary: no launcher in --via" : ", --via unused: these scenarios start their own lines") : `, via ${launcher}`}`);
       if (version === null) {

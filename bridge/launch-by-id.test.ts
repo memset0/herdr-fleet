@@ -7,9 +7,11 @@ import { AuditLog } from "./audit.ts";
 import { harnessLaunch } from "./harness-launch.ts";
 import { LAUNCH_RECEIPTS_FILE, LaunchReceiptStore, coerceLaunchReceipt, memoryLaunchReceipts } from "./launch-receipts.ts";
 import type { JsonObject } from "./json.ts";
+import { LEAD_ROW_HEADER, LEAD_ROW_MARK } from "./crew/launcher-rows.ts";
+import { LaunchWindow } from "./launch-window.ts";
 import { launch, launchersRoute, type LaunchDeps } from "./server.ts";
 import type { StateEngine } from "./state-engine.ts";
-import type { CreateResponse, Launcher, LaunchersResponse } from "./types.ts";
+import type { AgentView, CreateResponse, Launcher, LaunchersResponse } from "./types.ts";
 import {
   muxAck,
   muxOk,
@@ -20,6 +22,7 @@ import {
   type MuxGrid,
   type MuxOutcome,
   type MuxSpaceRequest,
+  type MuxTabRequest,
 } from "./mux/types.ts";
 import { declareCapabilities } from "./mux/capabilities.ts";
 
@@ -105,8 +108,8 @@ function asMux(fake: Partial<MuxAdapter>): MuxAdapter {
   return fake as MuxAdapter;
 }
 
-const post = (body: JsonObject) =>
-  new Request("http://x/api/launch", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json" } });
+const post = (body: JsonObject, headers: Record<string, string> = {}) =>
+  new Request("http://x/api/launch", { method: "POST", body: JSON.stringify(body), headers: { "content-type": "application/json", ...headers } });
 
 /** A disk where every folder is a directory, or only `present` are (as absolute paths). */
 function dirs(present?: readonly string[]) {
@@ -131,6 +134,13 @@ async function run(fake: FakeMux, body: JsonObject, deps: LaunchDeps = {}) {
 }
 
 describe("POST /api/launch — by id", () => {
+  test("a Kiro id launch types its program, kiro-cli, not the id", async () => {
+    const mux = new FakeMux();
+    const { status } = await run(mux, { harness: "kiro", cwd: "/home/op/src/app" });
+    expect(status).toBe(200);
+    expect(mux.texts).toEqual([["w1:p1", "kiro-cli"]]);
+  });
+
   test("a harness id opens a space and the bridge types that harness's binary", async () => {
     const mux = new FakeMux();
     const { status, body } = await run(mux, { harness: "claude", cwd: "/home/op/src/app" });
@@ -140,6 +150,26 @@ describe("POST /api/launch — by id", () => {
     expect(mux.spaces).toEqual([{ cwd: "/home/op/src/app", label: "app" }]);
     expect(mux.tabRenames).toEqual([["w1:t1", "Claude Code"]]);
     expect(mux.texts).toEqual([["w1:p1", "claude"]]);
+  });
+
+  test("a harness launch marks its pane in the launch window once the line is typed; a shell, a row and a failed launch mark nothing", async () => {
+    const window = new LaunchWindow();
+    const mux = new FakeMux();
+    const { body } = await run(mux, { harness: "omp", cwd: "/home/op/src/app" }, { launchWindow: window });
+    expect(body?.ok).toBe(true);
+    expect(window.expecting("default", "w1:p1")).toBe("omp");
+    expect(window.expecting("other", "w1:p1")).toBeNull();
+
+    const shell = new LaunchWindow();
+    await run(new FakeMux(), { shell: true }, { launchWindow: shell });
+    await run(new FakeMux(), { command: "htop" }, { launchWindow: shell });
+    expect(shell.expecting("default", "w1:p1")).toBeNull();
+
+    const failed = new LaunchWindow();
+    const broken = new FakeMux();
+    broken.failText = true;
+    await run(broken, { harness: "omp" }, { launchWindow: failed });
+    expect(failed.expecting("default", "w1:p1")).toBeNull();
   });
 
   test("an adapter that declares no renameTab still launches, and no rename is asked", async () => {
@@ -248,12 +278,179 @@ describe("POST /api/launch — by id", () => {
     expect(mux.spaces).toHaveLength(1);
   });
 
+  test("with no folder named, a launch opens in the session's own folder, never over a named one", async () => {
+    const mux = new FakeMux();
+    const UNPINNED: Launcher = { command: "claude 1", label: "Claude" };
+    const sessionFolder = "/home/op/projects/yt";
+    const res = await launch(asMux(mux), engine(), post({ command: "claude 1" }), new AuditLog(() => {}), null, "project-yt",
+      () => Promise.resolve([UNPINNED]), clock(), { home: "/home/op", fs: dirs(), sessionFolder });
+    expect(res.status).toBe(200);
+    await run(mux, { shell: true }, { sessionFolder });
+    await run(mux, { shell: true, cwd: "/home/op/typed" }, { sessionFolder });
+    await run(mux, { command: "htop" }, { sessionFolder });
+    expect(mux.spaces.map((s) => s.cwd)).toEqual([sessionFolder, sessionFolder, "/home/op/typed", "/home/op/pinned"]);
+  });
+
+  test("from a pane, the pane's own folder wins over the session folder", async () => {
+    const tabs: MuxTabRequest[] = [];
+    const mux = new FakeMux();
+    const createTab = (request: MuxTabRequest): Promise<MuxOutcome<MuxCreatedPane>> => {
+      tabs.push(request);
+      return Promise.resolve(muxOk({ paneId: "w1:p2", spaceId: "w1", spaceLabel: "s", tabId: "w1:t2", cwd: request.cwd ?? "/" }));
+    };
+    // SAFETY: `launch` reads only `paneId`, `workspaceId` and `cwd` off the beside pane.
+    const pane = { paneId: "w1:p1", workspaceId: "w1", cwd: "/home/op/pane" } as AgentView;
+    const withPane: Partial<StateEngine> = {
+      pokeNow: () => {},
+      current: () => ({ agents: [], shellPanes: [pane], workspaces: [], tabs: [], bridge: "connected" }),
+    };
+    // SAFETY: as engine() above, with one shell pane to launch beside.
+    const res = await launch(asMux(Object.assign(mux, { createTab })), withPane as StateEngine, post({ shell: true, paneId: "w1:p1" }),
+      new AuditLog(() => {}), null, "project-yt", () => Promise.resolve([]), clock(), { home: "/home/op", fs: dirs(), sessionFolder: "/srv/yt" });
+    expect(res.status).toBe(200);
+    expect(tabs.map((t) => t.cwd)).toEqual(["/home/op/pane"]);
+  });
+
+  test("a session folder is the operator's default, not the person's ask: it never joins Recent", async () => {
+    const recorded: string[] = [];
+    const folders = { recordRecent: (f: string) => Promise.resolve(void recorded.push(f)) };
+    await run(new FakeMux(), { shell: true }, { folders, sessionFolder: "/home/op/projects/yt" });
+    expect(recorded).toEqual([]);
+  });
+
   test("a folder that worked joins Recent; a pinned one does not", async () => {
     const recorded: string[] = [];
     const folders = { recordRecent: (f: string) => Promise.resolve(void recorded.push(f)) };
     await run(new FakeMux(), { harness: "codex", cwd: "/home/op/src/app" }, { folders });
     await run(new FakeMux(), { command: "htop", cwd: "/home/op/x" }, { folders });
     expect(recorded).toEqual(["/home/op/src/app"]);
+  });
+});
+
+/** A launch whose audit lines are kept, parsed. */
+async function audited(fake: FakeMux, body: JsonObject, deps: LaunchDeps = {}, headers: Record<string, string> = {}) {
+  const lines: string[] = [];
+  const res = await launch(
+    asMux(fake),
+    engine(),
+    post(body, headers),
+    new AuditLog((line) => void lines.push(line)),
+    null,
+    "default",
+    () => Promise.resolve([HTOP]),
+    clock(),
+    { harnesses: { launch: harnessLaunch }, home: "/home/member", fs: dirs(), ...deps },
+  );
+  // SAFETY: `launch` answers a CreateResponse as JSON, or a plain-text 400 that parses to `null` here.
+  const parsed = (await res.json().catch(() => null)) as CreateResponse | null;
+  // SAFETY: each line is one JSON audit entry (audit.ts `formatAuditLine`); only `action` and `detail` are read.
+  const entries = lines.map((line) => JSON.parse(line) as { action: string; detail?: JsonObject });
+  return { status: res.status, body: parsed, entries };
+}
+
+describe("POST /api/launch — a lead row carried over the crew link (ADR 0127 point 3)", () => {
+  const ROW = { command: "claude --resume", label: "Claude resume", cwd: "~/src/app", harness: "claude", noPrompts: false };
+  /** The call came over the crew link, which on a member means its lead. */
+  const CREW: LaunchDeps = { viaCrew: true };
+  /** The lead's own mark, which it adds only on a forward where it set `row` itself. */
+  const MARK = { [LEAD_ROW_HEADER]: LEAD_ROW_MARK };
+
+  test("a lead row forwarded to a member runs there, its `cwd` under the member's home, audited `source: lead`", async () => {
+    const mux = new FakeMux();
+    // `~/src/app` expands with `join`, this machine's own separators: `\home\member\src\app` on Windows.
+    const cwd = join("/home/member", "src", "app");
+    const { status, body, entries } = await audited(mux, { command: "claude --resume", row: ROW }, CREW, MARK);
+    expect(status).toBe(200);
+    expect(body?.ok).toBe(true);
+    expect(mux.spaces).toEqual([{ cwd, label: "app" }]);
+    expect(mux.tabRenames).toEqual([["w1:t1", "Claude resume"]]);
+    expect(mux.texts).toEqual([["w1:p1", "claude --resume"]]);
+    expect(entries).toHaveLength(1);
+    expect(entries[0]!.action).toBe("workspace.launch");
+    expect(entries[0]!.detail).toMatchObject({ command: "claude --resume", cwd, source: "lead" });
+  });
+
+  test("a lead row with no pinned folder opens where an own row would: the folder the sheet named", async () => {
+    const mux = new FakeMux();
+    const { command, label, noPrompts } = ROW;
+    const { status } = await audited(mux, { command, cwd: "/home/member/elsewhere", row: { command, label, noPrompts } }, CREW, MARK);
+    expect(status).toBe(200);
+    expect(mux.spaces).toEqual([{ cwd: "/home/member/elsewhere", label: "elsewhere" }]);
+  });
+
+  test("a phone-direct body with `row` is refused with `launch.row_not_from_lead`, and nothing runs", async () => {
+    const mux = new FakeMux();
+    const { status, body, entries } = await audited(mux, { command: "claude --resume", row: ROW });
+    expect(status).toBe(400);
+    expect(body).toMatchObject({ ok: false, code: "launch.row_not_from_lead" });
+    expect(mux.spaces).toEqual([]);
+    expect(entries).toEqual([]);
+  });
+
+  test("an old lead's shape, a body `row` over the crew link with no mark, is refused, and nothing runs", async () => {
+    // A lead before 0127 forwards a phone's launch body unchanged, `row` and all, and never adds the mark.
+    const mux = new FakeMux();
+    const { status, body, entries } = await audited(mux, { command: "claude --resume", row: ROW }, CREW);
+    expect(status).toBe(400);
+    expect(body).toMatchObject({ ok: false, code: "launch.row_not_from_lead" });
+    expect(mux.spaces).toEqual([]);
+    expect(mux.texts).toEqual([]);
+    expect(entries).toEqual([]);
+  });
+
+  test("the mark on a call that did not come over the crew link is no mark: refused, and nothing runs", async () => {
+    const mux = new FakeMux();
+    const { status, body, entries } = await audited(mux, { command: "claude --resume", row: ROW }, {}, MARK);
+    expect(status).toBe(400);
+    expect(body).toMatchObject({ ok: false, code: "launch.row_not_from_lead" });
+    expect(mux.spaces).toEqual([]);
+    expect(entries).toEqual([]);
+  });
+
+  test("a mark with another value is no mark", async () => {
+    const mux = new FakeMux();
+    const { status, body } = await audited(mux, { command: "claude --resume", row: ROW }, CREW, { [LEAD_ROW_HEADER]: "true" });
+    expect(status).toBe(400);
+    expect(body).toMatchObject({ ok: false, code: "launch.row_not_from_lead" });
+    expect(mux.spaces).toEqual([]);
+  });
+
+  test("this machine's own row wins over a carried row with the same command, and `row` is not read", async () => {
+    const mux = new FakeMux();
+    const carried = { command: "htop", label: "Lead htop", cwd: "/srv/elsewhere", noPrompts: false };
+    const { status, entries } = await audited(mux, { command: "htop", row: carried }, CREW, MARK);
+    expect(status).toBe(200);
+    // HTOP's own pinned folder and label, not the carried row's.
+    expect(mux.spaces).toEqual([{ cwd: "/home/op/pinned", label: "pinned" }]);
+    expect(mux.tabRenames).toEqual([["w1:t1", "htop"]]);
+    expect(entries[0]!.detail).not.toHaveProperty("source");
+    // The same holds for a phone: its own row runs, and the `row` it sent is simply not read.
+    const phone = await audited(new FakeMux(), { command: "htop", row: carried });
+    expect(phone.status).toBe(200);
+  });
+
+  test("a command this host does not hold, with no `row`, is still `launch.not_allowlisted` (an old member's answer too)", async () => {
+    const { status, body } = await audited(new FakeMux(), { command: "claude --resume" }, CREW);
+    expect(status).toBe(400);
+    expect(body).toMatchObject({ ok: false, code: "launch.not_allowlisted" });
+  });
+
+  test("a carried row that is not one is a plain 400 from the lead, and nothing runs", async () => {
+    const mux = new FakeMux();
+    const bad = [
+      { ...ROW, command: "rm -rf ~" },
+      { ...ROW, label: "" },
+      { command: ROW.command, label: ROW.label },
+      { ...ROW, cwd: "relative/path" },
+      { ...ROW, cwd: "~other/src" },
+      "claude --resume",
+    ];
+    for (const row of bad) {
+      const { status, body } = await audited(mux, { command: "claude --resume", row }, CREW, MARK);
+      expect(status).toBe(400);
+      expect(body).toBeNull();
+    }
+    expect(mux.spaces).toEqual([]);
   });
 });
 

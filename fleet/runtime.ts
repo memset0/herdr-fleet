@@ -6,7 +6,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { GATEWAY_TOKEN_ENV } from "./collie-pairing.ts";
-import { collieChildEnv } from "./collie-env.ts";
+import { collieChildEnv, coreBackendEnv } from "./collie-env.ts";
 import { FLEET_TERMINAL_ENV, isFleetLeadConfig, type FleetConfig } from "./config.ts";
 import { sshLinkCommand } from "./pack-reachability.ts";
 
@@ -144,7 +144,7 @@ export function childSpecs(
   inherited: NodeJS.ProcessEnv,
   collieToken?: string,
 ): ChildSpec[] {
-  const shared = sharedChildEnv(paths, inherited);
+  const shared = { ...sharedChildEnv(paths, inherited), ...coreBackendEnv(config, inherited) };
   const children: ChildSpec[] = [
     {
       name: "collie",
@@ -185,7 +185,7 @@ export function childSpecs(
       // The terminal service gets the terminal table and nothing else of Fleet's: not the
       // configuration path, not the session state, not the Collie state directory. What it needs
       // beyond that table is the multiplexer socket, which is ambient on this machine anyway.
-      const terminalEnv: NodeJS.ProcessEnv = { ...inherited };
+      const terminalEnv: NodeJS.ProcessEnv = { ...inherited, ...coreBackendEnv(config, inherited) };
       for (const key of ["HERDR_FLEET_CONFIG", "HERDR_FLEET_SESSION_STATE", "HERDR_PLUGIN_CONFIG_DIR", "HERDR_PLUGIN_STATE_DIR"]) {
         delete terminalEnv[key];
       }

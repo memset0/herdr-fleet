@@ -108,3 +108,51 @@ holds the submit until an adapter-declared floor has passed since the last type 
 (`submitSettleMs`, `lib/reply-action.ts`). Muse declares 350 ms. Every other adapter declares none
 and sends as before. This is one named exception to the rule above, measured on one harness, not a
 return of the fixed pacing #34 removed.
+
+## Addendum — 2026-10-21: the Send Protocol writes one paste for a long or multi-line message (#546)
+
+Status is unchanged: **Accepted**. Nothing above this line is rewritten. The 2026-10-03 addendum
+framed the paste on the phone's reply route. Since 1.22.0 a send goes through the bridge's Send
+Protocol, which types a message line by line. A long dictation then grows Claude's box past the
+pane's screen. A box whose top is off screen can never be proven, so the send ends
+`typed_not_submitted`, and Submit and Discard cannot find the box either.
+
+So the protocol writes the paste markers itself, the way the reply route does. The Herdr adapter
+gains `pasteBlock`: one `ESC[200~ … ESC[201~` around the whole text, line breaks included, with every
+other control byte cut first. The protocol uses it only where all of these hold:
+
+- the profile measured it (`paste.block`, Claude only today; Hermes, opencode, pi and Cursor keep the
+  write per line, and the one-fold reading below is off for them);
+- the text has more than one line, or more than 800 characters on one line (a phone dictation is
+  often one long line, and the first addendum shows a bare send that long loses text);
+- the text does not start with a reserved lead (`/`, `!`, `@`): a slash command, a shell line or a
+  file mention keeps the write it always had, so Claude reads the lead as typed. A lead later in the
+  text is only text inside the paste.
+
+Claude folds one paste into one `[Pasted text #N +M lines]`, M the paste's line breaks, so S1 reads
+that one token as the whole text, or else the text as it was written, never one line of it
+folded. It reads the tokens with white space taken out, since the box may wrap inside one. It does
+so only for a text written as one paste.
+
+Claude also takes image files off a paste (probed live 2026-10-21, Claude Code 2.1.305). It cuts the
+paste at each newline and at a space before an absolute path. Each piece that is an existing
+`.png/.jpg/.jpeg/.gif/.webp` file at an absolute path, in any case, becomes an `[Image #N]` before the
+rest, and the kept pieces are joined by newlines. A missing file, another extension, a `~/` or a
+relative path, and a path with words after it stay text. S1 expects one image token per piece that
+is in Collie's own upload shape (`<stateDir>/uploads/<pane>-<time>-<8 hex>.<ext>`, the shape the web
+adapter's `liftedPaste` reads, in `web/src/lib/upload-path.ts`) and still a file on the bridge's disk,
+which is the disk the pane runs on, then the kept text after them. Any other image path stays text
+to S1, as it does on the web side: if Claude takes it anyway, the box does not match and the send
+stalls rather than guessing (Altan, on the merge of #546). The image token is the profile's
+(`paste.image`).
+
+Chunking stays rejected.
+
+## Addendum — 2026-10-25: a box that scrolls its draft is read by its last rows, and emptied only when its length is known
+
+Status is unchanged: **Accepted**. Nothing above this line is rewritten. Testers on OMP 18.6.1 and 18.12.6 (omp gang, 2026-10-25, reports 01, 05, 06 and 07) found two faults with long drafts.
+
+**The match.** OMP's editor stops growing at 17 draft rows (a pane of 30 rows or more; `computeEditorMaxHeight` in OMP's source) and keeps the cursor's rows in view, which after typing are the last ones. A send of about 2,000 characters or more then ended `typed_not_submitted(mismatch)`: S1 compared the whole text with a box that showed its end. A profile layout now says how its box scrolls, as data: `idle.frame.scroll: { "keeps": "tail", "rows": 17 }` (OMP's open box only, the layout the captures show). The frame module marks a box `scrolled` when it shows at least that many draft rows. Only on such a box, and never for a text written as one paste, S1 and Submit and Discard's own check accept a box whose rows equal the END of the typed text (`boxMatchesTail`): every character in view, in order, ending on the text's last, white space and wrapping ignored as before. A box that shows fewer rows shows its whole draft and is compared in full as before, so a draft that fits is never matched more loosely. The receipt's `detail` says only the last rows were compared. What a box hides above its first row cannot be read: a text whose head the harness lost while the rest still fills 17 rows would pass. The captures show none, and the receipt names the limit.
+
+**The clear.** Discard and Replace emptied the box in at most six rounds of 256 Backspaces, counted from what the box showed. On a scrolled box the visible part never shrinks until the end, so a draft over about 1,500 characters was not emptied, and a Replace of a 26-line draft (06 C5) pressed 1,536 Backspaces, sent nothing, and left 39 characters of the person's draft with no way back. The keys are now counted before the first one goes. A box that shows its whole draft takes what it shows plus the clear key's slack, read again after every batch. A scrolled box takes the length of the text Collie typed there: a Discard after `typed_not_submitted` names that text. With no length Collie knows (a Replace of the person's draft, or a Discard of a box that held another text), the request is refused `draft_present` before any key, offers the key pad, and says nothing was deleted. Collie chose the refusal over a clear that reads until the box is empty, because a draft of unknown length has no bound that is sure to be enough, and a clear that stops half way is the worst end. A draft over 16,384 characters is refused the same way. The bound is one read per batch of 256 plus two, at 500 ms each and never under the old six reads; the request's own bound and the pane lock grow by what that adds. A batch goes only after a read showed the last one took effect. The Clear route (ADR 0116) is not changed: its restore text on a scrolled box holds only the rows in view.
+

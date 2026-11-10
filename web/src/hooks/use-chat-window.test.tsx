@@ -2,7 +2,7 @@ import { act, renderHook, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 
 import { useChatWindow } from "./use-chat-window";
-import { latchLost, markWake, noteNetworkFailure, noteReadStart } from "@/lib/connection-health";
+import { latchLost, markWake, NETWORK_LATCH_MS, noteNetworkFailure } from "@/lib/connection-health";
 import { loadChatTail, saveChatTail } from "@/lib/chat-tail";
 import { paneScopeKey } from "@/lib/scope";
 import { __resetStore, getRecord } from "@/lib/store";
@@ -226,6 +226,9 @@ describe("useChatWindow", () => {
 // on the store's memory map, which the test setup resets before every case.
 describe("useChatWindow — the saved Chat tail", () => {
   const DISPLAY_PREFS = "collie:display-prefs:v4";
+  afterEach(() => vi.useRealTimers());
+  // The herd's later read with no answer latches once no live answer has come for NETWORK_LATCH_MS (2026-10-29).
+  const pastLatchWindow = () => vi.setSystemTime(Date.now() + NETWORK_LATCH_MS);
   const failChat = () => server.use(http.get(/\/api\/pane\/[^/]+\/chat/, () => HttpResponse.error()));
 
   /** One poll: the revalidator goes loading, then idle again. */
@@ -267,7 +270,7 @@ describe("useChatWindow — the saved Chat tail", () => {
 
   // M46 pass 3: a failed poll never drops what the window holds. A read that got NO answer (a network
   // failure, the poll deadline) marks it at once; a 5xx needs a second one in a row.
-  it("keeps the turns it holds and marks them at once when a read gets no answer", async () => {
+  it("keeps the turns it holds and marks them once the herd read latches a read with no answer", async () => {
     let fail = false;
     server.use(
       http.get(/\/api\/pane\/[^/]+\/chat/, () => (fail ? HttpResponse.error() : HttpResponse.json(firstPage))),
@@ -277,7 +280,14 @@ describe("useChatWindow — the saved Chat tail", () => {
     const answeredAt = Date.now();
 
     fail = true;
+    // The herd read of the same poll gets no answer either: its strike, then its retry latches.
+    act(() => noteNetworkFailure());
     poll(rerender);
+    await waitFor(() => expect(result.current.asked).toBe(2));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(result.current.window.savedAt).toBeNull();
+    pastLatchWindow();
+    act(() => noteNetworkFailure());
     await waitFor(() => expect(result.current.window.savedAt).toBeTypeOf("number"));
     // Dated by the last live answer, and every turn still held: memory, not the store.
     expect(result.current.window.savedAt!).toBeLessThanOrEqual(answeredAt);
@@ -344,10 +354,7 @@ describe("useChatWindow — the saved Chat tail", () => {
     await waitFor(() => expect(result.current.window.entries).toHaveLength(1));
 
     act(() => markWake());
-    act(() => {
-      noteReadStart();
-      noteNetworkFailure();
-    });
+    act(() => noteNetworkFailure());
     fail = true;
     poll(rerender);
     await waitFor(() => expect(result.current.asked).toBe(2));
@@ -357,10 +364,8 @@ describe("useChatWindow — the saved Chat tail", () => {
     expect(result.current.window.entries).toHaveLength(1);
 
     // The retry's herd read gets no answer either: that latches, and the latch marks the window.
-    act(() => {
-      noteReadStart();
-      noteNetworkFailure();
-    });
+    pastLatchWindow();
+    act(() => noteNetworkFailure());
     await waitFor(() => expect(result.current.window.savedAt).toBeTypeOf("number"));
   });
 
@@ -450,5 +455,85 @@ describe("useChatWindow — the saved Chat tail", () => {
     const { result } = renderHook(() => useChatWindow({ paneId: "w1:p1", enabled: true }));
     await waitFor(() => expect(result.current.tried).toBe(true));
     expect(result.current.window.entries).toEqual([]);
+  });
+
+  it("scopes the held window and the saved copy to the pane's session instance", async () => {
+    recordChat([firstPage]);
+    const first = renderHook(
+      ({ instance }: { instance?: string }) => useChatWindow({ paneId: "w1:p1", instance, enabled: true }),
+      { initialProps: { instance: "aaaa" } },
+    );
+    await waitFor(() => expect(first.result.current.window.entries).toHaveLength(1));
+    await waitFor(async () => expect(await loadChatTail(undefined, "w1:p1", "aaaa")).not.toBeNull());
+    // Another session taking the same pane id drops the held window before it paints.
+    failChat();
+    first.rerender({ instance: "bbbb" });
+    expect(first.result.current.window.entries).toEqual([]);
+    await waitFor(() => expect(first.result.current.tried).toBe(true));
+    expect(first.result.current.window.entries).toEqual([]);
+    first.unmount();
+
+    // Reopening on the original instance while offline still draws its saved tail.
+    const same = renderHook(() =>
+      useChatWindow({ paneId: "w1:p1", instance: "aaaa", enabled: true, savedCopy: true }),
+    );
+    await waitFor(() => expect(same.result.current.window.entries.map((e) => e.uuid)).toEqual(["a"]));
+  });
+
+  /** The props of a hook rendered with and without a session instance. */
+  interface InstanceProps {
+    instance?: string;
+  }
+  const NO_INSTANCE: InstanceProps = {};
+
+  it("keeps the held window when a pane gains its first instance, as a just-opened pane does", async () => {
+    recordChat([firstPage]);
+    const { result, rerender } = renderHook(
+      ({ instance }: InstanceProps) => useChatWindow({ paneId: "w1:p1", instance, enabled: true }),
+      { initialProps: NO_INSTANCE },
+    );
+    await waitFor(() => expect(result.current.window.entries).toHaveLength(1));
+    const held = result.current.window.entries.map((e) => e.uuid);
+    // The snapshot names the pane's instance: the same session, so the window stays as it was.
+    rerender({ instance: "aaaa" });
+    expect(result.current.window.entries.map((e) => e.uuid)).toEqual(held);
+    expect(result.current.tried).toBe(true);
+    // And it is written through under the instance it now knows.
+    await waitFor(async () => expect(await loadChatTail(undefined, "w1:p1", "aaaa")).not.toBeNull());
+    // A pane that drops the instance again for a render is still that session.
+    rerender({ instance: undefined });
+    expect(result.current.window.entries.map((e) => e.uuid)).toEqual(held);
+    // Only another known instance resets it.
+    failChat();
+    rerender({ instance: "bbbb" });
+    expect(result.current.window.entries).toEqual([]);
+  });
+
+  it("ignores an in-flight read from an older session instance after the instance changes", async () => {
+    const resolves: ((response: Response) => void)[] = [];
+    server.use(
+      http.get(/\/api\/pane\/[^/]+\/chat/, () => new Promise<Response>((resolve) => resolves.push(resolve))),
+    );
+    const { result, rerender } = renderHook(
+      ({ instance }: { instance?: string }) => useChatWindow({ paneId: "w1:p1", instance, enabled: true }),
+      { initialProps: { instance: "inst-a" } },
+    );
+    await waitFor(() => expect(resolves).toHaveLength(1));
+
+    // Switch to `inst-b` while `inst-a`'s read is still in flight; `inst-b` starts its own read at once.
+    rerender({ instance: "inst-b" });
+    await waitFor(() => expect(resolves).toHaveLength(2));
+
+    // `inst-b` answers first with its own turn.
+    resolves[1]!(HttpResponse.json({ ...firstPage, upserts: [entry("b-turn", BASE, "from inst-b")] }));
+    await waitFor(() => expect(result.current.window.entries.map((e) => e.uuid)).toEqual(["b-turn"]));
+    await waitFor(async () => expect(await loadChatTail(undefined, "w1:p1", "inst-b")).not.toBeNull());
+
+    // Now the stale `inst-a` read resolves: it must neither overwrite `inst-b`'s window nor write a saved tail.
+    resolves[0]!(HttpResponse.json({ ...firstPage, upserts: [entry("a-turn", BASE, "from inst-a")] }));
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(result.current.window.entries.map((e) => e.uuid)).toEqual(["b-turn"]);
+    expect((await loadChatTail(undefined, "w1:p1", "inst-b"))?.entries.map((e) => e.uuid)).toEqual(["b-turn"]);
+    expect(await loadChatTail(undefined, "w1:p1", "inst-a")).toBeNull();
   });
 });

@@ -1,5 +1,5 @@
-import { chmodSync, statSync } from "node:fs";
-import { homedir } from "node:os";
+import { chmodSync, existsSync, readdirSync, statSync } from "node:fs";
+import { homedir, networkInterfaces } from "node:os";
 import { basename, dirname, join, resolve } from "node:path";
 
 import {
@@ -12,14 +12,17 @@ import {
   type FilePerms,
   type PrivateFileVerdict,
 } from "./config-source.ts";
+import { accountWindowsProblem, parseAccountWindowsSetting } from "./account-windows-setting.ts";
 import { HOST, type Host, isInside } from "./host.ts";
 import { diskIo } from "./operator-file.ts";
 import { secretFileVerdict } from "./owner-only.ts";
 import type { AuditContent } from "./audit.ts";
 import type { DialMode } from "./dial.ts";
-import type { JournalRoots } from "./journal/registry.ts";
+import type { JournalRoots, ModelCatalogs } from "./journal/registry.ts";
+import { resolveMux } from "./mux/herdr-core/pick.ts";
 import { DEFAULT_MUX, muxEndpointVar } from "./mux/registry.ts";
 import { DEFAULT_MAX_UPLOAD_MB } from "./uploads.ts";
+import { PAIR_LIMIT } from "./walky/rate.ts";
 
 // All bridge configuration, resolved once at startup. Env-driven so the systemd unit and the
 // plugin launcher can configure it without code changes. Defaults are safe for a single-user,
@@ -153,6 +156,20 @@ export function envBool(
   return fallback;
 }
 
+/**
+ * The harnesses `COLLIE_ACCOUNT_WINDOWS` turns on (ADR 0118). An id this build does not know is
+ * dropped with a warning, and only the known ids are on: a typo never turns on a source the operator
+ * did not name.
+ */
+function envAccountWindows(env: Environment): readonly string[] {
+  const setting = parseAccountWindowsSetting(env["COLLIE_ACCOUNT_WINDOWS"]);
+  const problem = accountWindowsProblem(setting);
+  if (problem !== null) {
+    console.warn(`[config] COLLIE_ACCOUNT_WINDOWS: ${problem}; on: ${setting.harnesses.length === 0 ? "none" : setting.harnesses.join(", ")}`);
+  }
+  return setting.harnesses;
+}
+
 export interface Config {
   /**
    * Which multiplexer this collie drives — a name in `bridge/mux/registry.ts`. `herdr` by default,
@@ -167,6 +184,17 @@ export interface Config {
    * for tmux, tmux's own default server. Documented per adapter, never guessed here.
    */
   muxEndpoint: string;
+  /**
+   * Why {@link mux} was picked with no `COLLIE_MUX`, when it is not the default: the evidence the
+   * bridge logs once at boot. Empty when `COLLIE_MUX` named it or the default stands
+   * (`bridge/mux/herdr-core/pick.ts`).
+   */
+  muxPickedBecause: string;
+  /**
+   * Why a herdr-core socket that is present was NOT picked with no `COLLIE_MUX`: the Herdr TUI's
+   * socket, or its install on this host. Logged once at boot beside the default. Empty otherwise.
+   */
+  muxNotPickedBecause: string;
   /**
    * Absolute path to the `tmux` binary, when the operator has one somewhere unusual. Empty (the
    * default) probes a short list of fixed paths — never `PATH`, which a systemd unit and a Herdr
@@ -255,12 +283,24 @@ export interface Config {
    */
   transcript: boolean;
   /**
+   * The harnesses whose account windows Collie may read (`COLLIE_ACCOUNT_WINDOWS`, `[bridge]
+   * account_windows`, ADR 0118): ids from `ACCOUNT_WINDOW_HARNESSES`. Unset is `claude` and `codex`;
+   * `all` adds `opencode` and `grok`, which no live login has proven yet. Empty reads no login and
+   * asks nothing; a wrapped statusLine still reports the windows.
+   */
+  accountWindows: readonly string[];
+  /**
    * Where each harness keeps its session logs — one directory or several, searched in order. Every
    * read is confined to the root it was found under, after symlink resolution, so these double as the
    * security boundary for a feature that touches the filesystem — override only to relocate (or add)
    * a non-default agent home, never from a request.
    */
   journalRoots: JournalRoots;
+  /**
+   * The harnesses' own model catalogs, read for the context dot's window and nothing else
+   * (bridge/journal/model-window.ts, .adr/0115 amended 2026-10-25). Absent: no catalog is read.
+   */
+  modelCatalogs?: ModelCatalogs;
   /** Key sequence sent to submit a reply after the text (agent-dependent; see HERDR_API.md). */
   submitKeys: string[];
   /**
@@ -297,6 +337,13 @@ export interface Config {
    * likewise never read here.
    */
   launchersFile: string;
+  /**
+   * Where the operator's session labels live, `spaces.toml`, a sibling in the same dir, read the
+   * same way (bridge/operator-space-labels.ts) and likewise never read here. Display-only: a label
+   * never renames a session. `loadConfig` always sets it; optional only so a hand-built Config (a
+   * test fixture) may leave it out, which reads as "no labels".
+   */
+  spacesFile?: string;
   /**
    * Where the operator's prompt-cache overrides live — `cache-rules.toml`, the sixth file on the same
    * contract, read the same way (bridge/operator-cache-rules.ts) and likewise never read here.
@@ -419,6 +466,12 @@ export interface Config {
    */
   walky: boolean;
   /**
+   * The walky talky pair cap (`COLLIE_WALKY_PAIR_LIMIT`): messages in ten minutes between the same two
+   * panes, either direction, counted by this bridge alone. 6 by default, 1 to 100; a value outside that
+   * range, or one that is not an integer, warns and takes the default.
+   */
+  walkyPairLimit: number;
+  /**
    * Whether `tailscale serve` is bypassed (COLLIE_SKIP_SERVE=1) because an operator-run reverse
    * proxy (Caddy/Nginx) fronts the loopback bridge instead. The bridge itself handles every request
    * identically either way — this flag only informs the startup warnings: without `tailscale serve`
@@ -506,6 +559,41 @@ export function nonLoopbackBindRefusal(
 }
 
 /**
+ * The one `[bridge] FATAL:` line for a door that could not listen (issue 699). Both `Bun.serve`
+ * sites in `bridge/index.ts` print it and exit nonzero: a bridge that stays alive without its
+ * listener is invisible to launchd, systemd and the Windows task, which restart only an exit.
+ *
+ * The Bun message ("Failed to start server. Is port 8787 in use?") hides the real code, so the
+ * line carries the address, the port, `code` and `message`. When the host is a specific address
+ * (not loopback, not a wildcard) that no interface holds, it adds the likeliest cause: a crew
+ * member binds the tailnet address, and that address is absent until Tailscale is up after a boot.
+ *
+ * Pure: the interface addresses arrive as a plain string array, so a test needs no real network.
+ */
+export function listenFailureLine(opts: {
+  door: "front door" | "standby door";
+  host: string;
+  port: number;
+  code: string | undefined;
+  message: string;
+  interfaces: readonly string[];
+}): string {
+  const host = opts.host.trim().replace(/^\[|\]$/g, "");
+  const wildcard = host === "" || host === "0.0.0.0" || host === "::";
+  const absent =
+    !wildcard && !isLoopbackBindHost(host) && !opts.interfaces.some((address) => address.toLowerCase() === host.toLowerCase());
+  const shown = wildcard ? "every interface" : host;
+  const code = opts.code === undefined || opts.code === "" ? "no code" : opts.code;
+  const hint = absent ? "; address not on any interface yet (is Tailscale up?)" : "";
+  return `[bridge] FATAL: ${opts.door} cannot listen on ${shown}:${opts.port} (${code}: ${opts.message})${hint}`;
+}
+
+/** Every address of every network interface of this machine, as plain strings. */
+export function interfaceAddresses(): string[] {
+  return Object.values(networkInterfaces()).flatMap((list) => (list ?? []).map((entry) => entry.address));
+}
+
+/**
  * herdr's default socket location: `~/.config/herdr/herdr.sock` on Unix, `%APPDATA%\herdr\herdr.sock`
  * on Windows (herdr for Windows keeps its config root under AppData\Roaming). Pure so both branches
  * are unit-testable on any platform.
@@ -567,6 +655,7 @@ export function resolveJournalRoots(
     // roots (comma-separated) because `CLAUDE_CONFIG_DIR` gives each Claude profile its own
     // projects tree, and a herd routinely mixes them (issue #92); one value is still one root.
     claude: envRoots("COLLIE_TRANSCRIPT_ROOT", join(home, ".claude", "projects"), env),
+    agy: envRoots("COLLIE_AGY_ROOT", join(home, ".gemini", "antigravity-cli"), env),
     // Each harness's own home var is honoured first, so relocating the agent relocates its journal
     // without a second Collie setting to keep in sync. The Collie override takes a list too — the
     // multi-home case isn't Claude's alone, and one setting shouldn't behave differently per agent.
@@ -575,14 +664,17 @@ export function resolveJournalRoots(
       join(env.CODEX_HOME ?? join(home, ".codex"), "sessions"),
       env,
     ),
-    // TWO defaults, one adapter: Oh My Pi ships as `omp` and writes pi's own format into
-    // `~/.omp/agent/sessions`, so a host that runs it has a second home for the same log format.
-    // `PI_CODING_AGENT_DIR`, when the operator set it, is the one answer and neither is added.
+    // Pi, Oh My Pi and bundled Gentle Shell keep the same journal format in separate homes.
+    // An explicit Pi home still replaces the defaults; COLLIE_PI_ROOT can name several homes.
     pi: envRoots(
       "COLLIE_PI_ROOT",
       env.PI_CODING_AGENT_DIR
         ? join(env.PI_CODING_AGENT_DIR, "sessions")
-        : [join(home, ".omp", "agent", "sessions"), join(home, ".pi", "agent", "sessions")],
+        : [
+            join(home, ".omp", "agent", "sessions"),
+            join(home, ".pi", "agent", "sessions"),
+            join(home, ".gentle-shell", "agent", "sessions"),
+          ],
       env,
     ),
     // OpenCode keeps one SQLite database at the top of its XDG data dir, not per-session files.
@@ -600,6 +692,13 @@ export function resolveJournalRoots(
     // root's named profiles are found under it (bridge/journal/hermes.ts), so one root serves the
     // default profile and every named one.
     hermes: envRoots("COLLIE_HERMES_ROOT", hermesHome(env.HERMES_HOME, home), env),
+    // Kiro V3 writes its sessions under $KIRO_HOME/sessions, or ~/.kiro/sessions when KIRO_HOME is unset.
+    // kiro-cli 2.32.0 writes to ~/.kiro when KIRO_HOME is blank or spaces, so a blank value counts as unset.
+    kiro: envRoots(
+      "COLLIE_KIRO_ROOT",
+      join(env.KIRO_HOME?.trim() || join(home, ".kiro"), "sessions"),
+      env,
+    ),
     // Muse keeps date-partitioned session logs under the XDG data dir, one session.jsonl per
     // session uuid. Muse publishes no home var of its own, so the Collie override is the only
     // relocation.
@@ -608,9 +707,20 @@ export function resolveJournalRoots(
       join(env.XDG_DATA_HOME ?? join(home, ".local", "share"), "muse", "sessions"),
       env,
     ),
+    // DeepSeek Harness keeps one folder per session under $DSH_HOME/sessions, ~/.dsh when DSH_HOME is
+    // unset (the dsh-tui launcher reads it the same way). dsh-tui panes are read from here.
+    "dsh-tui": envRoots("COLLIE_DSH_ROOT", join(env.DSH_HOME?.trim() || join(home, ".dsh"), "sessions"), env),
     // OpenClaw keeps one SQLite per agent under its state folder, which `OPENCLAW_STATE_DIR` moves.
     openclaw: envRoots("COLLIE_OPENCLAW_ROOT", env.OPENCLAW_STATE_DIR ?? join(home, ".openclaw"), env),
   };
+}
+
+/**
+ * Where each harness keeps the model catalog that names a context window. Only OpenCode's needs a
+ * path of its own: it lives in OpenCode's XDG cache dir, not beside its database.
+ */
+export function resolveModelCatalogs(env: Environment = process.env, home: string = homedir()): ModelCatalogs {
+  return { opencode: join(env.XDG_CACHE_HOME ?? join(home, ".cache"), "opencode", "models.json") };
 }
 
 /**
@@ -671,7 +781,20 @@ export function holdPrivateFile(path: string, repairAcl = false): PrivateFileVer
   return tightenPrivateFile(path, diskFilePerms, repairAcl);
 }
 
-export function loadConfig(env: Environment = process.env): Config {
+/** The entry names of a directory, or `[]` when it cannot be read: the herdr-core pick's one listing. */
+function listDir(dir: string): readonly string[] {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
+}
+
+export function loadConfig(
+  env: Environment = process.env,
+  exists: (path: string) => boolean = existsSync,
+  list: (dir: string) => readonly string[] = listDir,
+): Config {
   const stateDir = resolveStateDir(env);
 
   const submitKeys = envList("COLLIE_SUBMIT_KEYS", env);
@@ -686,14 +809,19 @@ export function loadConfig(env: Environment = process.env): Config {
   // that is. ~/.config/collie is the same last-resort default the shim ends on.
   const configDir = resolveConfigDir(env);
 
-  const mux = (env.COLLIE_MUX ?? "").trim() || DEFAULT_MUX;
   const socketPath = env.HERDR_SOCKET_PATH ?? defaultSocketPath(HOST, env);
+  // No name, no Herdr TUI socket, no Herdr TUI install, and a herdr-core socket: the new core, said
+  // once at boot (M74). herdr-core runs on Linux and macOS only, so Windows keeps the default.
+  const resolved = resolveMux(socketPath, env, { home: homedir(), exists, list }, HOST.platform);
+  const mux = resolved.mux;
 
   return {
     mux,
     // Herdr's endpoint IS its socket path, so the default adapter keeps reading exactly the setting
     // it always read and nothing about an existing deployment moves.
-    muxEndpoint: mux === DEFAULT_MUX ? socketPath : (env[muxEndpointVar(mux)] ?? "").trim(),
+    muxEndpoint: mux === DEFAULT_MUX ? socketPath : resolved.pickedSocket || (env[muxEndpointVar(mux)] ?? "").trim(),
+    muxPickedBecause: resolved.pickedBecause,
+    muxNotPickedBecause: resolved.notPickedBecause,
     tmuxBin: (env.COLLIE_TMUX_BIN ?? "").trim(),
     zellijBin: (env.COLLIE_ZELLIJ_BIN ?? "").trim(),
     ternBin: (env.COLLIE_TERN_BIN ?? "").trim(),
@@ -717,7 +845,9 @@ export function loadConfig(env: Environment = process.env): Config {
       envInt("COLLIE_MAX_UPLOAD_MB", DEFAULT_MAX_UPLOAD_MB, { min: 1, max: 512 }, env) * 1024 * 1024,
     uploadExtraTypes: normaliseUploadTypes(envList("COLLIE_UPLOAD_EXTRA_TYPES", env)),
     transcript: envBool("COLLIE_TRANSCRIPT", true, env),
+    accountWindows: envAccountWindows(env),
     journalRoots: resolveJournalRoots(env),
+    modelCatalogs: resolveModelCatalogs(env),
     submitKeys: submitKeys.length ? submitKeys : ["Enter"],
     commandsFile: join(configDir, "commands.toml"),
     keysFile: join(configDir, "keys.toml"),
@@ -726,6 +856,7 @@ export function loadConfig(env: Environment = process.env): Config {
     fontsDir: join(configDir, "fonts"),
     launchersFile: join(configDir, "launchers.toml"),
     cacheRulesFile: join(configDir, "cache-rules.toml"),
+    spacesFile: join(configDir, "spaces.toml"),
     trustedUser: env.COLLIE_TRUSTED_USER ?? "",
     trustedUserOptional: envBool("COLLIE_TRUSTED_USER_OPTIONAL", false, env),
     accessTeam: (env.COLLIE_ACCESS_TEAM ?? "").trim(),
@@ -747,6 +878,7 @@ export function loadConfig(env: Environment = process.env): Config {
     surfaceShadow: envBool("COLLIE_SURFACE_SHADOW", false, env),
     sendProtocol: envBool("COLLIE_SEND_PROTOCOL", true, env),
     walky: envBool("COLLIE_WALKY", true, env),
+    walkyPairLimit: envInt("COLLIE_WALKY_PAIR_LIMIT", PAIR_LIMIT, { min: 1, max: 100 }, env),
     skipServe: envBool("COLLIE_SKIP_SERVE", false, env),
     basePath: normaliseBasePath(env.COLLIE_BASE_PATH),
   };

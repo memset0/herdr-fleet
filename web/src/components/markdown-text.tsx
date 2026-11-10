@@ -2,14 +2,17 @@ import { createContext, useContext, useMemo, useState, type ReactNode } from "re
 
 import { useFileLinks, type FileLinkTarget } from "@/components/file-links";
 import { CopyableBlock } from "@/components/ui/copyable-block";
+import { MathText } from "@/components/math-text";
 import { WalkyIdChip, WalkyIds } from "@/components/walky-id-chip";
 import { useWalkyChips } from "@/components/walky-log";
 import { useLocale } from "@/hooks/use-locale";
+import { mathEngineOf, useDesignPrefs } from "@/lib/design";
 import { codeSpanPath, findFilePaths } from "@/lib/file-paths";
 import { t } from "@/lib/i18n";
-import { headingAnchors, parseMarkdown, spansText, type MdBlock, type MdSpan } from "@/lib/markdown";
+import { findBareUrls, headingAnchors, parseMarkdown, spansText, type MdBlock, type MdSpan } from "@/lib/markdown";
 import { closeStretch, composeStretches, liftStretches, parseStretches, stretches as allStretches } from "@/lib/stretch";
 import { splitHighlight } from "@/lib/transcript-search";
+import type { MdMath } from "@/lib/markdown-math";
 
 // Renders the Markdown AST as React elements. Every string from the log reaches the DOM as a TEXT
 // NODE — there is no `dangerouslySetInnerHTML` here and there must never be one. That is the repo's
@@ -22,6 +25,23 @@ import { splitHighlight } from "@/lib/transcript-search";
 // The active find query, threaded via context rather than a prop drilled through every nested span —
 // highlighting is a cross-cutting display concern, and the AST walk is already recursive.
 const QueryContext = createContext("");
+
+// A find hit, as text or as a whole formula. One literal for both, the one DESIGN.md §10 gap 6 lists
+// for a search highlight token.
+const FIND_MARK = "rounded-sm bg-amber-300/70 text-inherit dark:bg-amber-500/40";
+
+/** Find searches the original TeX; paint the equation as a whole without breaking its layout. */
+function MathRun({ math, display = false }: { math: MdMath; display?: boolean }) {
+  const query = useContext(QueryContext).trim().toLowerCase();
+  return (
+    <MathText
+      text={math.text}
+      source={math.source}
+      display={display || math.display === true}
+      mark={query !== "" && math.source.toLowerCase().includes(query) ? FIND_MARK : undefined}
+    />
+  );
+}
 
 /**
  * Where a link that is NOT a web address leads, as the screen showing the text decides it.
@@ -175,7 +195,7 @@ function Hit({ text }: { text: string }) {
     <>
       {pieces.map((piece, i) =>
         piece.hit ? (
-          <mark key={i} className="rounded-sm bg-amber-300/70 text-inherit dark:bg-amber-500/40">
+          <mark key={i} className={FIND_MARK}>
             {piece.text}
           </mark>
         ) : (
@@ -295,13 +315,64 @@ function TextRun({ text }: { text: string }) {
   return <>{nodes}</>;
 }
 
-/** A code span: a chip, and a tappable one when the whole span is a path that resolves and exists. */
+/**
+ * A web address inside a code span, as a link in the chip's own ink. Claude Code prints most
+ * addresses in backticks, so a code span that holds one is a link to it: new tab, `noopener`, the
+ * way every other web link here opens. This is the anchor inside a longer span; the
+ * whole-span case wraps the chip instead (see {@link CodeSpan}), so the whole chip is the tap target.
+ */
+function UrlLink({ href, text }: { href: string; text: string }) {
+  return (
+    <a
+      href={href}
+      target="_blank"
+      rel="noopener noreferrer"
+      className="underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+    >
+      <Hit text={text} />
+    </a>
+  );
+}
+
+/**
+ * A code span: a chip. Tappable when the whole span is a path that resolves and exists (ADR 0088),
+ * or when it holds a web address: the address alone is the whole chip's link, and an address among
+ * other words links only its own token. The address wins over the path rule, since neither rule
+ * takes the other's text (a `://` run is never a file path).
+ */
 function CodeSpan({ text }: { text: string }) {
   const open = useFileLinks();
   const inLink = useContext(InLinkContext);
   const chips = useWalkyChips();
+  const urls = useMemo(() => (inLink ? [] : findBareUrls(text)), [inLink, text]);
   // A span that is one message id the log holds is the id chip; a span that holds more than an id stays the code chip.
   if (chips !== null && !inLink && chips.holds(text.trim())) return <WalkyIdChip id={text.trim()} onOpen={chips.open} />;
+  const only = urls.length === 1 && text.slice(0, urls[0]!.start).trim() === "" && text.slice(urls[0]!.end).trim() === "" ? urls[0]! : null;
+  if (only !== null) {
+    return (
+      <a
+        href={only.href}
+        target="_blank"
+        rel="noopener noreferrer"
+        className="rounded-sm focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
+      >
+        <code className={`${CHIP_CLASS} underline underline-offset-2 ${breakClass(text)}`}>
+          <Hit text={text} />
+        </code>
+      </a>
+    );
+  }
+  if (urls.length > 0) {
+    const nodes: ReactNode[] = [];
+    let at = 0;
+    for (const u of urls) {
+      if (u.start > at) nodes.push(<Hit key={`t${at}`} text={text.slice(at, u.start)} />);
+      nodes.push(<UrlLink key={`u${u.start}`} href={u.href} text={text.slice(u.start, u.end)} />);
+      at = u.end;
+    }
+    if (at < text.length) nodes.push(<Hit key={`t${at}`} text={text.slice(at)} />);
+    return <code className={`${CHIP_CLASS} ${breakClass(text)}`}>{nodes}</code>;
+  }
   const found = open === null || inLink ? null : codeSpanPath(text);
   const target = found === null || open === null ? null : open(found);
   if (target !== null) return <PathChip target={target} text={text} />;
@@ -355,9 +426,11 @@ function LinkSpan({ span }: { span: Extract<MdSpan, { kind: "link" }> }) {
 }
 
 // Emphasis and links hold child spans (agents nest them — ``**`sha`**`` is routine), so this recurses
-// through <Spans>. `code` is the leaf.
+// through <Spans>. Code and math stay opaque to this walk.
 function Span({ span }: { span: MdSpan }) {
   switch (span.kind) {
+    case "math":
+      return <MathRun math={span} />;
     case "bold":
       return (
         <strong className="font-semibold">
@@ -449,19 +522,19 @@ interface OpenStretches {
  * The blocks to draw and the control over this text's stretches. With `drawn` false the control is
  * null and the blocks are the plain parse, exactly as the text was drawn before stretches existed.
  */
-function useStretchBlocks(text: string, withImages: boolean, drawn: boolean, query: string) {
-  const segments = useMemo(() => (drawn ? parseStretches(text) : null), [drawn, text]);
+function useStretchBlocks(text: string, withImages: boolean, drawn: boolean, query: string, math: boolean) {
+  const segments = useMemo(() => (drawn ? parseStretches(text, math) : null), [drawn, text, math]);
   const [open, setOpen] = useState<OpenStretches>(() => ({ keys: new Map(), opened: 0 }));
   // A FIND ALWAYS WINS (transcript-view.tsx): while a query is on screen every stretch is drawn open,
   // so a hit inside a long form is painted rather than hidden behind its short form. Sequence 0 makes
   // none of them the newest, so every one is drawn faded.
   const finding = drawn && query.trim() !== "";
   const blocks = useMemo(() => {
-    if (segments === null) return parseMarkdown(text, { images: withImages });
+    if (segments === null) return parseMarkdown(text, { images: withImages, math });
     const shown = finding ? new Map(allStretches(segments).map((s) => [s.key, 0])) : open.keys;
     const composed = composeStretches(segments, shown);
-    return liftStretches(parseMarkdown(composed.source, { images: withImages }), composed);
-  }, [segments, text, withImages, finding, open]);
+    return liftStretches(parseMarkdown(composed.source, { images: withImages, math }), composed);
+  }, [segments, text, withImages, finding, open, math]);
   const control = useMemo<StretchControl>(
     () => ({
       open: (key) => setOpen((was) => ({ keys: new Map(was.keys).set(key, was.opened + 1), opened: was.opened + 1 })),
@@ -477,6 +550,12 @@ export type MarkdownVariant = "chat" | "document";
 
 function Block({ block, anchor, variant }: { block: MdBlock; anchor: string | null; variant: MarkdownVariant }) {
   switch (block.kind) {
+    case "math":
+      return (
+        <CopyableBlock text={block.source}>
+          <MathRun math={block} display />
+        </CopyableBlock>
+      );
     case "heading": {
       // Levels 4-6 are rare in agent prose and don't earn another size step on a phone.
       if (variant === "document") {
@@ -515,6 +594,7 @@ function Block({ block, anchor, variant }: { block: MdBlock; anchor: string | nu
       // whether it had a bullet in front of it, and a list was the one place a code chip did not fit.
       return (
         <Tag
+          start={block.start}
           className={`ml-4 space-y-0.5 leading-relaxed ${block.ordered ? "list-decimal" : "list-disc"} marker:text-muted-foreground`}
         >
           {block.items.map((item, i) => (
@@ -527,8 +607,12 @@ function Block({ block, anchor, variant }: { block: MdBlock; anchor: string | nu
     }
     case "quote":
       return (
-        <blockquote className="border-l-2 pl-2.5 leading-relaxed text-muted-foreground italic">
-          <Spans spans={block.spans} />
+        // Italic only on the quote's prose: a code block or a table in it stays upright, as it reads
+        // everywhere else. `space-y-2` is the outer stack's, which does not reach inside.
+        <blockquote className="space-y-2 border-l-2 pl-2.5 leading-relaxed text-muted-foreground [&>:is(p,ul,ol)]:italic">
+          {block.blocks.map((inner, i) => (
+            <Block key={i} block={inner} anchor={null} variant={variant} />
+          ))}
         </blockquote>
       );
     case "table":
@@ -620,7 +704,16 @@ export function MarkdownText({
 }) {
   const withImages = resolveImage !== undefined;
   const drawsStretches = useContext(StretchTextContext);
-  const { blocks, control } = useStretchBlocks(text, withImages, stretches && drawsStretches && text.includes("{{"), query);
+  // Math is the device's choice (Settings → Appearance). Off, `$` is a dollar and the parse is the
+  // one before math existed.
+  const math = mathEngineOf(useDesignPrefs()) !== "off";
+  const { blocks, control } = useStretchBlocks(
+    text,
+    withImages,
+    stretches && drawsStretches && text.includes("{{"),
+    query,
+    math,
+  );
   const anchors = useMemo(() => (headingIds ? headingAnchors(blocks) : null), [blocks, headingIds]);
   return (
     <QueryContext.Provider value={query}>

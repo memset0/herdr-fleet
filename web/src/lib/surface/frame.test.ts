@@ -149,7 +149,7 @@ describe("pinned dialog regions", () => {
   }
 });
 
-// Muse, Oh My Pi's Claude theme, pi's OmO extension and Hermes's classic CLI paint Claude's own input
+// Muse, Oh My Pi's Claude theme, pi's OmO extension, gentle-pi's editor and Hermes's classic CLI paint Claude's own input
 // box: a column-0 ❯ row between two bare U+2500 rules. The anchors are shape only, so the Claude profile finds a frame
 // there, and that is right: the frame says "a box is drawn", and the profile is picked by the binary
 // (the README contract: version and harness from the binary, never from the screen), so the Claude
@@ -159,7 +159,11 @@ const DRAWS_THE_SAME_BOX = (name: string): boolean =>
   name.startsWith("omp--v18-4-claude") ||
   name.startsWith("pi--omo-") ||
   name.startsWith("hermes--") ||
-  name === "pi--prose-quoted-omo-dialog-above-editor.txt";
+  name === "pi--prose-quoted-omo-dialog-above-editor.txt" ||
+  name === "pi--v130-gentle-draft-wrapped.txt" ||
+  // An extension's editor with `❯` in column 0 between pi's own rules (issue 722).
+  name.startsWith("pi--v150-gentle-quiet-") ||
+  name.startsWith("pi--v130-quiet-prompt-");
 
 describe("non-Claude fixtures", () => {
   it("yield null with the Claude profile, except the harnesses that draw the same box", () => {
@@ -417,6 +421,43 @@ describe("findInputFrame", () => {
     expect(findInputFrame(lines(RULE, "❯", RULE), IDLE)!.interior.text).toBe("");
   });
 
+  it("a cursor on the first glyph of a ghost suggestion is a placeholder, not a draft (issue 659)", () => {
+    // Claude Code with the next-steps plugin draws the suggestion in the empty box with its cursor, a
+    // reverse-video cell, on the first letter: `ESC[7m` + "A", then the dim rest.
+    const cursor = (text: string): AnsiSegment => ({ ...plainRun(text), inverse: true });
+    const box = (...runs: AnsiSegment[]): StyledLine[] => [styled(plainRun(RULE)), styled(plainRun("❯ "), ...runs), styled(plainRun(RULE))];
+
+    const ghost = findInputFrame(box(cursor("A"), dim("dd unit tests for parse_csv_line")), IDLE)!;
+    expect(ghost.placeholder).toBe(true);
+    expect(ghost.anchorsHit).toContain("placeholder-sgr");
+  });
+
+  it("a one-letter draft under the cursor stays a draft: nothing dim follows the cursor cell", () => {
+    const cursor = (text: string): AnsiSegment => ({ ...plainRun(text), inverse: true });
+    const box = (...runs: AnsiSegment[]): StyledLine[] => [styled(plainRun(RULE)), styled(plainRun("❯ "), ...runs), styled(plainRun(RULE))];
+
+    expect(findInputFrame(box(cursor("A")), IDLE)!.placeholder).toBe(false);
+    expect(findInputFrame(box(plainRun("a"), cursor(" ")), IDLE)!.placeholder).toBe(false);
+  });
+
+  it("a typed word before dim completion text stays a draft: typed cells are not dim", () => {
+    const cursor = (text: string): AnsiSegment => ({ ...plainRun(text), inverse: true });
+    const box = (...runs: AnsiSegment[]): StyledLine[] => [styled(plainRun(RULE)), styled(plainRun("❯ "), ...runs), styled(plainRun(RULE))];
+
+    expect(findInputFrame(box(plainRun("add"), dim(" unit tests")), IDLE)!.placeholder).toBe(false);
+    expect(findInputFrame(box(plainRun("add"), cursor(" "), dim("unit tests")), IDLE)!.placeholder).toBe(false);
+    // The cursor skip is for the first cell only: a reverse-video cell after typed text is no ghost cursor.
+    expect(findInputFrame(box(plainRun("a"), cursor("d"), dim("d unit tests")), IDLE)!.placeholder).toBe(false);
+  });
+
+  it("an all-dim hole is still a placeholder, and a non-dim cell after the cursor cell leaves a draft", () => {
+    const cursor = (text: string): AnsiSegment => ({ ...plainRun(text), inverse: true });
+    const box = (...runs: AnsiSegment[]): StyledLine[] => [styled(plainRun(RULE)), styled(plainRun("❯ "), ...runs), styled(plainRun(RULE))];
+
+    expect(findInputFrame(box(dim("add unit tests")), IDLE)!.placeholder).toBe(true);
+    expect(findInputFrame(box(cursor("a"), plainRun("dd unit tests")), IDLE)!.placeholder).toBe(false);
+  });
+
   it("marks a placeholder by its colours alone: a whole hole in the placeholder colour, no faint attribute (issue 510)", () => {
     // Muse paints the empty box's tip — and the model's prompt suggestion, whose words no text list
     // can name — in rgb(175,177,179) with no SGR 2, where typed text is rgb(31,35,40)
@@ -448,6 +489,49 @@ describe("findInputFrame", () => {
     expect(typedUnder.placeholder).toBe(false);
     const nearMiss = findInputFrame(box(promptRow({ text: "Run the test suite", fg: "rgb(175,176,180)" })), MUSE)!;
     expect(nearMiss.placeholder).toBe(false);
+  });
+
+  it("marks Claude Code's rotating `Try \"…\"` hint by its shape on a plain-text read (herdr-core, 2026-10-30)", () => {
+    // herdr-core reads the screen as plain text: the hint's faint attribute is gone, so only its shape
+    // tells it from typed text. Live on Claude Code 2.1.314; a walky talky delivery stayed held.
+    const capture = readFileSync(join(FIXTURES_DIR, "surface", "claude--v2-1-314-placeholder-plain--w120.txt"), "utf8");
+    const live = findInputFrame(splitLines(parseAnsi(capture)), IDLE)!;
+    expect(live.interior.text).toBe('Try "refactor <filepath>"');
+    expect(live.placeholder).toBe(true);
+    expect(live.anchorsHit).toContain("placeholder-text");
+    for (const hint of ['Try "fix lint errors"', 'Try "how do I log an error?"', 'Try ""']) {
+      expect(findInputFrame(lines(RULE, `❯ ${hint}`, RULE), IDLE)!.placeholder).toBe(true);
+      expect(findInputFrame(lines(RULE, `❯\u00a0${hint}`, RULE), IDLE)!.placeholder).toBe(true);
+    }
+    // Typed text around the shape, or a quote inside it, is a draft.
+    for (const draft of ['Try "fix lint errors" now', 'please Try "fix lint errors"', 'Try "a" and "b"', 'Try "unclosed', "Try fix lint errors"]) {
+      expect(findInputFrame(lines(RULE, `❯ ${draft}`, RULE), IDLE)!.placeholder).toBe(false);
+    }
+  });
+
+  it("counts the `Try \"…\"` shape only on a read with no styling: a typed one on a coloured read stays a draft", () => {
+    // tmux, zellij and the Herdr TUI hand out colour. Typed text is default ink there, with no colour or
+    // flag of its own, but the prompt marker and the rules carry colour, so the read is styled and the
+    // shape rule stands down. Only a read with no styling anywhere (herdr-core) lets the shape decide.
+    const GREY = "rgb(153,153,153)";
+    const rule: FrameRow = { segments: [{ text: RULE, fg: GREY }] };
+    const marker: FrameRun = { text: "❯ ", fg: GREY };
+    const hint = 'Try "fix lint errors"';
+
+    const typed = findInputFrame([rule, { segments: [marker, { text: hint }] }, rule], IDLE)!;
+    expect(typed.placeholder).toBe(false);
+    expect(typed.interior.text).toBe(hint);
+    expect(typed.anchorsHit).not.toContain("placeholder-text");
+
+    const faint = findInputFrame([rule, { segments: [marker, { text: hint, dim: true }] }, rule], IDLE)!;
+    expect(faint.placeholder).toBe(true);
+    expect(faint.interior.text).toBe(hint);
+    expect(faint.anchorsHit).toContain("placeholder-sgr");
+    expect(faint.anchorsHit).not.toContain("placeholder-text");
+
+    const plain = findInputFrame(plainRows([RULE, `❯ ${hint}`, RULE]), IDLE)!;
+    expect(plain.placeholder).toBe(true);
+    expect(plain.anchorsHit).toContain("placeholder-text");
   });
 
   it("a faint marker in front of a real draft is not a placeholder", () => {
@@ -648,6 +732,17 @@ describe("the interior walk on rules with no prompt glyph (M56 spec 14)", () => 
     expect(findInputFrame(lines("reply", RULE, "", RULE, ...footer), PI)!.interior.text).toBe("");
     expect(findInputFrame(lines("reply", RULE, "hello there", RULE, ...footer), PI)!.interior.text).toBe("hello there");
     expect(findInputFrame(lines(RULE, "  line one", "  line two", RULE, ...footer), PI)!.interior.text).toBe("line one line two");
+  });
+
+  // M80 spec 04 (lab, pi 1.4.0, 2026-11-01): a message with rule rows of its own. Its last typed rule
+  // was read as the top edge, the box read `end`, and the send ended typed_not_submitted (mismatch).
+  it("reads rule rows the draft holds as draft rows: only a row as wide as the box is its edge", () => {
+    const typed = "─".repeat(20);
+    const frame = findInputFrame(lines("reply", RULE, "Reply with only OK.", typed, "some text", typed, "end", RULE, ...footer), PI)!;
+    expect(frame.top).toBe(1);
+    expect(frame.interior.text).toBe(`Reply with only OK. ${typed} some text ${typed} end`);
+    // A typed rule as wide as the box is still read as the edge: the reader cannot tell the two apart.
+    expect(findInputFrame(lines("reply", RULE, "some text", RULE, "end", RULE, ...footer), PI)!.interior.text).toBe("end");
   });
 
   it("reads the Working label on the top rule", () => {
@@ -856,5 +951,141 @@ describe("omp 18.11's box composer (issue 497)", () => {
     const { inlineHint, ...bare } = OMP;
     void inlineHint;
     expect(read(box({ text: "please push", fg: TEXT }, { text: "ed", fg: GHOST }), bare)).toBe("please pushed");
+  });
+});
+
+// omp 18.6.1 and 18.12.6 draw a fuzzy list of up to ten rows under the open box for any text that starts with
+// `/`. The box past it is found whatever the list's pointer rests on (`commandList.leadOpens`), and the
+// frame's draft is the typed text, the list's rows left out.
+describe("the omp box past a ten-row fuzzy list (omp-gang, 2026-10-25)", () => {
+  const OMP = requireProfile("omp").idle;
+
+  it.each([
+    ["omp--v18-6-1-slash-help-unlisted--w120.txt", "/help", 4],
+    ["omp--v18-12-6-slash-help-unlisted--w120.txt", "/help", 4],
+    ["omp--v18-6-1-slash-nothere-fuzzy--w120.txt", "/nothere", 5],
+    ["omp--v18-12-6-slash-nothere-fuzzy--w120.txt", "/nothere", 5],
+  ])("%s: the box holds %s", (name, text, top) => {
+    const frame = findInputFrame(fixtureRows(name), OMP);
+    expect(frame).not.toBeNull();
+    expect(frame!.interior.text).toBe(text);
+    expect(frame!.top).toBe(top);
+    expect(frame!.bottom).toBe(top + 1);
+    expect(frame!.placeholder).toBe(false);
+  });
+
+  it("the same screen with the pointer taken off the list finds no box: an unpointed run under the box is no list", () => {
+    const raw = readFileSync(join(PANES_DIR, "omp--v18-6-1-slash-help-unlisted--w120.txt"), "utf8");
+    expect(raw).toContain("❯ \u{1F5FA}");
+    expect(findInputFrame(splitLines(parseAnsi(raw.replace("❯ \u{1F5FA}", "  \u{1F5FA}"))), OMP)).toBeNull();
+  });
+});
+
+describe("a box at its scroll height (`idle.frame.scroll`, omp gang 2026-10-25)", () => {
+  const OMP = requireProfile("omp").idle;
+  const surfaceRows = (name: string): StyledLine[] => splitLines(parseAnsi(readFileSync(join(FIXTURES_DIR, "surface", name), "utf8")));
+
+  it("marks the real 17-row boxes scrolled: their head is out of view", () => {
+    for (const name of ["omp--draft-scrolled-2000-chars--v18.6.1.txt", "omp--draft-scrolled-26-lines--v18.6.1.txt"]) {
+      const frame = findInputFrame(surfaceRows(name), OMP);
+      expect(frame?.scrolled, name).toBe(true);
+    }
+  });
+
+  it("leaves a box that shows its whole draft unmarked, and every profile with no scroll", () => {
+    expect(findInputFrame(fixtureRows("omp--draft-wrapped.txt"), OMP)?.scrolled).toBeUndefined();
+    expect(findInputFrame(fixtureRows("omp--draft-single.txt"), OMP)?.scrolled).toBeUndefined();
+    const { scroll, ...frame } = OMP.frame;
+    void scroll;
+    expect(findInputFrame(surfaceRows("omp--draft-scrolled-2000-chars--v18.6.1.txt"), { ...OMP, frame })?.scrolled).toBeUndefined();
+  });
+});
+
+// omp-gang 11-geometry, W4 (2026-10-25): the Clear receipt's Restore text had a space at every soft wrap, so a
+// CJK draft of 67 characters came back with 68 and a 140-character URL with 141. A harness wraps a draft at a
+// break and drops the break, and wraps inside a token only for a token wider than a row (a URL) and for a run
+// of double-width cells (CJK text has no spaces). The join keeps one space everywhere else.
+describe("the draft of a soft-wrapped box joins the rows the way they were broken (omp-gang 11-geometry, W4)", () => {
+  const OMP = requireProfile("omp").idle;
+  const WIDTH = 80;
+  /** An omp box over a transcript row: the first draft row behind the prompt glyph, the others indented under it. */
+  const box = (draft: readonly string[], columns = WIDTH): FrameRow[] => {
+    const pad = (text: string): string => text + " ".repeat(Math.max(0, columns - displayWidth(text)));
+    return plainRows([pad(""), pad(" π > ◒ Haiku 4.5 > 📁 ~/work ▶─6%─┃200K─"), ...draft.map((row, i) => pad(i === 0 ? `╰─ ${row}` : `   ${row}`))]);
+  };
+  const draftOf = (draft: readonly string[], columns = WIDTH): string | undefined => findInputFrame(box(draft, columns), OMP)?.interior.text;
+
+  it("the real CJK capture: 67 characters come back as 67 (omp cuts the run at the last cell that fits)", () => {
+    const text = findInputFrame(fixtureRows("omp--v18-6-1-draft-cjk-wrapped--w80.txt"), OMP)?.interior.text;
+    expect(text).toBe("日本語のテキストをここに入力して、ボックスの幅の計算が正しいかどうかを確認します。全角文字は二つのセルを占めます。これは七十文字です。");
+    expect([...text!]).toHaveLength(67);
+  });
+
+  it("the real URL capture: 140 characters come back as 140 (the token is wider than a row)", () => {
+    const text = findInputFrame(fixtureRows("omp--v18-12-6-draft-url-wrapped--w80.txt"), OMP)?.interior.text;
+    expect(text).toBe(`https://example.com/${"abcdefghij".repeat(12)}`);
+    expect(text).toHaveLength(140);
+  });
+
+  it("a URL after a word is cut where the row is full, and the space before it stays", () => {
+    const url = `https://example.com/${"abcdefghij".repeat(9)}`;
+    // Row one: "see " and as much of the URL as fits the 77 cells behind the glyph. Row two: the rest.
+    const first = `see ${url}`.slice(0, 77);
+    const rest = `see ${url}`.slice(77);
+    expect(draftOf([first, rest])).toBe(`see ${url}`);
+  });
+
+  it("a plain wrap at a word keeps its space, whether the row ends short or the word ends exactly on the last cell", () => {
+    const words = "alpha beta gamma delta epsilon zeta eta theta iota kappa lambda mu nu xi omicron pi rho sigma tau";
+    expect(draftOf([words.slice(0, 70).trimEnd(), words.slice(71)])).toBe(`${words.slice(0, 70).trimEnd()} ${words.slice(71)}`);
+    // 77 cells of words, the row full to the last cell at a word end; a short word follows on the next row.
+    const row = `${"word ".repeat(15)}wordy ab`.slice(0, 77).trimEnd();
+    expect(displayWidth(`╰─ ${row}`)).toBe(WIDTH);
+    expect(draftOf([row, "next words here"])).toBe(`${row} next words here`);
+  });
+
+  it("two long words at a full row's edge are two words: only a token wider than a row has no space", () => {
+    const left = `${"a".repeat(30)} ${"b".repeat(46)}`;
+    expect(displayWidth(`╰─ ${left}`)).toBe(WIDTH);
+    expect(draftOf([left, `${"c".repeat(30)} tail`])).toBe(`${left} ${"c".repeat(30)} tail`);
+  });
+
+  it("a draft typed with newlines keeps a space for each: the rows end short", () => {
+    expect(draftOf(["first line", "second line", "third"])).toBe("first line second line third");
+    expect(draftOf(["日本語のテキスト", "二行目"])).toBe("日本語のテキスト 二行目");
+  });
+
+  it("a newline after a CJK line that fills the row to within a cell keeps its space (the next row starts on a narrow glyph)", () => {
+    const line = "文".repeat(38);
+    expect(displayWidth(`╰─ ${line}`)).toBe(79);
+    expect(draftOf([line, "next line"])).toBe(`${line} next line`);
+  });
+
+  it("a blank row in the draft is a real break: the space stays", () => {
+    const rows = findInputFrame(box(["part one", "", "part two"]), OMP)?.interior.text;
+    expect(rows).toBe("part one part two");
+  });
+
+  it("Korean text, which has spaces, keeps the space where a row ends short of the width", () => {
+    expect(draftOf(["안녕하세요 세계 여러분", "다음 줄입니다"])).toBe("안녕하세요 세계 여러분 다음 줄입니다");
+  });
+
+  it("rows that are not one padded rectangle join as they always did", () => {
+    const rows = plainRows(["", " π > ◒ Haiku 4.5 > 📁 ~/work ▶─6%─┃200K─", `╰─ ${"x".repeat(77)}`, `   ${"y".repeat(10)}`]);
+    expect(findInputFrame(rows, OMP)?.interior.text).toBe(`${"x".repeat(77)} ${"y".repeat(10)}`);
+  });
+
+  it("a screen with its trailing spaces cut says nothing about a full row: two equal-length lines typed with a newline keep the space", () => {
+    const rows = plainRows(["", " π > ◒ Haiku 4.5 > 📁 ~/work ▶─6%─┃200K─".padEnd(80), `╰─ ${"x".repeat(40)}`, `   ${"y".repeat(40)}`]);
+    expect(findInputFrame(rows, OMP)?.interior.text).toBe(`${"x".repeat(40)} ${"y".repeat(40)}`);
+  });
+
+  it("narrower terminals, 40 columns: the URL cut and the CJK run cut both hold", () => {
+    // A row holds 37 cells behind the glyph or the indent.
+    const url = `https://example.com/${"abcdefghij".repeat(5)}`;
+    expect(draftOf([url.slice(0, 37), url.slice(37, 74), url.slice(74)], 40)).toBe(url);
+    const cjk = "日本語のテキストをここに入力して、ボックスの幅を確認します。これは二行目以降です。";
+    // 18 double-width characters fill 36 of the 37 cells: omp cuts the run one cell short.
+    expect(draftOf([cjk.slice(0, 18), cjk.slice(18, 36), cjk.slice(36)], 40)).toBe(cjk);
   });
 });

@@ -22,13 +22,15 @@
 // has its own default state root (`browser-leg-crew-state`), so the solo leg and the crew leg never
 // share a rig folder, a Herdr home or a port. `COLLIE_RIG_CREW=1` selects it (crew-env.ts sets it).
 import { spawnSync } from "node:child_process";
-import { existsSync, lstatSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, lstatSync, readFileSync, readdirSync, rmSync, writeFileSync } from "node:fs";
 import { once } from "node:events";
 import { createConnection } from "node:net";
 import { homedir } from "node:os";
 import { basename, join, resolve } from "node:path";
 
 import { asJsonObject, asJsonString, parseJson, type JsonObject } from "../../src/lib/json";
+import type { TierPlans } from "./replay/tier";
+import { CORE_RIG_LABEL, coreRunArgs, coreSocketIn, rigMuxFrom, type RigMux } from "./rig-mux";
 import { XDG_HOME_NAME, shortXdgHome } from "./sock-path";
 
 /** True for the crew rig (lead and member); the solo rig otherwise. */
@@ -62,6 +64,7 @@ export const P = {
   xdg: shortXdgHome(STATE_ROOT, SESSION, RUNTIME_DIR !== undefined && existsSync(RUNTIME_DIR) ? RUNTIME_DIR : undefined), // XDG_CONFIG_HOME for herdr only; short, so its sockets fit sun_path
   xdgState: join(RIG, "xdg-state"), // XDG_STATE_HOME for herdr only (its agent-detection status file)
   logs: join(RIG, "logs"),
+  stubStats: join(RIG, "logs", "stub-stats.json"), // the stub's last counters, written by the rig daemon's teardown; startRun removes it
   work: join(RIG, "work"), // cwd of the view workspace
   bridgeHome: join(RIG, "bridge-home"), // HOME of the bridge
   run: join(RIG, "rig.json"),
@@ -115,14 +118,9 @@ export function machineDirs(machine: Machine): MachineDirs {
   return DIRS[machine];
 }
 
-/** Read a `--on lead|member` flag out of an argument list; the lead when it is absent. */
-export function machineFlag(args: readonly string[]): Machine {
-  const at = args.indexOf("--on");
-  if (at === -1) return "lead";
-  const value = args[at + 1];
-  if (value !== "lead" && value !== "member") throw new Error("--on takes lead or member");
-  return value;
-}
+/** The multiplexer each machine runs (COLLIE_RIG_MUX, rig-mux.ts): Herdr unless it says herdr-core. */
+export const RIG_MUX = rigMuxFrom(process.env.COLLIE_RIG_MUX);
+export const muxOf = (machine: Machine): RigMux => RIG_MUX[machine];
 
 /** The member's half of a crew rig: its port, its Herdr socket and the pids the daemon started. */
 export interface MemberRun {
@@ -142,10 +140,16 @@ export interface Run {
   bridgePid: number | null;
   ready: boolean;
   readonly startedAt: string;
+  /** The systemd scope the daemon runs in (`rig-<hash>-<pid>.scope`), or null when it runs where `up` ran. Absent in an older rig.json. */
+  readonly scope?: string | null;
+  /** The cgroup `up` ran in (a path under /sys/fs/cgroup), the owner the daemon watches; null when none was recorded. */
+  readonly ownerCgroup?: string | null;
   /** Set on a crew rig only: the member, and the ids both sides enrolled under. */
   member?: MemberRun;
   leadId?: string;
   memberId?: string;
+  /** The model stub for pi and omp (M67, replay/stub.ts): its port, and the tier each harness runs on. */
+  stub?: { readonly port: number; readonly tiers: TierPlans };
 }
 
 export function assertUnderRoot(path: string): string {
@@ -178,7 +182,7 @@ export function assertPrivateDir(dir: string): void {
 export function retireXdgHome(machine: Machine = "lead"): void {
   const xdg = DIRS[machine].xdg;
   if (!XDG_HOME_NAME.test(basename(xdg))) throw new Error(`refusing to remove ${xdg}: not a rig Herdr home`);
-  if (!existsSync(xdg) || sessionRunning(machine)) return;
+  if (!existsSync(xdg) || sessionRunning(machine) || coreRunning(machine)) return;
   rmSync(xdg, { recursive: true, force: true });
 }
 
@@ -314,21 +318,234 @@ export function herdrJson(args: readonly string[], machine: Machine = "lead"): J
 
 /** A new workspace in a machine's Herdr with one shell pane; returns the pane id. */
 export function newWorkspacePane(cwd: string, label: string, machine: Machine = "lead"): string {
+  if (muxOf(machine) === "herdr-core") return coreNewTerminal(cwd, label, [], machine);
   const ws = herdrJson(["workspace", "create", "--cwd", cwd, "--label", label, "--no-focus"], machine);
   const paneId = asJsonString(asJsonObject(ws.root_pane)?.pane_id) ?? null;
   if (paneId === null) throw new Error("herdr gave no pane id");
   return paneId;
 }
 
-/** Close a rig pane, and with it the harness in it. */
-export function paneClose(paneId: string, machine: Machine = "lead"): void {
-  herdr(["pane", "close", paneId], { machine });
+/** Close a rig pane, and with it the harness in it. False when Herdr refused: the pane is already gone, or never was. */
+export function paneClose(paneId: string, machine: Machine = "lead"): boolean {
+  if (muxOf(machine) === "herdr-core") return coreClose(paneId, machine);
+  return herdr(["pane", "close", paneId], { machine }).code === 0;
+}
+
+/** The label of the view workspace the daemon opens first (rig.ts startHerdr): the pane its attached client shows. */
+export const VIEW_LABEL = "rig-view";
+
+/** One open pane of a machine's rig, as `rig.ts pane ls` and the pane cap see it. */
+export interface OpenPane {
+  readonly paneId: string;
+  /** The label of the pane's workspace: `rig-<time in base 36>` from `pane` and `start`, `leg-<harness>` from the leg. */
+  readonly label: string;
+  readonly cwd: string;
+}
+
+/**
+ * The panes open in a machine's Herdr, less the view pane. `newWorkspacePane` gives every pane its own
+ * workspace, and only the view workspace carries VIEW_LABEL, so the view pane is told apart by its
+ * workspace's label, not by its id.
+ */
+export function openPanes(machine: Machine = "lead"): OpenPane[] {
+  if (muxOf(machine) === "herdr-core") return coreOpenPanes(machine);
+  const labels = new Map<string, string>();
+  const workspaces = herdrJson(["workspace", "list"], machine).workspaces;
+  for (const w of Array.isArray(workspaces) ? workspaces : []) {
+    const ws = asJsonObject(w);
+    const id = asJsonString(ws?.workspace_id);
+    if (id !== undefined) labels.set(id, asJsonString(ws?.label) ?? "");
+  }
+  const panes = herdrJson(["pane", "list"], machine).panes;
+  const out: OpenPane[] = [];
+  for (const p of Array.isArray(panes) ? panes : []) {
+    const pane = asJsonObject(p);
+    const paneId = asJsonString(pane?.pane_id);
+    if (paneId === undefined) continue;
+    const label = labels.get(asJsonString(pane?.workspace_id) ?? "") ?? "";
+    if (label === VIEW_LABEL) continue;
+    out.push({ paneId, label, cwd: asJsonString(pane?.cwd) ?? "" });
+  }
+  return out;
+}
+
+/** The command a pane runs in its foreground (`herdr pane process-info`), or null when Herdr gives none. */
+export function paneCommand(paneId: string, machine: Machine = "lead"): string | null {
+  if (muxOf(machine) === "herdr-core") return coreCommand(paneId, machine);
+  try {
+    const info = asJsonObject(herdrJson(["pane", "process-info", "--pane", paneId], machine).process_info);
+    const procs = info?.foreground_processes;
+    return asJsonString(asJsonObject(Array.isArray(procs) ? procs[0] : undefined)?.cmdline) ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /** Type a line into a rig pane and press Enter (`herdr pane run`). */
 export function paneRun(paneId: string, line: string, machine: Machine = "lead"): void {
+  if (muxOf(machine) === "herdr-core") {
+    // `hc send` pastes the line and presses Enter once nobody typed for about 3 s (HC_API.md "Typing").
+    const sent = hc(["send", paneId, line], machine);
+    if (sent.code !== 0) throw new Error(`hc send: ${(sent.err || sent.out).trim()}`);
+    return;
+  }
   const r = herdr(["pane", "run", paneId, line], { machine });
   if (r.code !== 0) throw new Error(`herdr pane run: ${(r.err || r.out).trim()}`);
+}
+
+/**
+ * A fresh pane on a machine that runs `line` (a start script's `exec '<path>'`), and its pane id as the
+ * machine's bridge names it. Herdr: a shell pane in a workspace of its own, its prompt first, then the
+ * line typed in (the rig as it always was). herdr-core: a terminal whose program is `sh -c <line>`,
+ * started over the API (`hc run --bg`), with no shell beneath; the start script carries every setting
+ * the harness needs, because a program started over the API gets the core's environment, not the caller's.
+ */
+export async function startInPane(cwd: string, label: string, line: string, machine: Machine = "lead"): Promise<string> {
+  if (muxOf(machine) === "herdr-core") return coreNewTerminal(cwd, label, ["sh", "-c", line], machine);
+  const paneId = newWorkspacePane(cwd, label, machine);
+  await sleep(800); // the shell's prompt first
+  paneRun(paneId, line, machine);
+  return paneId;
+}
+
+// ── herdr-core, always the rig's own ─────────────────────────────────────────────────────────────
+//
+// A scratch core per machine: `hc server start` with HC_SESSION `collie-rig-<8 hex>` (the short home's
+// own name) and HC_SOCKET `<short home>/hc.sock`, under scratch XDG homes. Every `hc` call below carries
+// that socket, and every inherited HC_ name is dropped first, so the operator's core
+// (`$XDG_RUNTIME_DIR/herdr-core/default.sock`) is never dialled. Two facts shape the code (hc 0.1.14,
+// probed 2026-10-30): EVERY hc call starts a core when none answers on the socket, `server status`
+// included, so nothing here calls hc unless the socket file is there; and the core places its server
+// and its holder (the process the terminals run under) in systemd user services of their own
+// (`hc-serve-<hex>.service`, `hc-hold-<hex>.service`), outside the rig's scope, so the scope's TasksMax
+// does not bound them and the rig stops them itself (rig.ts).
+
+/** The scratch core's socket, session name and XDG homes for one machine. */
+export function coreDirs(machine: Machine = "lead") {
+  const d = DIRS[machine];
+  return { socket: coreSocketIn(d.xdg), session: basename(d.xdg), data: join(d.xdgState, "core-data"), cache: join(d.xdgState, "core-cache") };
+}
+
+/** The environment for `hc` and for the core it starts (its terminals inherit it): no inherited HC_, HERDR_, COLLIE_ or CLAUDE names. */
+export function coreEnv(machine: Machine = "lead") {
+  const out: Record<string, string> = {};
+  for (const [key, value] of Object.entries(process.env)) {
+    if (value === undefined) continue;
+    if (/^(HC_|HERDR_|CLAUDECODE$|CLAUDE_CODE_|CLAUDE_PID$|CLAUDE_EFFORT$|COLLIE_)/.test(key)) continue;
+    out[key] = value;
+  }
+  const d = DIRS[machine];
+  const c = coreDirs(machine);
+  out.HC_SESSION = c.session;
+  out.HC_SOCKET = c.socket;
+  out.XDG_CONFIG_HOME = d.xdg;
+  out.XDG_STATE_HOME = d.xdgState;
+  out.XDG_DATA_HOME = c.data;
+  out.XDG_CACHE_HOME = c.cache;
+  return out;
+}
+
+/** True while the machine's scratch core has its socket: the one test that starts no core. */
+export function coreRunning(machine: Machine = "lead"): boolean {
+  return existsSync(coreDirs(machine).socket);
+}
+
+/** One hc call against the machine's scratch core. Refuses when its socket is gone, because hc would start a new core. */
+export function hc(args: readonly string[], machine: Machine = "lead", opts: { start?: boolean } = {}): HerdrResult {
+  if (opts.start !== true && !coreRunning(machine)) return { code: 1, out: "", err: `no scratch core on the ${machine} (${coreDirs(machine).socket} is gone)` };
+  const r = spawnSync("hc", [...args], { env: coreEnv(machine), encoding: "utf8", timeout: 30_000 });
+  return { code: r.status ?? 1, out: r.stdout ?? "", err: r.stderr ?? "" };
+}
+
+function hcJson(args: readonly string[], machine: Machine): JsonObject {
+  const r = hc([...args, "--json"], machine);
+  const doc = asJsonObject(parseJson(r.out));
+  if (r.code !== 0 || doc === undefined) throw new Error(`hc ${args.slice(0, 2).join(" ")}: ${(r.err || r.out).trim()}`);
+  return doc;
+}
+
+/** A new terminal on the machine's core, in `cwd`, running `argv` (none: the machine's own shell); its address. */
+function coreNewTerminal(cwd: string, label: string, argv: readonly string[], machine: Machine): string {
+  const doc = hcJson(coreRunArgs(cwd, label, argv), machine);
+  const address = asJsonString(doc.address);
+  if (address === undefined) throw new Error("hc run gave no address");
+  return address;
+}
+
+/** End a terminal's program and remove its record. False when the core refused: it is gone, or never was. */
+function coreClose(address: string, machine: Machine): boolean {
+  const killed = hc(["kill", address], machine).code === 0;
+  if (killed) hc(["rm", address], machine);
+  return killed;
+}
+
+/** The live terminals of the machine's core, as `pane ls` and the pane cap see them; the label is the rig's hc label. */
+function coreOpenPanes(machine: Machine): OpenPane[] {
+  const rows = hcJson(["ls"], machine).terminals;
+  const out: OpenPane[] = [];
+  for (const t of Array.isArray(rows) ? rows : []) {
+    const row = asJsonObject(t);
+    const paneId = asJsonString(row?.address);
+    if (paneId === undefined) continue;
+    const label = asJsonString(asJsonObject(row?.labels)?.[CORE_RIG_LABEL]) ?? "";
+    if (label === VIEW_LABEL) continue;
+    out.push({ paneId, label, cwd: asJsonString(row?.cwd) ?? "" });
+  }
+  return out;
+}
+
+/** The foreground command of a core terminal (`hc get`), or null. */
+function coreCommand(address: string, machine: Machine): string | null {
+  try {
+    const argv = asJsonObject(hcJson(["get", address], machine).foreground)?.argv;
+    return Array.isArray(argv) ? argv.map((word) => String(word)).join(" ") : null;
+  } catch {
+    return null;
+  }
+}
+
+/** The pids of herdr-core processes that belong to this machine's scratch core: the holder names its socket beside ours, the server carries HC_SOCKET. */
+function corePids(machine: Machine): number[] {
+  const { socket } = coreDirs(machine);
+  const home = `${DIRS[machine].xdg}/`;
+  const out: number[] = [];
+  let entries: string[] = [];
+  try {
+    entries = readdirSync("/proc").filter((name) => /^\d+$/.test(name));
+  } catch {
+    return out;
+  }
+  for (const name of entries) {
+    try {
+      const cmdline = readFileSync(`/proc/${name}/cmdline`, "utf8").replaceAll("\0", " ");
+      if (!cmdline.includes("herdr-core")) continue;
+      const ours = cmdline.includes(home) || readFileSync(`/proc/${name}/environ`, "utf8").split("\0").includes(`HC_SOCKET=${socket}`);
+      if (ours) out.push(Number(name));
+    } catch {
+      /* gone, or not ours to read */
+    }
+  }
+  return out;
+}
+
+/**
+ * Stop the machine's scratch core and everything it runs: `hc server stop` (it ends the holder and every
+ * terminal's program), then the recorded server pid, then any herdr-core process still bound to this
+ * rig's socket. Never touches another core: the sweep matches this machine's socket path only.
+ */
+export async function stopCore(machine: Machine, pid: number | null): Promise<void> {
+  if (coreRunning(machine)) hc(["server", "stop", "--json"], machine);
+  await killPid(pid, "herdr-core");
+  for (const left of corePids(machine)) await killPid(left, "herdr-core");
+  rmSync(coreDirs(machine).socket, { force: true });
+}
+
+/**
+ * The pane markers a process in a pane of this machine carries, as `collie walky` reads them
+ * (cli/beacon.ts MUX_ENV_MARKERS): Herdr's pane id and socket, or the core's terminal id and socket.
+ */
+export function paneMarkers(paneId: string, socket: string, machine: Machine = "lead"): Record<string, string> {
+  return muxOf(machine) === "herdr-core" ? { HC_TERMINAL_ID: paneId, HC_TERMINAL_SOCKET: socket } : { HERDR_PANE_ID: paneId, HERDR_SOCKET_PATH: socket };
 }
 
 // ── walky talky, through a machine's own socket ──────────────────────────────────────────────────

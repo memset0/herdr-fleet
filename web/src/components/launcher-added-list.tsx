@@ -1,4 +1,4 @@
-import { Lock } from "lucide-react";
+import { Icon } from "@/components/icons/icon";
 import { useState } from "react";
 
 import { AgentIcon } from "@/components/agent-icon";
@@ -12,7 +12,6 @@ import { describeApiError } from "@/lib/api-error-message";
 import { removeAddedLauncher, renameAddedLauncher } from "@/lib/api";
 import { t } from "@/lib/i18n";
 import { mutate } from "@/lib/mutate";
-import type { Scope } from "@/lib/scope";
 import { setStatus } from "@/lib/status";
 import type { LauncherItem } from "@/lib/types";
 
@@ -29,7 +28,16 @@ const LINK =
   "inline-flex min-h-11 items-center px-2 text-xs underline underline-offset-2 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring disabled:opacity-50";
 
 /**
- * "Added on this machine" (ADR 0094): every row a phone added there, each with Rename and Remove, and
+ * Whether Rename and Remove apply to a row. A row of the lead's (`from: "lead"`, ADR 0127) is the lead's
+ * to change, and so is every added row on the lead's own page. On a member's page the rows that carry
+ * no `from` are the member's own store, which the lead does not answer for: no actions there.
+ */
+export function canChange(row: LauncherItem, memberView: boolean): boolean {
+  return row.from === "lead" || !memberView;
+}
+
+/**
+ * "Added for the crew" (ADR 0094, 0127): every row a phone added on the lead, each with Rename and Remove, and
  * below them the operator's own rows from `launchers.toml`, with a lock and no actions (a phone
  * never edits that file). Rename swaps the label for a field in the SAME box (a `OneOf`), so the row
  * does not change height; Remove asks first, in a sheet. Both are the silent kind of write
@@ -37,14 +45,12 @@ const LINK =
  */
 export function LauncherAddedList({
   items,
-  scope,
-  machine,
+  memberView,
   onChanged,
 }: {
   items: readonly LauncherItem[] | null;
-  scope: Scope;
-  /** ALREADY TRANSLATED. The machine's name, or "this machine". */
-  machine: string;
+  /** The page names a member: its own pre-0127 rows get no actions, the lead's rows keep theirs. */
+  memberView: boolean;
   /** Read the list again: a row was renamed or removed. */
   onChanged: () => void;
 }) {
@@ -59,7 +65,7 @@ export function LauncherAddedList({
     const label = renaming.text.trim();
     if (label === "") return;
     setBusy(true);
-    const out = await mutate(() => renameAddedLauncher(renaming.id, label, scope));
+    const out = await mutate(() => renameAddedLauncher(renaming.id, label));
     setBusy(false);
     if (out.ok && !out.value.ok) setStatus(describeApiError(out.value), "error");
     if (out.ok && out.value.ok) setRenaming(null);
@@ -70,7 +76,7 @@ export function LauncherAddedList({
     const id = removing?.id;
     if (id === undefined || busy) return;
     setBusy(true);
-    const out = await mutate(() => removeAddedLauncher(id, scope));
+    const out = await mutate(() => removeAddedLauncher(id));
     setBusy(false);
     setRemoving(null);
     if (out.ok) onChanged();
@@ -79,7 +85,7 @@ export function LauncherAddedList({
   return (
     <section aria-labelledby="launcher-added-title" className="flex flex-col gap-2">
       <SectionLabel placement="above" id="launcher-added-title">
-        {t("launcherAdd.manage.title", { machine })}
+        {t("launcherAdd.manage.title")}
       </SectionLabel>
       {added.length === 0 && operator.length === 0 ? (
         <p className="text-xs text-muted-foreground">{t("launcherAdd.manage.empty")}</p>
@@ -87,6 +93,7 @@ export function LauncherAddedList({
       <ul className="flex flex-col gap-2">
         {added.map((row) => {
           const editing = renaming !== null && renaming.id === row.id;
+          const changeable = canChange(row, memberView);
           return (
             <li key={row.key} data-testid="launcher-added-row" className="flex flex-col rounded-md border border-border px-3 py-2">
               <OneOf
@@ -116,38 +123,40 @@ export function LauncherAddedList({
                   },
                 ]}
               />
-              <div className="flex items-center justify-end">
-                {editing ? (
-                  <>
-                    <button type="button" className={LINK} onClick={() => setRenaming(null)}>
-                      {t("dialog.cancel")}
-                    </button>
-                    <button
-                      type="button"
-                      className={LINK}
-                      disabled={busy || renaming.text.trim() === ""}
-                      onClick={() => void saveName()}
-                    >
-                      {t("launcherAdd.manage.save")}
-                    </button>
-                  </>
-                ) : (
-                  <>
-                    <button type="button" className={LINK} onClick={() => setRenaming({ id: row.id ?? "", text: row.label })}>
-                      {t("launcherAdd.manage.rename")}
-                    </button>
-                    <button type="button" className={LINK} onClick={() => setRemoving(row)}>
-                      {t("launcherAdd.manage.remove")}
-                    </button>
-                  </>
-                )}
-              </div>
+              {changeable ? (
+                <div className="flex items-center justify-end">
+                  {editing ? (
+                    <>
+                      <button type="button" className={LINK} onClick={() => setRenaming(null)}>
+                        {t("dialog.cancel")}
+                      </button>
+                      <button
+                        type="button"
+                        className={LINK}
+                        disabled={busy || renaming.text.trim() === ""}
+                        onClick={() => void saveName()}
+                      >
+                        {t("launcherAdd.manage.save")}
+                      </button>
+                    </>
+                  ) : (
+                    <>
+                      <button type="button" className={LINK} onClick={() => setRenaming({ id: row.id ?? "", text: row.label })}>
+                        {t("launcherAdd.manage.rename")}
+                      </button>
+                      <button type="button" className={LINK} onClick={() => setRemoving(row)}>
+                        {t("launcherAdd.manage.remove")}
+                      </button>
+                    </>
+                  )}
+                </div>
+              ) : null}
             </li>
           );
         })}
         {operator.map((row) => (
           <li key={row.key} data-testid="launcher-operator-row" className="flex items-start gap-2 rounded-md border border-border px-3 py-2">
-            <Lock className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
+            <Icon name="locked" className="mt-0.5 size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
             <div className="min-w-0 flex-1">
               <RowText row={row} />
               <p className="text-[11px] leading-tight text-muted-foreground">{t("launcherAdd.manage.operator")}</p>

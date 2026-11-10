@@ -2,12 +2,15 @@ import { basename, dirname } from "node:path";
 
 import type { SendProtocol } from "./surface/protocol.ts";
 import type { SurfaceShadow } from "./surface/shadow.ts";
+import type { ClearService } from "./surface/clear.ts";
+import type { StopService } from "./surface/stop.ts";
 import type { AskAnswerer } from "./surface/ask.ts";
 import type { HoldNote } from "../web/src/lib/surface/hold.ts";
 import type { ProgramDriver } from "./surface/durable-driver.ts";
 import type { EventPoker } from "./event-poker.ts";
 import type { MuxAdapter } from "./mux/types.ts";
 import type { NotificationCoordinator } from "./notifications.ts";
+import type { ModelReading } from "./pane-model.ts";
 import { DURABLE_MUX } from "./mux/durable/adapter.ts";
 import { versionNotice, type VersionRefusal } from "./mux/durable/protocol.ts";
 import { sourceWhere, type DurableSource } from "./sources.ts";
@@ -104,6 +107,10 @@ export interface SessionParts {
   send?: SendProtocol;
   /** Set with `send`: the session's Ask answerer (M56 spec 08), `POST /api/ask/<id>`. */
   asks?: AskAnswerer;
+  /** Set on a terminal session: a Stop on a pane with a screen (M68 spec 01), `POST /api/pane/:id/abort`. */
+  stop?: StopService;
+  /** Set on a terminal session: a Clear of the harness's input box (ADR 0116), `POST /api/pane/:id/clear`. */
+  clear?: ClearService;
   /**
    * Set on a program session with the Send Protocol on (M56 spec 14): the structured driver. It
    * answers the pane's Surface, `POST /api/send` and `POST /api/ask/<id>` from the program's state.
@@ -115,6 +122,11 @@ export interface SessionParts {
    * or "holds permissions" when the harness's hook also holds permissions (M56 spec 12).
    */
   hooks?: (paneId: string) => "live" | "holds" | "none";
+  /**
+   * Set with `hooks`: the model the pane's live hook source named on its start edge, and when, or
+   * undefined. The pane's label weighs it against the log's (bridge/pane-model.ts).
+   */
+  hookModel?: (paneId: string) => ModelReading | undefined;
   /** Set with `asks` when the bridge takes holds (M56 spec 12): the pane's hold note for the phone. */
   hold?: (paneId: string) => HoldNote | null;
 }

@@ -1,9 +1,10 @@
-import { MessagesSquare } from "lucide-react";
+import { Icon } from "@/components/icons/icon";
 
 import { ExperimentalBadge } from "@/components/experimental-badge";
 import { StatusDot } from "@/components/status-badge";
 import { Badge } from "@/components/ui/badge";
 import { useLocale } from "@/hooks/use-locale";
+import { sessionDisplayName } from "@/lib/hosts";
 import { t, tn } from "@/lib/i18n";
 import { programCounts, sessionState, wearsExperimental } from "@/lib/session-cards";
 import type { AgentStatus, SessionState, SessionSummary } from "@/lib/types";
@@ -74,7 +75,7 @@ function Counts({ open, waiting }: { open: number; waiting: number }) {
         </span>
       )}
       <Badge variant="secondary" data-slot="program-space-open" className="tabular-nums text-muted-foreground">
-        <MessagesSquare aria-hidden />
+        <Icon name="messages" aria-hidden />
         <span aria-hidden>{open}</span>
         <span className="sr-only">{tn("space.program.open", open)}</span>
       </Badge>
@@ -108,7 +109,7 @@ export function ProgramSpaceRow({
         <div className="min-w-0 flex-1">
           <div className="flex h-5 min-w-0 items-center gap-2">
             <span data-slot="program-space-name" className="min-w-0 truncate font-medium">
-              {session.name}
+              {sessionDisplayName(session)}
             </span>
             {wearsExperimental(session) && <ExperimentalBadge className="shrink-0" />}
           </div>

@@ -10,6 +10,7 @@ import { fileEdgeSpool, fileSourceStore, registerHookTarget } from "../beacon-io
 import { hookTargetFileName, hookTargetsDir, parseHookTarget } from "./hook-targets.ts";
 import { herdrMuxFactory } from "../mux/herdr/adapter.ts";
 import { herdrBeaconMatcher } from "../mux/herdr/markers.ts";
+import { asJsonObject, parseJson } from "../../web/src/lib/json.ts";
 import { parseEdge } from "./parse.ts";
 import { edgesDir } from "./paths.ts";
 import { EDGE_SCHEMA_VERSION, type EdgeRecord } from "./types.ts";
@@ -150,6 +151,30 @@ describe("the hook target registry on disk", () => {
     target.remove();
   });
 
+  test("a bridge that says what it drives writes mux, instance and port; the first Collie is `default`", () => {
+    const env = { XDG_STATE_HOME: join(dir, "xdg") };
+    const path = (state: string): string => join(hookTargetsDir(env, "/nowhere"), hookTargetFileName(state));
+    const named = registerHookTarget("/srv/named", env, "/nowhere", { mux: "herdr-core", instance: "hc", port: 8794 });
+    expect(parseHookTarget(readFileSync(path("/srv/named"), "utf8"))).toMatchObject({ mux: "herdr-core", instance: "hc", port: 8794, pid: process.pid });
+    const first = registerHookTarget("/srv/first", env, "/nowhere", { mux: "herdr", instance: null, port: 8787 });
+    expect(parseHookTarget(readFileSync(path("/srv/first"), "utf8"))).toMatchObject({ mux: "herdr", instance: "default", port: 8787 });
+    // `keep` rewrites the same identity after an emitter deleted the file.
+    rmSync(path("/srv/named"));
+    named.keep();
+    expect(parseHookTarget(readFileSync(path("/srv/named"), "utf8"))).toMatchObject({ mux: "herdr-core", instance: "hc", port: 8794 });
+    named.remove();
+    first.remove();
+  });
+
+  test("a bridge that says nothing writes none of the three fields, and the record still parses", () => {
+    const env = { XDG_STATE_HOME: join(dir, "xdg") };
+    const target = registerHookTarget("/srv/silent", env, "/nowhere");
+    const text = readFileSync(join(hookTargetsDir(env, "/nowhere"), hookTargetFileName("/srv/silent")), "utf8");
+    expect(Object.keys(asJsonObject(parseJson(text)) ?? {})).toEqual(["schemaVersion", "stateDir", "pid", "pidStartTime", "bootedAt"]);
+    expect(parseHookTarget(text)).toMatchObject({ mux: null, instance: null, port: null });
+    target.remove();
+  });
+
   test("without XDG_STATE_HOME the registry sits under ~/.local/state/collie", () => {
     expect(hookTargetsDir({}, "/home/pat")).toBe(join("/home/pat", ".local", "state", "collie", "hook-targets"));
   });
@@ -163,5 +188,14 @@ describe("the live hook sources across a restart", () => {
     expect(store.load()).toEqual([{ session: "main", paneId: "w1:p1", record: RECORD }]);
     writeFileSync(join(dir, "surface", "hook-sources.json"), "not json");
     expect(store.load()).toEqual([]);
+  });
+
+  test("keeps a start's model and the time its hook ran; a time that is not a number is dropped", () => {
+    const store = fileSourceStore(dir);
+    const started = { ...RECORD, event: "Stop", detail: null, model: "claude-opus-5-5[1m]" };
+    store.save([{ session: "main", paneId: "w1:p1", record: started, modelAt: 999_000 }]);
+    expect(store.load()).toEqual([{ session: "main", paneId: "w1:p1", record: started, modelAt: 999_000 }]);
+    writeFileSync(join(dir, "surface", "hook-sources.json"), JSON.stringify([{ session: "main", paneId: "w1:p1", record: started, modelAt: "soon" }]));
+    expect(store.load()).toEqual([{ session: "main", paneId: "w1:p1", record: started }]);
   });
 });

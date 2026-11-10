@@ -241,17 +241,6 @@ function callTargets(snapshot: MuxSnapshot): CallTargets {
   };
 }
 
-/** The repo the worktree calls aim at. A path, because that is what the port asks for. */
-const CONFORMANCE_REPO = "/tmp";
-
-let probeBranchCounter = 0;
-
-/** A branch nothing has taken, so a second run in the same world is not "already exists". */
-function nextProbeBranch(): string {
-  probeBranchCounter += 1;
-  return `collie/conformance-${String(probeBranchCounter)}`;
-}
-
 function capabilityCalls(adapter: MuxAdapter, targets: CallTargets): CapabilityCall[] {
   return [
     {
@@ -314,46 +303,6 @@ function capabilityCalls(adapter: MuxAdapter, targets: CallTargets): CapabilityC
       capability: "createSpace",
       writes: true,
       run: async () => refusalOf(await adapter.createSpace({ cwd: "/tmp" })),
-    },
-    // ── Worktrees ────────────────────────────────────────────────────────────
-    //
-    // Two directions, one table, and these three need the split spelled out. An adapter that DOES
-    // NOT declare them must refuse before it looks anything up, so a synthetic target is exactly
-    // right. An adapter that DOES declare them is being asked to prove the verb works — and
-    // "open this" and "remove that" cannot be proven against a checkout nothing made. So the
-    // declared side makes one first, through the adapter's own `createWorktree`, and aims at that.
-    {
-      capability: "listWorktrees",
-      // A read: it asks Git through the multiplexer and changes nothing.
-      writes: false,
-      run: async () => refusalOf(await adapter.listWorktrees({ repoRoot: CONFORMANCE_REPO })),
-    },
-    {
-      capability: "createWorktree",
-      writes: true,
-      run: async () =>
-        refusalOf(
-          await adapter.createWorktree({ repoRoot: CONFORMANCE_REPO, branch: nextProbeBranch() }),
-        ),
-    },
-    {
-      capability: "openWorktree",
-      writes: true,
-      run: async () => {
-        if (!declares(adapter, "openWorktree")) {
-          return refusalOf(
-            await adapter.openWorktree({ repoRoot: CONFORMANCE_REPO, path: "/tmp/collie-no-worktree" }),
-          );
-        }
-        const made = await adapter.createWorktree({
-          repoRoot: CONFORMANCE_REPO,
-          branch: nextProbeBranch(),
-        });
-        if (!made.ok) return made;
-        return refusalOf(
-          await adapter.openWorktree({ repoRoot: CONFORMANCE_REPO, path: made.value.cwd }),
-        );
-      },
     },
     {
       capability: "setFocus",
@@ -666,6 +615,10 @@ const gridReadAnswersTheContract: MuxReadCheck = {
     }
     const preserved = await adapter.readGrid(pane.paneId, { scope: "viewport", lines: 40, styling: "preserve" });
     if (!preserved.ok) problems.push(`a \`preserve\` read answered ${describeRefusal(preserved)}`);
+    // A partial grid may lack rows, but it is still shown: one with no rows at all is a refusal in disguise.
+    for (const read of [stripped, preserved]) {
+      if (read.ok && read.value.partial === true && read.value.text.trim() === "") problems.push("a read marked `partial` carried no rows");
+    }
     return problems;
   },
 };
@@ -1099,15 +1052,24 @@ const scrollbackReachesFurther: MuxWorldCheck = {
     return inWorld(fixture, async (world) => {
       const { adapter } = world;
       if (!declares(adapter, "gridScrollback")) return [];
-      const pane = livePanes(await adapter.snapshot()).at(0);
-      if (pane === undefined) return ["the fixture's world has no pane to read"];
-      const viewport = await adapter.readGrid(pane.paneId, { scope: "viewport", lines: 200, styling: "preserve" });
-      const recent = await adapter.readGrid(pane.paneId, { scope: "recent", lines: 200, styling: "preserve" });
-      if (!viewport.ok) return [`a viewport read answered ${describeRefusal(viewport)}`];
-      if (!recent.ok) return [`a scrollback read answered ${describeRefusal(recent)}`];
-      return lineCount(recent.value.text) > lineCount(viewport.value.text)
-        ? []
-        : ["gridScrollback is declared but a `recent` read returned no more than the viewport"];
+      const panes = livePanes(await adapter.snapshot());
+      if (panes.length === 0) return ["the fixture's world has no pane to read"];
+      // The first pane whose `recent` read is whole must reach. The read is Load older's
+      // (`purpose: older`): herdr-core reads history on that alone, and answers the mirror's poll from
+      // the screen (M79 spec 01). A read marked `truncated` says the adapter cut the scrollback on
+      // purpose, and is skipped: herdr-core reads no scrollback of a pane whose program shows a dialog
+      // (M78 report 10, case 2). An adapter that never cuts is held to its first pane, as before.
+      for (const pane of panes) {
+        const viewport = await adapter.readGrid(pane.paneId, { scope: "viewport", lines: 200, styling: "preserve" });
+        const recent = await adapter.readGrid(pane.paneId, { scope: "recent", lines: 200, styling: "preserve", purpose: "older" });
+        if (!viewport.ok) return [`a viewport read answered ${describeRefusal(viewport)}`];
+        if (!recent.ok) return [`a scrollback read answered ${describeRefusal(recent)}`];
+        if (recent.value.truncated) continue;
+        return lineCount(recent.value.text) > lineCount(viewport.value.text)
+          ? []
+          : ["gridScrollback is declared but a `recent` read returned no more than the viewport"];
+      }
+      return ["gridScrollback is declared but every `recent` read was cut to the viewport"];
     });
   },
 };

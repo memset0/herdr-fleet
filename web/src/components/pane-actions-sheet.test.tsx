@@ -4,6 +4,7 @@ import { http, HttpResponse } from "msw";
 
 import { server } from "@/test/setup";
 import { clearStatus, useStatus } from "@/lib/status";
+import { resetPollIntent, topologyBursting } from "@/lib/poll-intent";
 import { currentPins, pinMatcher, setPinned } from "@/lib/pins";
 import { __resetOperatorCommands } from "@/lib/operator-config";
 import type { AgentView, MuxConfig, ServerSummary } from "@/lib/types";
@@ -15,7 +16,10 @@ import { PaneActionsSheet } from "./pane-actions-sheet";
 // Both actions are wired straight to the bridge via lib/api (exercised through MSW here); the parent
 // gets onRenamed / onClosed callbacks for the revalidate/navigate side-effects.
 
-beforeEach(() => clearStatus());
+beforeEach(() => {
+  clearStatus();
+  resetPollIntent();
+});
 
 const agent: AgentView = {
   paneId: "w1:p1",
@@ -73,6 +77,13 @@ describe("PaneActionsSheet — rename", () => {
     expect(screen.getByPlaceholderText("name this pane")).toHaveValue("deploy");
   });
 
+  it("turns the keyboard's first-letter capital off, so a name can start lowercase", async () => {
+    const user = userEvent.setup();
+    renderSheet();
+    await user.click(screen.getByRole("button", { name: "Rename" }));
+    expect(screen.getByPlaceholderText("name this pane")).toHaveAttribute("autocapitalize", "none");
+  });
+
   it("autofocuses the input once rename mode opens", async () => {
     const user = userEvent.setup();
     renderSheet();
@@ -90,7 +101,7 @@ describe("PaneActionsSheet — rename", () => {
     expect(screen.getByRole("button", { name: "Rename" })).toBeInTheDocument();
   });
 
-  it("posts the trimmed label, then calls onRenamed and closes", async () => {
+  it("posts the trimmed label, then calls onRenamed, owes a topology burst and closes", async () => {
     const user = userEvent.setup();
     let body: unknown;
     server.use(
@@ -107,6 +118,9 @@ describe("PaneActionsSheet — rename", () => {
 
     await waitFor(() => expect(props.onRenamed).toHaveBeenCalledTimes(1));
     expect(body).toEqual({ label: "deploy" });
+    // The revalidate can still read the old name (the bridge answers before its re-read lands), so
+    // the rename buys the same catch-up polls a close does.
+    expect(topologyBursting()).toBe(true);
     expect(props.onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -138,9 +152,10 @@ describe("PaneActionsSheet — rename", () => {
     await user.type(screen.getByPlaceholderText("name this pane"), "x");
     await user.click(screen.getByRole("button", { name: "Save" }));
 
-    // The sheet stays open (Save still enabled) and neither side-effect fires.
+    // The sheet stays open (Save still enabled) and no side-effect fires, the catch-up polls included.
     await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).not.toBeDisabled());
     expect(props.onRenamed).not.toHaveBeenCalled();
+    expect(topologyBursting()).toBe(false);
     expect(props.onClose).not.toHaveBeenCalled();
   });
 
@@ -570,8 +585,8 @@ describe("PaneActionsSheet — which body the pane draws", () => {
   });
 });
 
-// "New agent in a worktree" (ADR 0089). Three gates: the caller passes `onBranchOff` (only for a pane
-// in a Git repo), the multiplexer declares `createWorktree`, and the scope is the lead.
+// "New agent in a worktree" (ADR 0089). Two gates: the caller passes `onBranchOff` (only for a pane
+// in a Git repo), and the pane's own machine declares `createWorktree` (ADR 0126).
 describe("PaneActionsSheet — New agent in a worktree", () => {
   afterEach(() => __resetOperatorCommands());
 
@@ -596,11 +611,28 @@ describe("PaneActionsSheet — New agent in a worktree", () => {
     expect(screen.getByRole("button", { name: "Rename" })).toBeInTheDocument();
   });
 
-  it("is withdrawn on a crew member's pane: the route is lead-local", async () => {
-    worktreeCapable(true);
-    renderSheet({ onBranchOff: vi.fn(), scope: { host: "laptop" } });
+  /** Serve an `/api/config` whose `createWorktree` answer depends on the `?host=` asked (`lead` for none). */
+  function worktreeCapableByHost(capable: Record<string, boolean>) {
+    server.use(
+      http.get("/api/config", ({ request }) => {
+        const host = new URL(request.url).searchParams.get("host") ?? "lead";
+        const mux: MuxConfig = { name: "reference", capabilities: { createWorktree: capable[host] }, unsupportedKeys: [], notes: {} };
+        return HttpResponse.json({ push: false, vapidPublicKey: "", mux });
+      }),
+    );
+  }
+
+  it("is offered on a crew member's pane when that member can create a worktree, whatever the lead says", async () => {
+    worktreeCapableByHost({ lead: false, laptop: true });
+    renderSheet({ onBranchOff: vi.fn(), pane: { ...agent, host: "laptop" }, scope: { host: "laptop" } });
+    expect(await screen.findByRole("button", { name: "New agent in a worktree" })).toBeInTheDocument();
+  });
+
+  it("is withdrawn on a crew member's pane when that member cannot, whatever the lead says", async () => {
+    worktreeCapableByHost({ lead: true, laptop: false });
+    renderSheet({ onBranchOff: vi.fn(), pane: { ...agent, host: "laptop" }, scope: { host: "laptop" } });
     await screen.findByRole("button", { name: "Rename" });
-    expect(row()).toBeNull();
+    await waitFor(() => expect(row()).toBeNull());
   });
 
   it("is withdrawn when the caller passes nothing (a pane outside a repo)", async () => {
@@ -664,15 +696,50 @@ describe("PaneActionsSheet — a saved copy", () => {
 describe("PaneActionsSheet — Messages (M62)", () => {
   it("shows no Messages row on a door that passes no callback", () => {
     renderSheet();
-    expect(screen.queryByRole("button", { name: "Messages" })).toBeNull();
+    expect(screen.queryByRole("button", { name: "WalkyTalky" })).toBeNull();
   });
 
   it("closes the sheet first, then opens the Messages sheet, and stays a read row on a read-only device", async () => {
     const user = userEvent.setup();
     const onMessages = vi.fn();
     const props = renderSheet({ onMessages, readOnly: true });
-    await user.click(screen.getByRole("button", { name: "Messages" }));
+    await user.click(screen.getByRole("button", { name: "WalkyTalky" }));
     expect(onMessages).toHaveBeenCalledOnce();
     expect(vi.mocked(props.onClose).mock.invocationCallOrder[0]!).toBeLessThan(onMessages.mock.invocationCallOrder[0]!);
+  });
+});
+
+describe("PaneActionsSheet — a session with its walky talky off (M89 spec 04)", () => {
+  it("names the row `WalkyTalky off` and wears the struck radio while the session is off", () => {
+    renderSheet({ onMessages: vi.fn(), pane: { ...agent, walkyOff: true } });
+    const row = screen.getByRole("button", { name: "WalkyTalky off" });
+    expect(row.querySelector("svg.lucide-walky-talky-off")).not.toBeNull();
+    expect(screen.queryByRole("button", { name: "WalkyTalky" })).toBeNull();
+  });
+
+  it("keeps the plain row and the plain radio for a session that is on", () => {
+    renderSheet({ onMessages: vi.fn() });
+    const row = screen.getByRole("button", { name: "WalkyTalky" });
+    expect(row.querySelector("svg.lucide-walky-talky")).not.toBeNull();
+    expect(row.querySelector("svg.lucide-walky-talky-off")).toBeNull();
+  });
+});
+
+describe("PaneActionsSheet — report a problem (ADR 0123)", () => {
+  it("trails Pin, closes the sheet first, then opens the report", async () => {
+    const user = userEvent.setup();
+    const onReport = vi.fn();
+    const props = renderSheet({ onFind: vi.fn(), onReport });
+    const pin = screen.getByRole("button", { name: "Pin to top" });
+    const report = screen.getByRole("button", { name: "Report a problem" });
+    expect(pin.compareDocumentPosition(report) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    await user.click(report);
+    expect(onReport).toHaveBeenCalledTimes(1);
+    expect(vi.mocked(props.onClose).mock.invocationCallOrder[0]!).toBeLessThan(onReport.mock.invocationCallOrder[0]!);
+  });
+
+  it("is absent when the caller passes no report (a crew member's pane)", () => {
+    renderSheet({ onFind: vi.fn() });
+    expect(screen.queryByRole("button", { name: "Report a problem" })).toBeNull();
   });
 });

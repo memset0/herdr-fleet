@@ -105,6 +105,19 @@ export function codexTrust(project: string): string {
   return `[projects.${JSON.stringify(project)}]\ntrust_level = "trusted"\n`;
 }
 
+/**
+ * The settings a Codex run starts with, as top-level keys of its throwaway `config.toml`: no update prompt,
+ * low effort on the default model, and the person as reviewer. Not `-c`: from 0.166.0 any `-c` override
+ * draws `⚠ 1 warning · f2 to view` in the footer (it needs Codex's embedded mode), a row a person's Codex
+ * does not show.
+ */
+export const CODEX_SETTINGS = 'check_for_update_on_startup = false\nmodel_reasoning_effort = "low"\napprovals_reviewer = "user"\n';
+
+/** The whole `config.toml` of a Codex run: {@link CODEX_SETTINGS}, then the trust table ({@link codexTrust}). Top-level keys go before the first table. */
+export function codexConfig(project: string): string {
+  return `${CODEX_SETTINGS}\n${codexTrust(project)}`;
+}
+
 /** Where a run's omp reads its `config.yml`. */
 export function ompConfigFile(dirs: RunDirs): string {
   return join(dirs.home, ".omp", "agent", "config.yml");
@@ -133,14 +146,14 @@ export const HARNESSES: Readonly<HarnessTable> = {
     id: "codex",
     npm: "@openai/codex",
     binName: "codex",
-    // As the canary starts it (agents/codex.ts, dialogs.ts): no update prompt, low effort on the default model,
-    // and `-a on-request -s read-only` with the person as reviewer, so a shell command asks first.
-    startArgs: () => ["-c", "check_for_update_on_startup=false", "-c", 'model_reasoning_effort="low"', "-c", "approvals_reviewer=user", "-a", "on-request", "-s", "read-only"],
+    // `-a on-request -s read-only`, so a shell command asks first; the rest of the canary's start (no update prompt,
+    // low effort, the person as reviewer) is in the run's `config.toml` (codexConfig), never `-c`.
+    startArgs: () => ["-a", "on-request", "-s", "read-only"],
     env: (dirs) => ({ ...homeEnv(dirs), CODEX_HOME: codexHome(dirs) }),
     login: "codex",
     folders: (dirs) => [codexHome(dirs)],
-    // Codex 0.163.0 reads the trust of a folder from the config and does not ask. Without this line it asks first.
-    files: (dirs) => ({ [join(codexHome(dirs), "config.toml")]: codexTrust(dirs.project) }),
+    // Codex 0.163.0 reads the trust of a folder from the config and does not ask. Without the trust table it asks first.
+    files: (dirs) => ({ [join(codexHome(dirs), "config.toml")]: codexConfig(dirs.project) }),
     decline: DECLINE_NO,
     turnCap: TURN_CAP,
     phone: false,
@@ -149,7 +162,9 @@ export const HARNESSES: Readonly<HarnessTable> = {
     id: "pi",
     npm: "@earendil-works/pi-coding-agent",
     binName: "pi",
-    startArgs: () => ["--thinking", "off"],
+    // `--approve`: since pi 1.2.0 the fresh project folder draws "Trust project folder?" before the box, and the
+    // walk then reads a card, not a composer. The flag trusts the folder for this run only and saves nothing.
+    startArgs: () => ["--approve", "--thinking", "off"],
     env: (dirs) => ({ ...homeEnv(dirs), PI_CODING_AGENT_DIR: join(dirs.home, ".pi") }),
     login: "none",
     folders: () => [],
@@ -198,6 +213,28 @@ export function harnessSpec(id: string): HarnessSpec {
 /** The path of the installed binary. */
 export function binaryPath(dirs: RunDirs, spec: HarnessSpec): string {
   return join(dirs.bin, "node_modules", ".bin", spec.binName);
+}
+
+/** What the lab runs for its install: the argument list and the whole environment of that one process. */
+export interface NpmInstallCommand {
+  readonly argv: readonly string[];
+  readonly env: EnvMap;
+}
+
+/**
+ * The command and the environment of the lab's one `npm install`.
+ *
+ * Decision by Altan, 2026-10-30: the lab installs a day-one agent version, so the install sets npm's
+ * `min-release-age` to 0. The setting rides on this one call as `npm_config_min_release_age`, which beats
+ * the `min-release-age=7` in the person's `~/.npmrc`. It never goes into that file, and it reaches no other
+ * npm call: the install prefix is a throwaway under the run directory. Without it, a version younger than
+ * seven days fails with ETARGET and the ledger keeps a permanent `failed` row for the pair.
+ */
+export function npmInstallCommand(spec: HarnessSpec, dirs: RunDirs, version: string, base: Readonly<Record<string, string>>): NpmInstallCommand {
+  return {
+    argv: ["npm", "install", "--prefix", dirs.bin, "--no-audit", "--no-fund", "--no-save", `${spec.npm}@${version}`],
+    env: { ...base, npm_config_min_release_age: "0" },
+  };
 }
 
 /** The environment a tmux server gets: a short list, never the whole environment of the caller. */

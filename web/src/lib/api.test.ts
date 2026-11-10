@@ -1,8 +1,8 @@
 import { http, HttpResponse } from "msw";
 
 import { server } from "@/test/setup";
-import { fixtureCrewSnapshot, fixtureSnapshot } from "@/test/handlers";
-import { __resetConnectionHealth, isLostLatched, lastHealthyAt, markWake } from "./connection-health";
+import { fixtureCrewSnapshot, fixturePin, fixtureSnapshot, heldMessagePins, messagePinItemIds, setMessagePins } from "@/test/handlers";
+import { __resetConnectionHealth, isLostLatched, lastHealthyAt, markWake, NETWORK_LATCH_MS } from "./connection-health";
 import { isConnecting } from "./connection";
 import { DEAD_DEBOUNCE_MS, isLive, resetLiveness } from "./liveness";
 import { resetBasePathForTests } from "./base-path";
@@ -21,6 +21,8 @@ import {
   fetchFileImage,
   fetchHistory,
   fetchPane,
+  fetchPanePin,
+  fetchPanePins,
   fetchPaneWalky,
   fetchSnapshot,
   filesImagePath,
@@ -33,6 +35,7 @@ import {
   sendKeys,
   startLaunch,
   fetchWalkyWho,
+  pinItem,
   postWalky,
   sendReply,
   textBeforeLastSend,
@@ -40,6 +43,7 @@ import {
   sttTimeoutFor,
   startRun,
   transcribeAudio,
+  unpinItem,
   fetchSttHost,
   fetchSttModel,
   fetchWhistleStatus,
@@ -359,7 +363,12 @@ describe("api client — request timeouts", () => {
 // ── WHAT A FAILED READ SAYS ABOUT THE CONNECTION (M46 pass 3) ───────────────
 describe("api client — failed reads and the outage latch", () => {
   beforeEach(() => __resetConnectionHealth());
-  afterEach(() => vi.restoreAllMocks());
+  afterEach(() => {
+    vi.restoreAllMocks();
+    vi.useRealTimers();
+  });
+  // The second read with no answer latches once no live answer has come for NETWORK_LATCH_MS (2026-10-29).
+  const pastLatchWindow = () => vi.setSystemTime(Date.now() + NETWORK_LATCH_MS);
 
   // jsdom's DOMException is not an Error subclass, a browser's is; the stand-ins below are what a
   // browser hands the catch.
@@ -382,14 +391,24 @@ describe("api client — failed reads and the outage latch", () => {
     expect(readFailureKind(refused)).toBe("other");
   });
 
-  it("a herd read that gets no answer latches the outage on the first failure", async () => {
+  // 2026-10-29: the first herd read with no answer is one strike, the second in a row latches, once no
+  // live answer has come for NETWORK_LATCH_MS.
+  it("a herd read that gets no answer is one strike, and the second in a row latches the outage", async () => {
     server.use(http.get("/api/snapshot", () => HttpResponse.error()));
+    await expect(fetchSnapshot()).rejects.toBeInstanceOf(TypeError);
+    expect(isLostLatched()).toBe(false);
+    await expect(fetchSnapshot()).rejects.toBeInstanceOf(TypeError);
+    expect(isLostLatched()).toBe(false);
+    pastLatchWindow();
     await expect(fetchSnapshot()).rejects.toBeInstanceOf(TypeError);
     expect(isLostLatched()).toBe(true);
   });
 
-  it("a herd read that runs out of time latches the outage too", async () => {
+  it("a herd read that runs out of time counts the same way", async () => {
     vi.spyOn(AbortSignal, "timeout").mockImplementation(() => AbortSignal.abort(named("TimeoutError")));
+    await expect(fetchSnapshot()).rejects.toMatchObject({ name: "TimeoutError" });
+    expect(isLostLatched()).toBe(false);
+    pastLatchWindow();
     await expect(fetchSnapshot()).rejects.toMatchObject({ name: "TimeoutError" });
     expect(isLostLatched()).toBe(true);
   });
@@ -409,6 +428,8 @@ describe("api client — failed reads and the outage latch", () => {
   it("a deadline WebKit reports as an AbortError is still a TimeoutError, and latches the outage", async () => {
     webkitFetch();
     vi.spyOn(AbortSignal, "timeout").mockImplementation(() => AbortSignal.abort(named("TimeoutError")));
+    await expect(fetchSnapshot()).rejects.toMatchObject({ name: "TimeoutError" });
+    pastLatchWindow();
     await expect(fetchSnapshot()).rejects.toMatchObject({ name: "TimeoutError" });
     expect(isLostLatched()).toBe(true);
   });
@@ -454,24 +475,14 @@ describe("api client — failed reads and the outage latch", () => {
     expect(isLostLatched()).toBe(false);
   });
 
-  // 2026-10-08: the herd read stamps its own start, so the store can tell the wake's first read from
-  // an ordinary one (lib/connection-health.ts `noteReadStart`).
   it("right after a wake, the first herd read with no answer is one strike, the second latches", async () => {
     server.use(http.get("/api/snapshot", () => HttpResponse.error()));
     markWake();
     await expect(fetchSnapshot()).rejects.toBeInstanceOf(TypeError);
     expect(isLostLatched()).toBe(false);
+    pastLatchWindow();
     await expect(fetchSnapshot()).rejects.toBeInstanceOf(TypeError);
     expect(isLostLatched()).toBe(true);
-  });
-
-  it("a herd read started while the page was hidden is one strike when it fails after the return", async () => {
-    server.use(http.get("/api/snapshot", () => HttpResponse.error()));
-    const visibility = vi.spyOn(document, "visibilityState", "get").mockReturnValue("hidden");
-    const read = fetchSnapshot();
-    visibility.mockReturnValue("visible");
-    await expect(read).rejects.toBeInstanceOf(TypeError);
-    expect(isLostLatched()).toBe(false);
   });
 
   it("a refusal latches nothing: the bridge answered", async () => {
@@ -1277,11 +1288,17 @@ describe("cancelHeldSend (M56 spec 15)", () => {
     await expect(cancelHeldSend("req00001", "w1:p1")).rejects.toMatchObject({ status: 502 });
   });
 
-  it("never leaves this machine: a crew member's pane throws before any request", async () => {
-    const urls: string[] = [];
-    server.use(http.delete("/api/send/:id", ({ request }) => (urls.push(request.url), HttpResponse.json({ result: "cancelled" }))));
-    await expect(cancelHeldSend("req00001", "w1:p1", { host: "badger" })).rejects.toMatchObject({ status: 400 });
-    expect(urls).toEqual([]);
+  it("a crew member's pane goes through the pane route the lead forwards, never /api/send (issue 740)", async () => {
+    const local: string[] = [];
+    const forwarded: string[] = [];
+    server.use(
+      http.delete("/api/send/:id", ({ request }) => (local.push(request.url), HttpResponse.json({ result: "cancelled" }))),
+      http.delete("/api/pane/:pane/held", ({ request }) => (forwarded.push(request.url), HttpResponse.json({ result: "dismissed" }))),
+    );
+    await expect(cancelHeldSend("req00001", "w1:p1", { host: "badger" })).resolves.toEqual({ result: "dismissed" });
+    expect(local).toEqual([]);
+    expect(forwarded).toHaveLength(1);
+    expect(forwarded[0]).toMatch(/\/api\/pane\/w1%3Ap1\/held\?request=req00001&host=badger$/u);
   });
 });
 
@@ -1321,5 +1338,56 @@ describe("the walky talky routes (M62)", () => {
     const refusals = { counts: { "rate limit": 3 }, since: 1_700_000_000_000 };
     server.use(http.get("/api/walky/who", () => HttpResponse.json({ targets: [], skipped, refusals })));
     await expect(fetchWalkyWho()).resolves.toEqual({ targets: [], skipped, refusals });
+  });
+});
+
+describe("the pinned messages routes (M90)", () => {
+  it("lists a pane's pins newest first with an excerpt and no text, on the pane's own host", async () => {
+    const urls: string[] = [];
+    setMessagePins([fixturePin({ itemId: "u1:0", pinnedAt: 1 }), fixturePin({ itemId: "u2:0", pinnedAt: 2, text: "x".repeat(900) })]);
+    server.use(
+      http.get(/\/api\/pane\/[^/]+\/pins/, ({ request }) => {
+        urls.push(request.url);
+        return undefined;
+      }),
+    );
+    const rows = await fetchPanePins({ host: "badger" }, "w1:p1");
+    expect(urls).toEqual(["http://localhost:3000/api/pane/w1%3Ap1/pins?host=badger"]);
+    expect(rows.map((row) => row.itemId)).toEqual(["u2:0", "u1:0"]);
+    expect(rows[0]).toMatchObject({ textLength: 900 });
+    expect(rows[0]!.excerpt).toHaveLength(400);
+    expect(rows[0]).not.toHaveProperty("text");
+  });
+
+  it("reads one pin whole by its id", async () => {
+    setMessagePins([fixturePin({ itemId: "u1:0", id: "p1", text: "all of it" })]);
+    await expect(fetchPanePin(undefined, "w1:p1", "p1")).resolves.toMatchObject({ id: "p1", text: "all of it" });
+    await expect(fetchPanePin(undefined, "w1:p1", "nope")).rejects.toMatchObject({ status: 404 });
+  });
+
+  it("pins a block by its item id alone and hands back the pin, a second time as well", async () => {
+    const first = await pinItem({ host: "badger" }, "w1:p1", "u1:0");
+    const again = await pinItem({ host: "badger" }, "w1:p1", "u1:0");
+    expect(again.id).toBe(first.id);
+    expect(messagePinItemIds()).toEqual(["u1:0", "u1:0"]);
+    expect(heldMessagePins()).toHaveLength(1);
+  });
+
+  it("drops a pin with a DELETE on the pin id", async () => {
+    setMessagePins([fixturePin({ itemId: "u1:0", id: "p1" })]);
+    await expect(unpinItem(undefined, "w1:p1", "p1")).resolves.toBeUndefined();
+    expect(heldMessagePins()).toEqual([]);
+  });
+
+  it("throws a refusal that keeps the machine's pin.* code, and a plain 404 that has none", async () => {
+    server.use(
+      http.post(/\/api\/pane\/w1%3Ap1\/pins/, () => HttpResponse.json({ error: "pin.cap", code: "pin.cap", message: "full" }, { status: 409 })),
+      http.post(/\/api\/pane\/w1%3Ap2\/pins/, () => new HttpResponse("not found", { status: 404 })),
+    );
+    const capped = await pinItem(undefined, "w1:p1", "u1:0").catch(<TThrown,>(e: TThrown) => e);
+    expect(apiErrorFields(capped)?.code).toBe("pin.cap");
+    const older = await pinItem(undefined, "w1:p2", "u1:0").catch(<TThrown,>(e: TThrown) => e);
+    expect(apiErrorFields(older)?.code).toBeUndefined();
+    expect(older).toMatchObject({ status: 404 });
   });
 });

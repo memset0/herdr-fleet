@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { act, renderHook } from "@testing-library/react";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 
-import { keyboardLikelyOpen, nextKeyboardOpen } from "./use-keyboard";
+import { keyboardLikelyOpen, nextKeyboardOpen, raisesKeyboard, useKeyboardOpen, useTypingFocus } from "./use-keyboard";
 
 describe("keyboardLikelyOpen", () => {
   it("is closed when the height is unchanged", () => {
@@ -54,5 +55,186 @@ describe("nextKeyboardOpen", () => {
     // the dead band forever. The error is bounded by the URL bar's own height, which is under 100.
     const baselineRaisedByUrlBar = 880;
     expect(nextKeyboardOpen(true, baselineRaisedByUrlBar, 800)).toBe(false); // -80px
+  });
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE STRANDED PANE (2026-10-24). On the operator's iPhone one pane sat in the composing layout with
+// no keyboard on screen: the status line gone, the composer pressed against the home indicator.
+// The height read "open" and nothing on screen could type. A soft keyboard needs a focused field,
+// so the hook now answers open only with both; these pin that, and that focus alone is not enough.
+// ─────────────────────────────────────────────────────────────────────────────
+describe("useKeyboardOpen", () => {
+  const listeners = new Set<() => void>();
+  const vv = {
+    width: 390,
+    height: 844,
+    addEventListener: (_: string, fn: () => void) => void listeners.add(fn),
+    removeEventListener: (_: string, fn: () => void) => void listeners.delete(fn),
+  };
+  const had = Object.getOwnPropertyDescriptor(window, "visualViewport");
+
+  function setup() {
+    vv.width = 390;
+    vv.height = 844;
+    listeners.clear();
+    Object.defineProperty(window, "visualViewport", { value: vv, configurable: true });
+    const field = document.createElement("textarea");
+    const other = document.createElement("textarea");
+    document.body.append(field, other);
+    const renders: boolean[] = [];
+    const hook = renderHook(() => {
+      const open = useKeyboardOpen();
+      renders.push(open);
+      return open;
+    });
+    const resize = (height: number) => {
+      vv.height = height;
+      act(() => listeners.forEach((fn) => fn()));
+    };
+    return { field, other, hook, resize, renders };
+  }
+
+  afterEach(() => {
+    document.body.replaceChildren();
+    if (had) Object.defineProperty(window, "visualViewport", had);
+    else Reflect.deleteProperty(window, "visualViewport");
+  });
+
+  it("is open while a field has focus and the height dropped by a keyboard", () => {
+    const { field, hook, resize } = setup();
+    act(() => field.focus());
+    resize(460);
+    expect(hook.result.current).toBe(true);
+  });
+
+  it("closes when the field loses focus even though the height stays low (the stranded pane)", () => {
+    const { field, hook, resize } = setup();
+    act(() => field.focus());
+    resize(460);
+    expect(hook.result.current).toBe(true);
+    // The keyboard is gone, but iOS left the visual viewport short: the height alone still says open.
+    act(() => field.blur());
+    expect(hook.result.current).toBe(false);
+  });
+
+  it("does not open on a height drop with nothing focused (a ratcheted baseline)", () => {
+    const { hook, resize } = setup();
+    resize(1000); // a transient taller reading raises the baseline…
+    resize(844); // …and the real height now reads 156px short of it
+    expect(hook.result.current).toBe(false);
+  });
+
+  it("stays open while focus moves from one field to another under the keyboard", () => {
+    const { field, other, hook, resize, renders } = setup();
+    act(() => field.focus());
+    resize(460);
+    const from = renders.length;
+    act(() => other.focus());
+    // Every answer rendered across the move, not just the last: moving the caret between two fields
+    // is not the keyboard leaving.
+    expect(renders.slice(from).every(Boolean)).toBe(true);
+    expect(hook.result.current).toBe(true);
+  });
+
+  it("is closed with focus and no height drop (a hardware keyboard)", () => {
+    const { field, hook } = setup();
+    act(() => field.focus());
+    expect(hook.result.current).toBe(false);
+  });
+});
+
+describe("raisesKeyboard", () => {
+  it("is true for a field that types, false for controls and locked fields", () => {
+    const text = document.createElement("input");
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    const locked = document.createElement("textarea");
+    locked.readOnly = true;
+    expect(raisesKeyboard(document.createElement("textarea"))).toBe(true);
+    expect(raisesKeyboard(text)).toBe(true);
+    expect(raisesKeyboard(box)).toBe(false);
+    expect(raisesKeyboard(locked)).toBe(false);
+    expect(raisesKeyboard(document.createElement("button"))).toBe(false);
+    // The app's search fields (ui/search-field.tsx, find-bar.tsx, space-overview.tsx) are inputs of
+    // type search or of no type; a native <select> (settings) shows a picker, not a keyboard.
+    const search = document.createElement("input");
+    search.type = "search";
+    expect(raisesKeyboard(search)).toBe(true);
+    expect(raisesKeyboard(document.createElement("select"))).toBe(false);
+    expect(raisesKeyboard(null)).toBe(false);
+  });
+});
+
+describe("useTypingFocus", () => {
+  beforeEach(() => vi.useFakeTimers());
+  afterEach(() => {
+    vi.useRealTimers();
+    document.body.replaceChildren();
+  });
+
+  const mount = (lingerMs?: number) => {
+    const field = document.createElement("textarea");
+    const button = document.createElement("button");
+    document.body.append(field, button);
+    const hook = renderHook(() => useTypingFocus(lingerMs));
+    return { field, button, hook };
+  };
+
+  it("is true while a textarea has focus and false after it blurs", () => {
+    const { field, hook } = mount();
+    expect(hook.result.current).toBe(false);
+    act(() => field.focus());
+    expect(hook.result.current).toBe(true);
+    act(() => field.blur());
+    expect(hook.result.current).toBe(false);
+  });
+
+  it("is false for a checkbox", () => {
+    const box = document.createElement("input");
+    box.type = "checkbox";
+    document.body.append(box);
+    const { result } = renderHook(() => useTypingFocus());
+    act(() => box.focus());
+    expect(result.current).toBe(false);
+  });
+
+  it("with no linger, focus on a button ends it at once", () => {
+    const { field, button, hook } = mount();
+    act(() => field.focus());
+    act(() => button.focus());
+    expect(hook.result.current).toBe(false);
+  });
+
+  it("stays true after blur and goes false once the linger passes", () => {
+    const { field, hook } = mount(1000);
+    act(() => field.focus());
+    act(() => field.blur());
+    expect(hook.result.current).toBe(true);
+    act(() => vi.advanceTimersByTime(999));
+    expect(hook.result.current).toBe(true);
+    act(() => vi.advanceTimersByTime(1));
+    expect(hook.result.current).toBe(false);
+  });
+
+  it("focus returning to a typing field inside the linger keeps it true past the old deadline", () => {
+    const { field, hook } = mount(1000);
+    act(() => field.focus());
+    act(() => field.blur());
+    act(() => vi.advanceTimersByTime(600));
+    act(() => field.focus());
+    act(() => vi.advanceTimersByTime(1500));
+    expect(hook.result.current).toBe(true);
+  });
+
+  it("focus moving to a button during the linger does not end it early", () => {
+    const { field, button, hook } = mount(1000);
+    act(() => field.focus());
+    act(() => button.focus());
+    expect(hook.result.current).toBe(true);
+    act(() => vi.advanceTimersByTime(999));
+    expect(hook.result.current).toBe(true);
+    act(() => vi.advanceTimersByTime(1));
+    expect(hook.result.current).toBe(false);
   });
 });

@@ -5,7 +5,7 @@
 
 import { ChangesControl } from "@/components/changes-control";
 import { useState } from "react";
-import { RefreshCw } from "lucide-react";
+import { Icon } from "@/components/icons/icon";
 
 import { FileContent, type FileImages, type FileLinks, type FileText, type FileView } from "@/components/file-preview";
 import { ChangesListHead, FilesBreadcrumb, FilesFilterBar, FilesFolderBody, FilesModeControl } from "@/components/files-view";
@@ -26,7 +26,8 @@ import {
   StatusLetter,
 } from "@/components/changes-view";
 import { t } from "@/lib/i18n";
-import { BackBar, FileScreen, TREE_VIEW_ICON, type BackControl } from "@/routes/changes";
+import { BackBar, type BackControl } from "@/components/back-bar";
+import { FileScreen, TREE_VIEW_ICON } from "@/routes/changes";
 import type { Hand } from "@/hooks/use-display-prefs";
 import { summarizeChanges } from "@/lib/workspace-changes";
 import { folderView } from "@/lib/files-filter";
@@ -65,7 +66,7 @@ const DELETED_INDEX = indexChanges(fixtureChanges.available ? fixtureChanges.roo
 function RefreshSquare() {
   return (
     <Button variant="ghost" size="icon" className="size-11 shrink-0" aria-label={t("changes.refreshAria")}>
-      <RefreshCw className="size-5" />
+      <Icon name="refresh" className="size-5" />
     </Button>
   );
 }

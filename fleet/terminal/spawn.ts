@@ -87,10 +87,7 @@ export function terminalServerArguments(
     "-T",
     "xterm-256color",
     tools.attach,
-    "terminal",
-    "attach",
-    terminalId,
-    "--takeover",
+    ...(process.env.COLLIE_MUX === "herdr-core" ? ["attach", terminalId] : ["terminal", "attach", terminalId, "--takeover"]),
   ];
 }
 

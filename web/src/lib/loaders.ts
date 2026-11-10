@@ -20,6 +20,7 @@ import {
   fetchMachines,
   fetchPane,
   fetchPaneWalky,
+  fetchPanePins,
   fetchSnapshot,
   isApiErrorStatus,
   isPairingRefusal,
@@ -29,7 +30,7 @@ import { parseAnsi } from "@/lib/ansi";
 import { noteUpdateRun } from "./self-update";
 import { splitLines } from "@/lib/blocks";
 import { type CacheHold, holdCacheReadings } from "@/lib/cache-hold";
-import { isLostLatched, type ReadFailureKind, wakeStrikeHolds } from "@/lib/connection-health";
+import { isLostLatched, type ReadFailureKind, strikeHolds } from "@/lib/connection-health";
 import { markLive as markPaneLive, markSavedCopy } from "@/lib/liveness";
 import { paneGridOf, settleSessionCapabilities } from "@/lib/mux-capability";
 import { ambientSpaces, findPane } from "@/lib/hosts";
@@ -65,6 +66,7 @@ import type {
   PairedDeviceWire,
   PaneHistoryResponse,
   PaneReadResponse,
+  PinRow,
   ServerSummary,
   SessionSummary,
   SnapshotResponse,
@@ -119,6 +121,8 @@ export interface HomeData {
   agents: AgentView[];
   shellPanes: AgentView[];
   workspaces: WorkspaceView[];
+  /** Every machine's workspaces from the snapshot (issue #587), so the herd list folds linked worktrees on peers too. */
+  herdWorkspaces?: WorkspaceView[];
   tabs: TabView[];
   /**
    * The same rows BEFORE the narrowing above, i.e. every machine's, host-tagged as the lead merged
@@ -218,6 +222,13 @@ export interface PaneData {
   /** The scrollback window this result was fetched with — lets the UI tell a grown fetch from a
    * stale in-flight poll (a "Load older" tap raises this; see growRequestedLines). */
   requestedLines: number;
+  /**
+   * This result answers a person's Load older (`?purpose=older`, {@link askOlderRows}), not the poll.
+   * The mirror adopts only such a result into its frozen display after a tap. Absent on a poll.
+   */
+  olderRead?: true;
+  /** Why a Load older came back without older rows, in the multiplexer's words (PaneReadResponse). */
+  olderNote?: string;
   /** Herdr's monotonic revision for `text` — the prompt-select race guard checks against it. 0 on
    * the degraded (stale-text) path, where the guard's fresh fetch will reject a mismatch anyway. */
   revision: number;
@@ -400,6 +411,7 @@ function toHomeData(
     // carries every machine's spaces. A solo body carries no host on any row, so both calls pass
     // everything through by identity and nothing about a solo dashboard changes.
     workspaces: ambientSpaces(snap.workspaces ?? [], scope, snap.servers),
+    herdWorkspaces: snap.workspaces ?? [],
     tabs: ambientSpaces(snap.tabs ?? [], scope, snap.servers),
     allWorkspaces: snap.workspaces ?? [],
     allTabs: snap.tabs ?? [],
@@ -596,8 +608,28 @@ export function growRequestedLines(paneId: string, scope?: Scope): number {
 
 /** Reset a pane's requested scrollback back to the base window (used by tests). */
 export function resetRequestedLines(paneId?: string, scope?: Scope): void {
-  if (paneId === undefined) requestedLines.clear();
-  else requestedLines.delete(paneKey(paneId, scope));
+  if (paneId === undefined) {
+    requestedLines.clear();
+    olderAsked.clear();
+    return;
+  }
+  requestedLines.delete(paneKey(paneId, scope));
+  olderAsked.delete(paneKey(paneId, scope));
+}
+
+// Panes whose next read is a person's Load older (`?purpose=older`). Every other read is the mirror's
+// poll, which herdr-core answers from the screen alone: a history read there can hold the pane's keys
+// for 25 s, so it reads one only when a person asks (M79 spec 01). The mark stays until a read
+// answers, so a revalidation that a newer one superseded does not lose the tap.
+const olderAsked = new Set<string>();
+
+/** The pane's next read asks for the rows above the screen: a Load older tap. */
+export function askOlderRows(paneId: string, scope?: Scope): void {
+  olderAsked.add(paneKey(paneId, scope));
+  if (olderAsked.size > PANE_TEXT_MAX) {
+    const oldest = olderAsked.values().next().value;
+    if (oldest !== undefined) olderAsked.delete(oldest);
+  }
 }
 
 /**
@@ -751,6 +783,38 @@ async function readWalky(paneId: string, scope: Scope, signal: AbortSignal | und
   }
 }
 
+/** The last list of pins each pane answered, so a pane opened again shows its mark before the next read lands (M90). */
+const lastPins = new Map<string, PinRow[]>();
+
+/** Forget every list of pins held, for a test: the lists outlive a pane view, so one case's would open the next. */
+export function resetPinsForTests(): void {
+  lastPins.clear();
+}
+
+/** The pins this phone last read for a pane, or `null` when it has not read any. */
+export function heldPins(paneId: string, scope: Scope | undefined): PinRow[] | null {
+  return lastPins.get(paneKey(paneId, scope)) ?? null;
+}
+
+/**
+ * The pane's pinned messages, newest first, or `null` when they could not be read now (M90). Never throws: the
+ * list is a nicety on a Chat view, and a failed read (an older machine with no route, a pane with no session,
+ * a dropped link) leaves the mark as the pane's own `pins` count has it. A good read is kept, so the next
+ * visit to the pane starts from it.
+ */
+export async function readPins(paneId: string, scope: Scope | undefined, signal?: AbortSignal): Promise<PinRow[] | null> {
+  try {
+    const fresh = await fetchPanePins(scope, paneId, signal);
+    const key = paneKey(paneId, scope);
+    const previous = lastPins.get(key);
+    const rows = previous === undefined ? fresh : shareEqual(previous, fresh);
+    lastPins.set(key, rows);
+    return rows;
+  } catch {
+    return null;
+  }
+}
+
 export async function paneLoader({
   params,
   request,
@@ -813,12 +877,13 @@ export async function paneLoader({
     // (lib/pane-prefetch.ts). That read left the pane's unseen mark alone, so the seen read follows
     // it, once it is in: by then the ETag cache holds its body and the bridge answers a 304. Nothing
     // waits on it. A poll never takes a prefetched read.
-    const prefetched = isNavigation ? takePanePrefetch(paneId, scope, lines) : undefined;
+    const older = olderAsked.has(key);
+    const prefetched = isNavigation && !older ? takePanePrefetch(paneId, scope, lines) : undefined;
     if (prefetched) {
       const markSeen = () => fetchPane(paneId, lines, scope).catch(() => {});
       void prefetched.then(markSeen, markSeen);
     }
-    const reading = prefetched ?? fetchPane(paneId, lines, scope, request?.signal);
+    const reading = prefetched ?? fetchPane(paneId, lines, scope, request?.signal, { older });
     let read: PaneReadResponse;
     if (isNavigation && !answeredLive) {
       // The cold open, as in rootLoader: a pane opened straight from a killed PWA draws its saved
@@ -853,7 +918,7 @@ export async function paneLoader({
     if (holdsNoEchoPrompt(text)) void wipeDevice("password", { scope, paneId });
     else saveLastPaneText(scope, paneId, text);
     rememberAuthError(scope, false);
-    return {
+    const data: PaneData = {
       paneId,
       scope,
       text,
@@ -867,13 +932,19 @@ export async function paneLoader({
       walky: await walkyRead,
       walkyReads: walkyReadCounts.get(key) ?? 0,
     };
+    if (older) {
+      olderAsked.delete(key);
+      data.olderRead = true;
+      if (read.olderNote !== undefined) data.olderNote = read.olderNote;
+    }
+    return data;
   } catch (e) {
     if (isAbortError(e)) throw e; // superseded revalidation — let React Router drop it
     rememberAuthError(scope, isAuthError(e));
     // Genuine network / server failure: show stale text flagged as degraded. A read that got no
-    // answer at all is the saved copy at once (see drawnFromSave), unless the wake's one strike
+    // answer at all is the saved copy at once (see drawnFromSave), unless the herd read's one strike
     // covers it: the herd read of the same poll did not latch either, and the retry decides.
-    const outage = readFailureKind(e) === "network" && !wakeStrikeHolds();
+    const outage = readFailureKind(e) === "network" && !strikeHolds();
     return stalePane(paneId, scope, lines, outage);
   }
 }

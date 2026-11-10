@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Check, CircleAlert, Mic, Trash2 } from "lucide-react";
+import { Icon } from "@/components/icons/icon";
 
 import { Button } from "@/components/ui/button";
 import { TOOLBAR_TAP_TARGET } from "@/components/ui/tap-target";
@@ -27,7 +27,7 @@ import { cn } from "@/lib/utils";
 //
 // OK STANDS ON THE MIC'S OWN BOX. The takeover copies the composer's geometry: the same `px-3` column
 // with the same bottom padding (the caller passes the string, so the two cannot drift), the same
-// bordered `p-1` row, and the round `size-9` face with the same 44px reach. The row is pinned to the
+// bordered row (`p-1` for the field composer, `p-1.5` for the box one, see VOICE_ROW_FRAME), and the round `size-9` face with the same 44px reach. The row is pinned to the
 // bottom, as the real box is, so OK lands on the mic and a second tap on the same spot finishes. Under
 // `hand="left"` the row runs mirrored exactly as the composer's does, OK on the left.
 //
@@ -45,6 +45,17 @@ import { cn } from "@/lib/utils";
 /** Bars in the equalizer. Fixed, so the slots are reserved; they thin out on a narrow phone rather than overflow. */
 export const VOICE_BAR_COUNT = 36;
 
+/**
+ * The row's frame, one string per composer layout, so OK stands on the mic's own spot in both. The
+ * `field` composer is a bordered `p-1` row with a `gap-1`. The `box` composer is the theme's own frame:
+ * the rule colour, the card fill, and `p-1.5` of air with a `gap-x-1.5` (composer.tsx, the box grid),
+ * which puts the circle 2px further in from the border on both axes than `p-1` does.
+ */
+export const VOICE_ROW_FRAME = {
+  field: "gap-1 border-input bg-background p-1",
+  box: "gap-1.5 border-rule bg-card p-1.5",
+} as const;
+
 /** Where the clip is. `requesting` is the browser's permission prompt, still showing the takeover. */
 export type VoiceTakeoverPhase = "requesting" | "recording" | "transcribing" | "failed";
 
@@ -56,6 +67,8 @@ export interface VoiceTakeoverProps {
   source: LevelSource | null;
   /** Which thumb the composer is laid out for. */
   hand?: Hand;
+  /** The composer's layout, so the row copies its frame and OK lands on the mic. */
+  layout?: keyof typeof VOICE_ROW_FRAME;
   /** The composer block's bottom padding classes, so the row lands where the real box does. */
   padClassName: string;
   /** True when the transcript will be sent straight away (hands-free), so OK says so. */
@@ -81,6 +94,7 @@ export function VoiceTakeover({
   elapsed,
   source,
   hand = "right",
+  layout = "field",
   padClassName,
   sends = false,
   engine = "host",
@@ -162,13 +176,13 @@ export function VoiceTakeover({
       <div aria-hidden className="flex min-h-0 flex-1 items-center justify-between gap-2 px-1 text-xs">
         {failed ? (
           <span className="flex min-w-0 items-center gap-1.5 font-medium text-status-blocked">
-            <CircleAlert className="size-3.5 shrink-0" />
+            <Icon name="error" className="size-3.5 shrink-0" />
             <span className="line-clamp-2 min-w-0 leading-4">{label}</span>
           </span>
         ) : (
           <>
             <span className="flex min-w-0 items-center gap-1.5 font-medium text-primary">
-              <Mic className={cn("size-3.5 shrink-0", !transcribing && "animate-pulse motion-reduce:animate-none")} />
+              <Icon name="mic" className={cn("size-3.5 shrink-0", !transcribing && "animate-pulse motion-reduce:animate-none")} />
               <span className="min-w-0 truncate">{label}</span>
             </span>
             <span className="shrink-0 tabular-nums text-muted-foreground">{elapsed}</span>
@@ -178,7 +192,8 @@ export function VoiceTakeover({
       <div
         data-slot="voice-takeover-row"
         className={cn(
-          "flex items-center gap-1 rounded-xl border border-input bg-background p-1",
+          "flex items-center rounded-xl border",
+          VOICE_ROW_FRAME[layout],
           // The composer's own mirror: the DOM order stays bin, bars, OK; the row runs reversed.
           hand === "left" && "flex-row-reverse",
         )}
@@ -191,7 +206,7 @@ export function VoiceTakeover({
           aria-label={t("composer.mic.discardAria")}
           onClick={onDiscard}
         >
-          <Trash2 className="size-4" />
+          <Icon name="discard" className="size-4" />
         </Button>
         {failed && onSendToHost !== null && (
           <Button
@@ -231,7 +246,7 @@ export function VoiceTakeover({
               aria-label={sends ? t("composer.voice.okSendAria") : t("composer.voice.okAria")}
               onClick={onStop}
             >
-              <Check className="size-4" />
+              <Icon name="confirm" className="size-4" />
             </Button>
           )}
           {phase === "recording" && (

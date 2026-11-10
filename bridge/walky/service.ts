@@ -7,13 +7,14 @@
 // device, through `POST /api/walky`, and nothing else: the local socket refuses a send that names no
 // pane, so the kind fails closed. The local uid can lie about its pane (decision 4); the docs say so.
 
-import { isSelf, paneAddress, parseAddress, LOCAL_MEMBER } from "./address.ts";
+import { isScopeAddress, isSelf, paneAddress, parseAddress, LOCAL_MEMBER } from "./address.ts";
 import { signMessage } from "./canonical.ts";
 import { BODY_TOO_LONG, cleanBody } from "./clean.ts";
-import { isFanOut, withoutAnsweredLegs, WalkyDeliverer, type DelivererDeps, type SenderPane, type WalkyPane } from "./deliver.ts";
+import { CANCELLED_BY_SENDER, DROPPED_BY_OWNER, isFanOut, isResting, sendIdOf, withoutAnsweredLegs, WalkyDeliverer, type DelivererDeps, type SenderPane, type TakeBack, type WalkyPane } from "./deliver.ts";
 import { sameInstance, type LogRecord, type WalkyLog } from "./log.ts";
-import type { RefusalCounts } from "./refusals.ts";
-import { headerField, WALKY_LABEL_MAX, type WalkyEntry, type WalkyMessage, type WalkyReceipt, type WalkySkipped, type WalkyTarget, type WalkyVerified } from "./types.ts";
+import { WalkyOff, type WalkyOffBy } from "./off.ts";
+import { MEMBER_UNREACHABLE, NO_ADDRESS, type RefusalCounts } from "./refusals.ts";
+import { headerField, WALKY_LABEL_MAX, type WalkyEntry, type WalkyMessage, type WalkyReceipt, type WalkyReceiptState, type WalkySkipped, type WalkyTarget, type WalkyVerified } from "./types.ts";
 
 /** Who is sending: an agent's pane, or an operator by label. */
 export type WalkySenderRef = { readonly kind: "agent"; readonly pane: WalkyPane } | { readonly kind: "operator"; readonly label: string };
@@ -24,6 +25,8 @@ export interface SendInput {
   readonly to: string | null;
   readonly body: string;
   readonly replyTo: string | null;
+  /** M85: a scope or `all` also types into panes that rest. Absent: they get the inbox only. */
+  readonly wake?: boolean;
 }
 
 export type SendAnswer =
@@ -40,22 +43,13 @@ export interface WalkyServiceDeps extends DelivererDeps {
   readonly machine: string;
   /** The PKCS#8 key behind this collie's crew certificate, or null (solo: nothing is signed). */
   readonly keyPem: () => string | null;
-  /**
-   * THE CREW SEAM FOR `who`. Spec 03 fills it: the targets the lead knows on other members. Absent,
-   * `who` lists this machine's panes only.
-   */
-  readonly remoteTargets?: () => readonly WalkyTarget[];
-  /**
-   * True on a crew member that is not the lead. Such a bridge hands a message for another machine to
-   * its lead, and learns how it ended there only when the lead pushes the outcome back (CREW_PROTOCOL
-   * §21). Until then `status` names those targets, and `who` says the other machines are the lead's
-   * to list.
-   */
-  readonly outcomesOnLead?: boolean;
+  // `remoteTargets` and `outcomesOnLead` sit on DelivererDeps (deliver.ts): a scope send reads them too (M75).
   /** On a member: its lead's member id, named in the `who` note. */
   readonly leadName?: () => string | null;
   /** On a lead: the shell panes the crew's members report, which a broadcast skips. */
   readonly remoteSkipped?: () => readonly WalkySkipped[];
+  /** The off flags, `<stateDir>/walky/off.json` (M89). The host's `panes()` reads the same store. Absent: in memory. */
+  readonly off?: WalkyOff;
 }
 
 /** What `who` on a crew member adds below its own panes: the roster is the lead's, and the command to run there. */
@@ -63,10 +57,56 @@ export function whoElsewhereNote(lead: string | null): string {
   return `other machines: run \`collie walky who\` on the lead${lead === null ? "" : ` (${lead})`}, or use the phone`;
 }
 
+/**
+ * One delivery of a scope send (M75), as `status` lists it under the parent: the message id. Each is a
+ * receipt of its own, keyed `(id, target)` as every receipt is, so a reader of one receipt reads it
+ * as before.
+ */
+export interface WalkyDelivery {
+  /** The pane, `<member>/<pane>`; `<member>/all` for a member the lead could not reach. */
+  readonly address: string;
+  readonly member: string;
+  /** The receipt's state, or `unreachable` for a member the lead could not reach. */
+  readonly outcome: WalkyReceiptState | "unreachable";
+  readonly reason?: string;
+  /** The delivery's own id: the Send Protocol request id its pane's bridge types it under (`sendIdOf`). */
+  readonly id: string;
+}
+
+/** A scope's totals: how many deliveries ended in each outcome. */
+export type WalkyTotals = Record<string, number>;
+
+/** What `status` adds for a scope send (M75): the deliveries under the parent, and its totals. */
+export interface ScopeStatus {
+  readonly deliveries: WalkyDelivery[];
+  readonly totals: WalkyTotals;
+}
+
+/** A scope's deliveries and their totals per outcome, from the receipts `status` shows. */
+export function deliveriesOf(receipts: readonly WalkyReceipt[]): ScopeStatus {
+  const deliveries: WalkyDelivery[] = [];
+  for (const receipt of receipts) {
+    const address = parseAddress(receipt.target);
+    if (address?.kind !== "pane" && address?.kind !== "member-all") continue;
+    const unreachable = address.kind === "member-all" && receipt.state === "refused" && receipt.reason === MEMBER_UNREACHABLE;
+    const base = { address: receipt.target, member: address.memberId, outcome: unreachable ? ("unreachable" as const) : receipt.state, id: sendIdOf(receipt.id, receipt.target) };
+    deliveries.push(receipt.reason === undefined || unreachable ? base : { ...base, reason: receipt.reason });
+  }
+  const totals: WalkyTotals = {};
+  for (const delivery of deliveries) totals[delivery.outcome] = (totals[delivery.outcome] ?? 0) + 1;
+  return { deliveries, totals };
+}
+
 /** A message's receipts on this bridge, and the message itself when the log holds it. */
 export interface WalkyStatus {
   readonly receipts: WalkyReceipt[];
   readonly message: WalkyMessage | null;
+  /**
+   * A scope send (M75): one line per delivery, and the parent's totals per outcome. Absent for any
+   * other address, so an older reader of `receipts` reads the answer as before.
+   */
+  readonly deliveries?: WalkyDelivery[];
+  readonly totals?: WalkyTotals;
   /**
    * The targets among `receipts` that are still `accepted` on another machine, on a member whose lead
    * holds their outcome until it pushes it back ({@link WalkyServiceDeps.outcomesOnLead}). Empty
@@ -75,18 +115,34 @@ export interface WalkyStatus {
   readonly elsewhere: string[];
 }
 
+/** What `cancel` answers a sender that is not the message's: the id is kept out, the caller prints it. */
+export const NOT_THE_SENDER = "only the sender can cancel it";
+
+/** A take-back's answer (M62 spec 03): one result per logged target, or why none was touched. */
+export type TakeBackAnswer = { readonly ok: true; readonly results: readonly TakeBack[] } | { readonly ok: false; readonly error: string };
+
+/** Who asks to take a message back: the agent in a pane of this bridge, or the operator on a paired device. */
+export type TakeBackRef = { readonly kind: "agent"; readonly pane: WalkyPane } | { readonly kind: "operator" };
+
 /** A message with its newest receipt. */
 function entryOf(message: WalkyMessage, receipt: WalkyReceipt): WalkyEntry {
   return { ...message, receipt };
 }
 
+/** How many audited sibling rows the service remembers before it starts over (one more audit line each). */
+const MERGED_SEEN_MAX = 4096;
+
 export class WalkyService {
   readonly deliverer: WalkyDeliverer;
   private readonly now: () => number;
+  private readonly off: WalkyOff;
+  /** The sibling rows already audited, as session, pane id and message id ({@link newSiblingRows}). */
+  private readonly mergedSeen = new Set<string>();
 
   constructor(private readonly deps: WalkyServiceDeps) {
     this.deliverer = new WalkyDeliverer(deps);
     this.now = deps.now ?? Date.now;
+    this.off = deps.off ?? new WalkyOff(null, this.now);
   }
 
   get log(): WalkyLog {
@@ -101,6 +157,11 @@ export class WalkyService {
   /** The instance token a pane of this bridge holds now, or null when no such pane is there. */
   instanceOf(session: string, paneId: string): string | null {
     return this.paneAt(session, paneId)?.instance ?? null;
+  }
+
+  /** Turn a pane's walky talky off or on (M89). Idempotent, and the last write wins. Answers the new value. */
+  setOff(pane: WalkyPane, off: boolean, by: WalkyOffBy): boolean {
+    return this.off.set(pane, off, by);
   }
 
   /** The address of a pane of this bridge, with its instance token when given (as `who` prints it). */
@@ -147,7 +208,8 @@ export class WalkyService {
       sender.kind === "agent"
         ? { memberId, address: paneAddress(memberId, sender.pane.paneId, sender.pane.instance), harness: sender.pane.harness, label: sender.pane.label }
         : { memberId, address: null, harness: null, label: headerField(sender.label, WALKY_LABEL_MAX) };
-    const message: WalkyMessage = { v: 1, id: input.id, kind: sender.kind, from, to: input.to, replyTo: input.replyTo, at: this.now(), body: clean.body, signer: null, signature: null };
+    const base: WalkyMessage = { v: 1, id: input.id, kind: sender.kind, from, to: input.to, replyTo: input.replyTo, at: this.now(), body: clean.body, signer: null, signature: null };
+    const message: WalkyMessage = input.wake === true ? { ...base, wake: true } : base;
     const key = this.deps.keyPem();
     return key === null || memberId === null ? message : signMessage(message, key, memberId);
   }
@@ -160,7 +222,7 @@ export class WalkyService {
       if (parent !== null) to = parent.message.from.address;
       else if (!this.elsewhereReply(input.to, sender)) return { ok: true, receipts: [this.deliverer.refusal(input.id, input.to ?? "-", "unknown reply")] };
     }
-    if (to === null) return { ok: false, error: "bad request" };
+    if (to === null) return { ok: false, error: NO_ADDRESS };
     // Past the cap the send is refused, never cut: the receipt says why, and the count keeps it.
     if (cleanBody(input.body).cut) return { ok: true, receipts: [this.deliverer.refusal(input.id, to, BODY_TOO_LONG)] };
     const message = this.compose({ ...input, to }, sender);
@@ -192,8 +254,9 @@ export class WalkyService {
    * (bridge/walky/crew.ts checked its signature first). It reaches this machine's panes, and on a
    * lead it is routed on to the members it names; `verified` says how its sender was known.
    */
-  async receive(message: WalkyMessage, verified: WalkyVerified, localOnly: boolean, via?: string): Promise<WalkyReceipt[]> {
-    return this.deliverer.deliver(message, null, via === undefined ? { verified, localOnly } : { verified, localOnly, via });
+  async receive(message: WalkyMessage, verified: WalkyVerified, localOnly: boolean, via?: string, pane?: string): Promise<WalkyReceipt[]> {
+    const options = via === undefined ? { verified, localOnly } : { verified, localOnly, via };
+    return this.deliverer.deliver(message, null, pane === undefined ? options : { ...options, pane });
   }
 
   /** The line `who` prints below this machine's targets, or null when it lists the whole crew. */
@@ -201,13 +264,18 @@ export class WalkyService {
     return this.deps.outcomesOnLead === true ? whoElsewhereNote(this.deps.leadName?.() ?? null) : null;
   }
 
-  /** The shell panes a broadcast skips: this machine's, then what a lead knows of its members. */
+  /**
+   * The panes a broadcast does not type into by default: this machine's shell panes and, since M85, its
+   * agent panes that rest ({@link isResting}); then what a lead knows of its members. `reason` says which.
+   */
   skipped(): WalkySkipped[] {
     const memberId = this.deps.memberId ?? LOCAL_MEMBER;
-    const local = this.deps.host
-      .panes()
-      .filter((pane) => !pane.agent)
-      .map((pane) => ({ address: this.addressOf(pane.paneId), memberId, machine: this.deps.machine, label: pane.label }));
+    const now = this.now();
+    const local = this.deps.host.panes().flatMap((pane): WalkySkipped[] => {
+      const reason = !pane.agent ? "shell" : isResting(pane, now) ? "resting" : null;
+      if (reason === null) return [];
+      return [{ address: this.addressOf(pane.paneId), memberId, machine: this.deps.machine, label: pane.label, reason }];
+    });
     return [...local, ...(this.deps.remoteSkipped?.() ?? [])];
   }
 
@@ -227,8 +295,14 @@ export class WalkyService {
     const local = this.deps.host
       .panes()
       .filter((pane) => pane.agent)
-      .map((pane) => ({ address: this.addressOf(pane.paneId, pane.instance), memberId, machine: this.deps.machine, harness: pane.harness, label: pane.label, state: pane.state }));
+      .map((pane) => this.targetRow(pane, memberId));
     return [...local, ...(this.deps.remoteTargets?.() ?? [])];
+  }
+
+  /** One pane of this bridge as `who` lists it. `walky` is there only while the session is off (M89). */
+  private targetRow(pane: WalkyPane, memberId: string): WalkyTarget {
+    const target: WalkyTarget = { address: this.addressOf(pane.paneId, pane.instance), memberId, machine: this.deps.machine, harness: pane.harness, label: pane.label, state: pane.state };
+    return pane.off ? { ...target, walky: "off" } : target;
   }
 
   /**
@@ -252,6 +326,19 @@ export class WalkyService {
    */
   paneList(session: string, paneId: string, instance: string, limit: number): WalkyEntry[] {
     return this.deps.log.forPane(session, paneId, instance, limit, true);
+  }
+
+  /**
+   * The rows of a pane's list that a sibling instance recorded (siblings.ts) and no earlier list of
+   * that pane held: what the route writes its one audit line about. A pane polls its list every few
+   * seconds, so a line for every answer that merged a row would fill the audit log with reads and
+   * rotate the writes out of it; one per newly merged row set keeps the trail.
+   */
+  newSiblingRows(session: string, paneId: string, entries: readonly WalkyEntry[]): WalkyEntry[] {
+    const fresh = entries.filter((entry) => entry.recordedBy !== undefined && !this.mergedSeen.has(`${session}\u0000${paneId}\u0000${entry.id}`));
+    if (this.mergedSeen.size + fresh.length > MERGED_SEEN_MAX) this.mergedSeen.clear();
+    for (const entry of fresh) this.mergedSeen.add(`${session}\u0000${paneId}\u0000${entry.id}`);
+    return fresh;
   }
 
   /**
@@ -287,11 +374,44 @@ export class WalkyService {
             .filter((receipt) => receipt.state === "accepted")
             .filter((receipt) => {
               const address = parseAddress(receipt.target);
-              return address !== null && address.kind !== "all" && address.memberId !== self && address.memberId !== LOCAL_MEMBER;
+              return address !== null && (address.kind === "pane" || address.kind === "member-all") && address.memberId !== self && address.memberId !== LOCAL_MEMBER;
             })
             .map((receipt) => receipt.target)
         : [];
-    return { receipts: shown, message: records[0]?.message ?? null, elsewhere };
+    const message = records[0]?.message ?? null;
+    if (message === null || !isScopeAddress(parseAddress(message.to))) return { receipts: shown, message, elsewhere };
+    return { receipts: shown, message, elsewhere, ...deliveriesOf(shown) };
+  }
+
+  /**
+   * The sender takes a held message back (M62 spec 03, decision 1 and 5): `collie walky cancel <id>`
+   * from the pane that sent it, or the phone's `POST /api/walky/<id>/cancel` for an operator's message.
+   * An agent proves it is the sender as a send does, by the pane the mux markers place: its address
+   * must be the message's `from.address`, token and all, so a new session in the same pane cannot
+   * cancel the old one's message. An operator message belongs to the paired devices as a whole. A
+   * fan-out is taken back target by target; each answers for itself.
+   */
+  cancel(id: string, by: TakeBackRef): TakeBackAnswer {
+    const records = this.deps.log.all(id);
+    const message = records[0]?.message;
+    if (message === undefined) return { ok: false, error: `no message ${id} on this machine` };
+    const mine = by.kind === "agent" ? message.from.address !== null && message.from.address === this.addressOf(by.pane.paneId, by.pane.instance) : message.kind === "operator";
+    if (!mine) {
+      this.deliverer.noteRefusal("not the sender");
+      return { ok: false, error: NOT_THE_SENDER };
+    }
+    return { ok: true, results: records.map((record) => this.deliverer.takeBack(record, CANCELLED_BY_SENDER)) };
+  }
+
+  /**
+   * The pane's owner drops a message held for the pane (M62 spec 03, decision 3): the phone's
+   * `POST /api/pane/<pane>/walky/<id>/drop`, on the machine that owns the pane. Only the records placed
+   * on that pane instance are touched; a message to another pane under the same id is not.
+   */
+  drop(id: string, pane: { readonly session: string; readonly paneId: string; readonly instance: string }): TakeBackAnswer {
+    const records = this.deps.log.all(id).filter((record) => record.session === pane.session && record.paneId === pane.paneId && sameInstance(record.instance, pane.instance));
+    if (records.length === 0) return { ok: false, error: `no message ${id} for this pane` };
+    return { ok: true, results: records.map((record) => this.deliverer.takeBack(record, DROPPED_BY_OWNER)) };
   }
 
   /** Mark messages read for a pane instance: the ids, or all of them. */

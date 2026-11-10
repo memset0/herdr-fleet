@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 
 import { fixtureRows } from "../../test/surface-corpus";
-import { findInputFrame, plainRows, rowText } from "./frame";
+import { findInputFrame, plainRows, readIsUnstyled, rowText } from "./frame";
 import { readAboveNotice } from "./notice";
 import { requireProfile } from "./profile";
 
@@ -123,12 +123,45 @@ describe("readAboveNotice", () => {
     }
   });
 
+  // 2026-11-05, Claude Code 2.1.317 (issue 705): Claude right-aligns its context field, `N% until
+  // auto-compact`, on the row between the survey's keys and the box. Every send under the survey was
+  // refused `unconfirmed`, then `stale_surface`. The capture is rebuilt from the issue's row shapes and
+  // the 2.1.303 survey screen, once with its styling and once as the plain text herdr-core hands out.
+  const CONTEXT_FIELD_FIXTURES = ["claude--v2317-survey-context-row--w160.txt", "claude--v2317-survey-context-row-plain--w160.txt"];
+
+  it("reads the survey over the right-aligned context row, styled and unstyled", () => {
+    for (const name of CONTEXT_FIELD_FIXTURES) {
+      const rows = fixtureRows(name);
+      expect(readIsUnstyled(rows), name).toBe(name.includes("-plain--"));
+      const notice = noticeOf(rows);
+      expect(notice?.text, name).toBe("How is Claude doing this session? (optional)");
+      expect(notice?.keys.map((k) => k.key), name).toEqual(["1", "2", "3", "0"]);
+      expect(notice?.end, name).toBe(findInputFrame(rows, IDLE)!.top - 1);
+    }
+  });
+
+  it("reads the survey over the context row at any percent, clipped or not, and with a blank row between", () => {
+    for (const field of ["4% until auto-compact", "100% until auto-compact", "27% until auto", "27% until auto-comp…"]) {
+      const row = `${" ".repeat(100)}${field}`;
+      for (const between of [[row], ["", row], [row, ""]]) {
+        const notice = noticeOf(screen([...SURVEY, ...between]));
+        expect(notice?.keys.map((k) => k.key), JSON.stringify(between)).toEqual(["1", "2", "3", "0"]);
+      }
+    }
+  });
+
+  // The update row's wordings: 2.1.303, 2.1.306, and 2.1.314 where it offers the `/restart` command
+  // (2026-10-31: under the survey, every send went manual again until the gap took it).
+  const UPDATE_WORDINGS = ["Restart to update", "Restart to apply", "/restart to apply"];
+  const SURVEY = ["● How is Claude doing this session? (optional)", "  1: Bad    2: Fine   3: Good   0: Dismiss"];
+
   it("reads the survey over the update row, and the same with a blank row between them", () => {
-    const survey = ["● How is Claude doing this session? (optional)", "  1: Bad    2: Fine   3: Good   0: Dismiss"];
-    const update = `${" ".repeat(20)}✔ Update installed · Restart to update`;
-    for (const between of [[update], ["", update], [update, ""]]) {
-      const notice = noticeOf(screen([...survey, ...between]));
-      expect(notice?.keys.map((k) => k.key), JSON.stringify(between)).toEqual(["1", "2", "3", "0"]);
+    for (const wording of UPDATE_WORDINGS) {
+      const update = `${" ".repeat(20)}✔ Update installed · ${wording}`;
+      for (const between of [[update], ["", update], [update, ""]]) {
+        const notice = noticeOf(screen([...SURVEY, ...between]));
+        expect(notice?.keys.map((k) => k.key), JSON.stringify(between)).toEqual(["1", "2", "3", "0"]);
+      }
     }
   });
 
@@ -152,10 +185,36 @@ describe("readAboveNotice", () => {
     ]);
   });
 
-  it("reads the transcript question over the update row of either wording", () => {
-    for (const word of ["update", "apply"]) {
-      const update = `${" ".repeat(20)}✔ Update installed · Restart to ${word}`;
-      expect(noticeOf(screen([...TRANSCRIPT, LETTER_KEYS, update]))?.keys.map((k) => k.key), word).toEqual(["y", "n", "d"]);
+  it("reads the transcript question over the update row of each wording", () => {
+    for (const wording of UPDATE_WORDINGS) {
+      const update = `${" ".repeat(20)}✔ Update installed · ${wording}`;
+      expect(noticeOf(screen([...TRANSCRIPT, LETTER_KEYS, update]))?.keys.map((k) => k.key), wording).toEqual(["y", "n", "d"]);
+    }
+  });
+
+  // 2026-11-02, Claude Code 2.1.316: once the context is past 100k tokens and the session has sat idle
+  // for 75 minutes, it draws `new task? /clear to save <n> tokens` on the update row's line, alone when no
+  // update is installed and ahead of the update item when one is, and keeps it there. Under the survey every
+  // send went manual again, and the phone showed no card.
+  // Only `292.5k` was seen live; `950` and `1.2m` follow the bundle's formatter (Intl compact, lowercased).
+  const IDLE_HINT_ROWS = [
+    "new task? /clear to save 292.5k tokens",
+    "new task? /clear to save 292.5k tokens · ✔ Update installed · /restart to apply",
+    "new task? /clear to save 950 tokens · ✔ Update installed · Restart to update",
+    "new task? /clear to save 1.2m tokens · ✔ Update installed · Restart to apply",
+  ];
+
+  it("reads the survey and the transcript question under the idle /clear hint, alone or ahead of the update item", () => {
+    for (const hint of IDLE_HINT_ROWS) {
+      const row = `${" ".repeat(20)}${hint}`;
+      expect(noticeOf(screen([...SURVEY, row]))?.keys.map((k) => k.key), hint).toEqual(["1", "2", "3", "0"]);
+      expect(noticeOf(screen([...TRANSCRIPT, LETTER_KEYS, row]))?.keys.map((k) => k.key), hint).toEqual(["y", "n", "d"]);
+    }
+  });
+
+  it("does not skip a row that only looks like the idle /clear hint", () => {
+    for (const hint of ["new task? /clear to save tokens", "new task? /clear to save 12k tokens · run the build", "● new task? /clear to save 12k tokens"]) {
+      expect(noticeOf(screen([...SURVEY, `${" ".repeat(20)}${hint}`])), hint).toBeNull();
     }
   });
 
@@ -274,7 +333,22 @@ describe("a row the profile names between the notice and the box (idle.noticeGap
   });
 
   const gapMatches = (line: string): boolean => GAPS.some((gap) => new RegExp(gap, "u").test(line));
-  for (const line of [USAGE, "  You've used 100% of your weekly limit", "  You've used 5% of your 5-hour limit · resets 3pm"]) {
+  // Claude Code with `verbose` on right-aligns the session's token count, unformatted, above the box
+  // (2.1.317 at 154 columns, 2026-11-03).
+  const VERBOSE_TOKENS = `${" ".repeat(139)}230267 tokens`;
+  // Claude Code 2.1.317 right-aligns its context field on the same row (issue 705, 2026-11-05).
+  const CONTEXT_FIELD = `${" ".repeat(137)}4% until auto-compact`;
+  for (const line of [
+    USAGE,
+    "  You've used 100% of your weekly limit",
+    "  You've used 5% of your 5-hour limit · resets 3pm",
+    VERBOSE_TOKENS,
+    "  950 tokens",
+    CONTEXT_FIELD,
+    "  100% until auto-compact",
+    "  27% until auto",
+    "  27% until auto-comp…",
+  ]) {
     it(`the claude profile's gap matches ${JSON.stringify(line)}`, () => {
       expect(gapMatches(line)).toBe(true);
     });
@@ -284,6 +358,16 @@ describe("a row the profile names between the notice and the box (idle.noticeGap
     "  ❯ You've used 87% of your weekly limit",
     "  1: Learn more   2: Knew this already   0: Dismiss",
     "  You've used most of your weekly limit",
+    "230267 tokens",
+    "  ● 230267 tokens",
+    "  230.3k tokens",
+    "  ↓ 1.7k tokens",
+    "  230267 tokens · run the build",
+    "4% until auto-compact",
+    "  ● 4% until auto-compact",
+    "  4% until auto-compact · run the build",
+    "  4% until the build",
+    "  until auto-compact",
   ]) {
     it(`the claude profile's gap does not match ${JSON.stringify(line)}`, () => {
       expect(gapMatches(line)).toBe(false);

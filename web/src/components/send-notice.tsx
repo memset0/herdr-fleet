@@ -1,10 +1,12 @@
 import type { ReactNode } from "react";
-import { Check, TriangleAlert } from "lucide-react";
+import { Icon } from "@/components/icons/icon";
 
 import { Notice } from "@/components/ui/notice";
-import { capSentence, type SendNote, type SendReading, type SendReply } from "@/lib/send-protocol";
+import { capSentence, noteKey, type SendNote, type SendReading, type SendReply } from "@/lib/send-protocol";
 import { shortHash, type Surface } from "@/lib/surface/surface";
-import { t as translate } from "@/lib/i18n";
+import { t as translate, tn, type MessageKey } from "@/lib/i18n";
+import type { ClearReason, ClearReceipt } from "@/lib/surface/clear";
+import type { StopReason, StopReceipt } from "@/lib/surface/stop";
 
 // WHAT BECAME OF A SEND, AT THE THUMB (M56 specs 06, 07 and 14). The terminal composer and the
 // composer of a program pane both tell the outcome of a send here, with the same words and the same
@@ -16,10 +18,10 @@ export function answerSentence(reading: SendReading): string {
   // The cap's sentence names the count, the harness and its version (M56 spec 09).
   const note =
     reading.cap === null
-      ? translate(`composer.protocol.${reading.note}`)
+      ? translate(noteKey(reading.note))
       : capSentence(reading.cap, (vars) => translate("composer.protocol.capConfirm", vars));
   // A draft refusal already says what the screen held, and "The agent is working" already says the turn runs.
-  if (reading.surface === null || reading.note === "draft" || reading.note === "agentBusy") return note;
+  if (reading.surface === null || reading.note === "draft" || reading.note === "draftCommand" || reading.note === "agentBusy") return note;
   return `${note} ${translate(`composer.surface.${reading.surface}`)}`;
 }
 
@@ -42,6 +44,70 @@ export const READ_THE_SCREEN: ReadonlySet<SendNote> = new Set<SendNote>(["unknow
 /** A sentence the phone itself raised before the bridge was asked (a link that is down, a dialog that owns the keys). */
 export function phoneRefusal(sentence: string, toCard = false): SendRefusal {
   return { sentence, detail: null, toCard, screen: false, tone: "caution" };
+}
+
+/** The sentence of each refusal a Stop can answer (M68), one string key per closed reason. */
+const STOP_REFUSALS = {
+  dialog_open: "belt.stop.receipt.refused.dialogOpen",
+  draft_present: "belt.stop.receipt.refused.draftPresent",
+  no_profile: "belt.stop.receipt.refused.noProfile",
+  turn_idle: "belt.stop.receipt.refused.turnIdle",
+  unreadable: "belt.stop.receipt.refused.unreadable",
+  press_failed: "belt.stop.receipt.refused.pressFailed",
+  pane_gone: "belt.stop.receipt.refused.paneGone",
+  unsupported_build: "belt.stop.receipt.refused.unsupportedBuild",
+} as const satisfies Record<StopReason, MessageKey>;
+
+/**
+ * The notice a Stop's receipt gets under the box, in the box a send's refusal uses (M68 spec 02). `stopped`
+ * is the one calm word. `pressed` and every refusal are cautions: the turn may still run, or nothing was
+ * pressed. A refused Stop behind an open dialog points at the card, where the answer is.
+ */
+export function stopNotice(receipt: StopReceipt): SendRefusal {
+  if (receipt.outcome === "stopped") return { sentence: withReturned(translate("belt.stop.receipt.stopped"), receipt), detail: null, toCard: false, screen: false, tone: "neutral" };
+  // No receipt came back (a crew member that did not answer in time): the key may have gone in, so the
+  // person reads the pane before a second tap.
+  if (receipt.outcome === "unknown") return phoneRefusal(translate("belt.stop.receipt.unknown"));
+  if (receipt.outcome === "pressed") {
+    // The key opened a dialog: the turn is not the story now, its card is.
+    if (receipt.reason === "dialog_open") return phoneRefusal(withReturned(translate("belt.stop.receipt.pressedDialog"), receipt), true);
+    return phoneRefusal(withReturned(translate("belt.stop.receipt.pressed"), receipt));
+  }
+  const reason = receipt.reason ?? "unreadable";
+  return phoneRefusal(translate(STOP_REFUSALS[reason]), reason === "dialog_open");
+}
+
+/**
+ * A Stop sentence with the clause for the queued messages a read-back saw back in the input box
+ * (ADR 0122): "Stopped. 1 queued message is back in the box." Only what the bridge saw is counted.
+ */
+function withReturned(sentence: string, receipt: StopReceipt): string {
+  const count = receipt.returned?.length ?? 0;
+  return count === 0 ? sentence : `${sentence} ${tn("belt.stop.receipt.returned", count)}`;
+}
+
+/** The sentence of each refusal a Clear can answer (ADR 0116), one string key per closed reason. */
+const CLEAR_REFUSALS = {
+  no_profile: "keys.clear.receipt.refused.noProfile",
+  no_draft: "keys.clear.receipt.refused.noDraft",
+  dialog_open: "keys.clear.receipt.refused.dialogOpen",
+  unreadable: "keys.clear.receipt.refused.unreadable",
+  press_failed: "keys.clear.receipt.refused.pressFailed",
+  pane_gone: "keys.clear.receipt.refused.paneGone",
+  stale_screen: "keys.clear.receipt.refused.staleScreen",
+  unsupported_build: "keys.clear.receipt.refused.unsupportedBuild",
+} as const satisfies Record<ClearReason, MessageKey>;
+
+/**
+ * The words a Clear's receipt gets, in the floating notice above the belt (composer.tsx `clearCard`).
+ * `cleared` is the one calm word. A refusal is a caution; one behind an open dialog points at the card.
+ * `unknown` (no receipt came back) tells the person to read the pane before a second tap.
+ */
+export function clearNotice(receipt: ClearReceipt): SendRefusal {
+  if (receipt.outcome === "cleared") return { sentence: translate("keys.clear.receipt.cleared"), detail: null, toCard: false, screen: false, tone: "neutral" };
+  if (receipt.outcome === "unknown") return phoneRefusal(translate("keys.clear.receipt.unknown"));
+  const reason = receipt.reason ?? "unreadable";
+  return phoneRefusal(translate(CLEAR_REFUSALS[reason]), reason === "dialog_open");
 }
 
 /** The notice for an answer that did not send, from the bridge's reading of it. */
@@ -109,7 +175,7 @@ export function refusalKey(refusal: SendRefusal, surface: Surface | null): strin
 /** The box at the thumb. `action` is the composer's own buttons, or undefined for none. `onDismiss`
  *  adds the ✕ that hides the notice. */
 export function SendRefusalNotice({ refusal, action, onDismiss }: { refusal: SendRefusal; action?: ReactNode; onDismiss?: () => void }) {
-  const icon = refusal.tone === "caution" ? <TriangleAlert /> : <Check />;
+  const icon = refusal.tone === "caution" ? <Icon name="warning" /> : <Icon name="ok" />;
   const words = (
     <>
       <span data-slot="composer-refusal">{refusal.sentence}</span>

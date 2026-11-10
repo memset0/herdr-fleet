@@ -42,6 +42,18 @@
   }
  },
  {
+  "fixture": "claude--background-work-exit-1.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--background-work-exit-2.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--background-work-exit-3.txt",
+  "frame": null
+ },
+ {
   "fixture": "claude--box-table-vs16-emoji.txt",
   "frame": null
  },
@@ -490,6 +502,259 @@
   "frame": null
  },
  {
+  "fixture": "claude--v2-1-309-interrupted--w120.txt",
+  "frame": {
+   "top": 20,
+   "prompt": 21,
+   "bottom": 22,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 23,
+    "last": 25
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2-1-309-interrupted-fresh-session--w120.txt",
+  "frame": {
+   "top": 34,
+   "prompt": 35,
+   "bottom": 36,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 37,
+    "last": 39
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2-1-309-permission-denied--w120.txt",
+  "frame": {
+   "top": 15,
+   "prompt": 16,
+   "bottom": 17,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 18,
+    "last": 20
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2-1-309-permission-denied-fresh-session--w120.txt",
+  "frame": {
+   "top": 34,
+   "prompt": 35,
+   "bottom": 36,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 37,
+    "last": 39
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2-1-309-stopped-prompt-restored--w120.txt",
+  "frame": {
+   "top": 34,
+   "prompt": 35,
+   "bottom": 36,
+   "label": null,
+   "text": "Write 700 numbered lines, one short fact about apples per line. No tools, no preamble, do not stop early.",
+   "placeholder": false,
+   "status": {
+    "first": 37,
+    "last": 39
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2-1-310-working-echo-bullets--w120.txt",
+  "frame": {
+   "top": 54,
+   "prompt": 55,
+   "bottom": 56,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 57,
+    "last": 59
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2-1-310-working-echo-numbered--w120.txt",
+  "frame": {
+   "top": 46,
+   "prompt": 47,
+   "bottom": 48,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 49,
+    "last": 51
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2-1-310-working-echo-one-line--w120.txt",
+  "frame": {
+   "top": 54,
+   "prompt": 55,
+   "bottom": 56,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 57,
+    "last": 59
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v21314-core-ask--w120.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v21314-core-draft--w120.txt",
+  "frame": {
+   "top": 6,
+   "prompt": 7,
+   "bottom": 8,
+   "label": null,
+   "text": "collie core draft probe",
+   "placeholder": false,
+   "status": {
+    "first": 9,
+    "last": 9
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v21314-core-draft--w60.txt",
+  "frame": {
+   "top": 7,
+   "prompt": 8,
+   "bottom": 9,
+   "label": null,
+   "text": "collie core draft probe",
+   "placeholder": false,
+   "status": {
+    "first": 10,
+    "last": 10
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v21314-core-draft-two-paragraphs--w120.txt",
+  "frame": {
+   "top": 6,
+   "prompt": 7,
+   "bottom": 10,
+   "label": null,
+   "text": "First paragraph of a core draft probe. Second paragraph after an empty line.",
+   "placeholder": false,
+   "status": {
+    "first": 11,
+    "last": 11
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v21314-core-idle--w120.txt",
+  "frame": {
+   "top": 6,
+   "prompt": 7,
+   "bottom": 8,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 9,
+    "last": 9
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v21314-core-idle--w60.txt",
+  "frame": {
+   "top": 7,
+   "prompt": 8,
+   "bottom": 9,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 10,
+    "last": 10
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v21314-core-menu-model--w120.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v21314-core-permission--w120.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v21314-core-permission--w60.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v21314-core-slash-list--w120.txt",
+  "frame": {
+   "top": 35,
+   "prompt": 36,
+   "bottom": 37,
+   "label": null,
+   "text": "/",
+   "placeholder": false,
+   "status": null,
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v21314-core-working--w120.txt",
+  "frame": {
+   "top": 69,
+   "prompt": 70,
+   "bottom": 71,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 72,
+    "last": 72
+   },
+   "footer": null
+  }
+ },
+ {
   "fixture": "claude--v2283-ask-long-question--w50.txt",
   "frame": null
  },
@@ -839,6 +1104,82 @@
  },
  {
   "fixture": "claude--v2296-question-fullwidth--w150.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2299-ask-field-multi-focused-cleared.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2299-ask-field-multi-focused-typed.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2299-ask-field-multi-focused-unticked.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2299-ask-field-multi-pointer-submit.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2299-ask-field-multi-ticked-empty.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2299-ask-field-single-focused-empty.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2299-ask-field-single-focused-three-lines.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2299-ask-field-single-focused-typed.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2299-ask-field-single-focused-wrapped.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2299-ask-field-single-typed-off-row.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2299-ask-field-wizard-focused-empty.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2299-ask-field-wizard-focused-typed.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2299-ask-field-wizard-review-typed.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2299-ask-field-wizard-revisit-cleared.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2299-ask-field-wizard-revisit-focused.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2299-ask-field-wizard-revisit-typed.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2299-ask-field-wizmulti-focused-empty.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2299-ask-field-wizmulti-focused-typed.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2299-ask-field-wizmulti-focused-unticked.txt",
   "frame": null
  },
  {
@@ -1494,11 +1835,19 @@
   }
  },
  {
+  "fixture": "claude--v2304-ask-chip-question-mark.txt",
+  "frame": null
+ },
+ {
   "fixture": "claude--v2304-ask-no-question-mark--w135.txt",
   "frame": null
  },
  {
   "fixture": "claude--v2304-ask-no-question-mark-plain--w135.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2304-ask-two-paragraph--w80.txt",
   "frame": null
  },
  {
@@ -1582,6 +1931,14 @@
   }
  },
  {
+  "fixture": "claude--v2304-select-preview-cjk-moved.txt",
+  "frame": null
+ },
+ {
+  "fixture": "claude--v2304-select-preview-cjk.txt",
+  "frame": null
+ },
+ {
   "fixture": "claude--v2306-transcript-survey--w153.txt",
   "frame": {
    "top": 8,
@@ -1596,6 +1953,330 @@
    },
    "footer": null
   }
+ },
+ {
+  "fixture": "claude--v2307-auth-refresh-before-output--w61.txt",
+  "frame": {
+   "top": 10,
+   "prompt": 11,
+   "bottom": 12,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 13,
+    "last": 15
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2307-auth-refresh-output--w61.txt",
+  "frame": {
+   "top": 19,
+   "prompt": 20,
+   "bottom": 21,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 22,
+    "last": 23
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2309-auth-refresh-locked--w120.txt",
+  "frame": {
+   "top": 13,
+   "prompt": 14,
+   "bottom": 15,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 16,
+    "last": 18
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2309-auth-refresh-locked--w52.txt",
+  "frame": {
+   "top": 15,
+   "prompt": 16,
+   "bottom": 17,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 18,
+    "last": 20
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2309-auth-refresh-locked--w80.txt",
+  "frame": {
+   "top": 14,
+   "prompt": 15,
+   "bottom": 16,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 17,
+    "last": 19
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2309-auth-refresh-output--w120.txt",
+  "frame": {
+   "top": 17,
+   "prompt": 18,
+   "bottom": 19,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 20,
+    "last": 22
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2309-auth-refresh-output--w40.txt",
+  "frame": {
+   "top": 28,
+   "prompt": 29,
+   "bottom": 30,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 31,
+    "last": 33
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2309-auth-refresh-output--w52.txt",
+  "frame": {
+   "top": 23,
+   "prompt": 24,
+   "bottom": 25,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 26,
+    "last": 28
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2309-auth-refresh-output--w64.txt",
+  "frame": {
+   "top": 21,
+   "prompt": 22,
+   "bottom": 23,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 24,
+    "last": 26
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2310-auth-refresh-before-output-spinner--w52.txt",
+  "frame": {
+   "top": 14,
+   "prompt": 15,
+   "bottom": 16,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 17,
+    "last": 19
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2310-auth-refresh-output-spinner--w52.txt",
+  "frame": {
+   "top": 27,
+   "prompt": 28,
+   "bottom": 29,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 30,
+    "last": 31
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2310-auth-refresh-output-spinner-timer--w52.txt",
+  "frame": {
+   "top": 27,
+   "prompt": 28,
+   "bottom": 29,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 30,
+    "last": 31
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2312-draft-upload-path--w100.txt",
+  "frame": {
+   "top": 31,
+   "prompt": 32,
+   "bottom": 37,
+   "label": null,
+   "text": "also mobile looks off /home/operator1/.local/state/collie-next/uploads/w7C_pF-mvtrpn7j-e4f81595.png menu should be a bottom sheet on the phone, not the side drawer, and the tab row needs the same height as the belt",
+   "placeholder": false,
+   "status": {
+    "first": 38,
+    "last": 39
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2312-weekly-limit-row--w120.txt",
+  "frame": {
+   "top": 4,
+   "prompt": 5,
+   "bottom": 6,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 7,
+    "last": 8
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2317-next-steps-suggestions-dismissed--w100.txt",
+  "frame": {
+   "top": 5,
+   "prompt": 6,
+   "bottom": 7,
+   "label": null,
+   "text": "Add unit tests for parse_csv_line covering quoted commas, doubled quotes, and empty fields.",
+   "placeholder": true,
+   "status": {
+    "first": 8,
+    "last": 8
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2317-next-steps-suggestions-empty-box--w100.txt",
+  "frame": {
+   "top": 11,
+   "prompt": 12,
+   "bottom": 13,
+   "label": null,
+   "text": "Add unit tests for parse_csv_line covering quoted commas, doubled quotes, and empty fields.",
+   "placeholder": true,
+   "status": {
+    "first": 14,
+    "last": 14
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2317-next-steps-suggestions-one-line-draft--w100.txt",
+  "frame": {
+   "top": 11,
+   "prompt": 12,
+   "bottom": 13,
+   "label": null,
+   "text": "also add a docstring",
+   "placeholder": false,
+   "status": {
+    "first": 14,
+    "last": 14
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2317-survey-context-row--w160.txt",
+  "frame": {
+   "top": 7,
+   "prompt": 8,
+   "bottom": 9,
+   "label": "main",
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 10,
+    "last": 10
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2317-survey-context-row-plain--w160.txt",
+  "frame": {
+   "top": 7,
+   "prompt": 8,
+   "bottom": 9,
+   "label": "main",
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 10,
+    "last": 10
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2317-verbose-tokens-notice-idle--w154.txt",
+  "frame": {
+   "top": 5,
+   "prompt": 6,
+   "bottom": 7,
+   "label": null,
+   "text": "",
+   "placeholder": false,
+   "status": {
+    "first": 8,
+    "last": 9
+   },
+   "footer": null
+  }
+ },
+ {
+  "fixture": "claude--v2318-model-picker-usage-notice-edge--w120.txt",
+  "frame": null
  },
  {
   "fixture": "claude--wizard-multiselect-checked.txt",

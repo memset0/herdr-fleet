@@ -2,6 +2,7 @@ import { basename, dirname, join } from "node:path";
 
 import { binaryName, collieBinary, HOST, type Host } from "../bridge/host.ts";
 import { envGet } from "../bridge/tools.ts";
+import { drivesHerdrCore } from "../bridge/mux/herdr-core/pick.ts";
 import type { JsonValue } from "../bridge/json.ts";
 import {
   type ApiTag,
@@ -18,6 +19,7 @@ import {
   parsePrereleaseTag,
   parseReleaseManifest,
   readAllTags,
+  RUNNER_ENV_KEYS,
 } from "../bridge/update.ts";
 import {
   STALE_AFTER_MS,
@@ -78,7 +80,6 @@ import { unitName } from "./unit.ts";
 import {
   driveApply,
   HEALTH_POLL_MS,
-  HEALTH_TIMEOUT_ENV,
   bootEvidenceOf,
   updateHealthProbe,
   probeConfigOf,
@@ -784,7 +785,7 @@ export function updateCheckout(
 
   if (!isGitCheckout(deps.exec, root)) {
     deps.io.err(`error: ${root} is not a git checkout — refresh it with:`);
-    deps.io.err("       herdr plugin install AltanS/collie --yes");
+    deps.io.err(`       ${refreshHint(deps)}`);
     return { code: EXIT.FAIL, moved: false, to: null, higher: null };
   }
 
@@ -991,6 +992,28 @@ function detachOnto(deps: UpdateDeps, git: (args: readonly string[]) => number, 
 }
 
 /**
+ * Does this install drive herdr-core (M74 spec 04)? Then no `herdr plugin` command runs, and the
+ * refresh hints name the installer instead of `herdr plugin install`.
+ */
+export function drivesCore(deps: Pick<UpdateDeps, "ctx" | "files" | "host">): boolean {
+  if (deps.host.platform === "win32") return false;
+  // `ctx.env` is the merged one, so the instance's own `COLLIE_MUX` (its `.env`, its unit) decides
+  // first; then a Herdr TUI install; only then the sockets (`bridge/mux/herdr-core/pick.ts`).
+  return drivesHerdrCore(deps.ctx.socket, deps.ctx.env, {
+    home: deps.ctx.home,
+    exists: (path) => deps.files.exists(path),
+    list: (dir) => deps.files.list(dir),
+  });
+}
+
+/** The line that refreshes a checkout that is not a git checkout: Herdr's installer, or Collie's own. */
+function refreshHint(deps: Pick<UpdateDeps, "ctx" | "files" | "host">): string {
+  return drivesCore(deps)
+    ? "run the installer again (docs/install.md)"
+    : "herdr plugin install AltanS/collie --yes";
+}
+
+/**
  * After an update, Herdr's plugin registry still holds the action set + version CACHED at the last
  * `plugin link`, so a newly added action returns `plugin_action_not_found` until a re-link. Re-link
  * here so `update` self-heals it. Best-effort: never fails the update — Herdr may be down, or this
@@ -1001,6 +1024,8 @@ function detachOnto(deps: UpdateDeps, git: (args: readonly string[]) => number, 
  * reinstall that is the operator's only other way to refresh (ADR 0006).
  */
 export function refreshRegistry(deps: UpdateDeps, at: string = deps.ctx.root): void {
+  // A herdr-core host has no Herdr plugin registry, and `herdr` there may be a TUI it does not use.
+  if (drivesCore(deps)) return;
   // `at` is the path Herdr should register, which on a STAGED checkout is the `current` symlink —
   // so a plugin action always runs the version that is live, not the one that happened to be live
   // when the link was made. Whether we may re-link at all is still decided from the checkout we are
@@ -1087,6 +1112,13 @@ const HOOKS_CHECK_TIMEOUT_MS = 5_000;
  * a binary too old to know the flag, a spawn that fails, a settings file nobody can read — is
  * silence too. The update already succeeded, and no afterthought may take that back.
  */
+/**
+ * The word `hooks status --check` prints when only the statusLine wrap is behind: wrapped, and pointing at another binary. Spelled here, not
+ * imported: cli/hooks.ts would pull the harness profiles into the bootstrap path cli/main.test.ts
+ * keeps lean. cli/update.test.ts pins that it equals hooks.ts's `STATUSLINE_BEHIND_WORD`.
+ */
+export const STATUSLINE_LAG_WORD = "statusline";
+
 function nudgeHooks(deps: UpdateDeps, binary: string): void {
   let r;
   try {
@@ -1096,6 +1128,15 @@ function nudgeHooks(deps: UpdateDeps, binary: string): void {
     return;
   }
   if (!r.found || r.code !== EXIT.STATE) return;
+  // A new binary names the case where only the statusLine wrap is behind (cli/hooks.ts); an older one
+  // prints nothing, and its lag is always the hooks.
+  if (r.stdout.trim() === STATUSLINE_LAG_WORD) {
+    deps.io.out(
+      "note: your wrapped statusLine points at an older collie binary;" +
+        " run `collie hooks install claude --statusline` to re-point it.",
+    );
+    return;
+  }
   deps.io.out(
     "note: this build registers beacon hooks your settings do not carry yet —" +
       " run `collie hooks install claude` to add them.",
@@ -1344,7 +1385,7 @@ export async function cmdUpdate(deps: UpdateDeps, args: readonly string[] = []):
   if (install.kind === "unknown") {
     deps.io.err(`error: cannot tell how this Collie was installed (${unknownEvidence(deps, install.why)}).`);
     deps.io.err("       `collie update` will not guess. A git checkout refreshes with:");
-    deps.io.err("       herdr plugin install AltanS/collie --yes");
+    deps.io.err(`       ${refreshHint(deps)}`);
     deps.io.err("       A downloaded install — and a staged checkout — lives under a `versions/` layout");
     deps.io.err("       with a `current` symlink beside it; see docs/install.md.");
     return EXIT.FAIL;
@@ -1588,6 +1629,11 @@ function netError(deps: UpdateDeps, what: string, url: string, failure: NetFailu
   }
   if (failure.status !== null) {
     deps.io.err(`error: ${what} failed (HTTP ${failure.status}). Nothing was changed.`);
+    return;
+  }
+  if (failure.kind === "stall" || failure.kind === "slow") {
+    // The host answered and then went quiet or too slow, so it is NOT "could not reach" (#613).
+    deps.io.err(`error: ${what} ${failure.message}. Nothing was changed.`);
     return;
   }
   deps.io.err(`error: could not reach github.com — ${what} failed (${failure.message}). Nothing was changed.`);
@@ -2667,7 +2713,7 @@ async function updateStagedCheckout(
 
   if (!isGitCheckout(deps.exec, git)) {
     deps.io.err(`error: ${git} is not a git checkout — refresh it with:`);
-    deps.io.err("       herdr plugin install AltanS/collie --yes");
+    deps.io.err(`       ${refreshHint(deps)}`);
     return EXIT.FAIL;
   }
   // BEFORE any fetch. See {@link assertOrigin}: a fork's tags are not this install's to take.
@@ -2984,34 +3030,6 @@ export function applyArgv(a: ApplyArgs): string[] {
     ...(a.switch === true ? ["--switch"] : []),
   ];
 }
-
-/**
- * The environment the detached runner is started with.
- *
- * A NARROW, NAMED list, and that is the point on the `systemd-run` path: `--setenv=` puts a value on
- * a command line every process on the box can read out of `ps`. None of these is a credential — they
- * are the instance's identity and its paths. Everything else the runner needs it re-reads from the
- * same `.env` this process did (`cli/context.ts`), which is where the secrets stay.
- */
-export const RUNNER_ENV_KEYS = [
-  "HOME",
-  "PATH",
-  "XDG_RUNTIME_DIR",
-  "COLLIE_INSTANCE",
-  // The multiplexer this install mirrors. The runner RESTARTS the service, and `restart` refuses to
-  // guess a mux — so a runner without it dies on a question nobody is there to answer.
-  "COLLIE_MUX",
-  "COLLIE_CONFIG_DIR",
-  // The base config file's path, when the operator moved it. The runner re-reads `~/.collie/config.toml`
-  // from its own $HOME and the instance file from its own config dir, exactly as it re-reads the
-  // `.env` — but a path nobody can re-derive has to travel (ADR 0040).
-  "COLLIE_CONFIG",
-  "COLLIE_STATE_DIR",
-  "COLLIE_PLUGIN_ROOT",
-  "COLLIE_PORT",
-  "COLLIE_KEEP_VERSIONS",
-  HEALTH_TIMEOUT_ENV,
-] as const;
 
 export function runnerEnv(env: Environment): EnvVars {
   const out: EnvVars = {};

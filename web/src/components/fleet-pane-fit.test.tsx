@@ -20,6 +20,7 @@ beforeAll(() => {
   if (!Element.prototype.scrollTo) Element.prototype.scrollTo = () => {};
 });
 beforeEach(() => {
+  vi.stubEnv("VITE_HERDR_FLEET", "1");
   clearStatus();
   __resetOperatorCommands();
   __resetPaneFitAvailability();

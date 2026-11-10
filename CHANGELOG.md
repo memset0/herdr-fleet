@@ -17,11 +17,21 @@ an empty one above it. The newest *numbered* `## [x.y.z]` heading, which the Unr
 not, **must** match the `version` in `herdr-plugin.toml`, `package.json`, and `web/package.json`
 (enforced by `scripts/check-version.sh`).
 
+
 ## [Unreleased]
+
+### Added
+
+- **Fleet follows the Core used by Herdr App.** Standalone control, exact Core selection, terminal attachment, manual fit and permanent terminal references work without a TUI process.
 
 ### Changed
 
 - **Upstream adoption can reconcile audited parallel release lines.** The acknowledgement pins the adopted release, target and actual common ancestor without changing provenance.
+- **Todoist leaves the product for an independent replacement.** OAuth, routes, sidebar, settings and task delivery are removed; existing operator data and external tasks remain untouched.
+
+### Fixed
+
+- **Patient sends keep their answer through every transport.** Both HTTP listeners, forwarding and browser budgets outlast the bounded protocol, retaining upstream's late-screen and durable-record fixes.
 
 ## [3.24.3] - 2026-10-24
 

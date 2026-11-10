@@ -10,11 +10,14 @@
 // LIVE MIRROR; this one owns reading an on-disk log. A harness can plausibly have one without the
 // other.
 
+import { agyJournal } from "./agy.ts";
 import { claudeJournal } from "./claude.ts";
 import { codexJournal } from "./codex.ts";
+import { dshJournal } from "./dsh.ts";
 import { durableJournal } from "./durable.ts";
 import { grokJournal } from "./grok.ts";
 import { hermesJournal } from "./hermes.ts";
+import { kiroJournal } from "./kiro.ts";
 import { museJournal } from "./muse.ts";
 import { openclawJournal } from "./openclaw.ts";
 import { opencodeJournal } from "./opencode.ts";
@@ -31,6 +34,8 @@ import type { JournalAdapter } from "./types.ts";
  * an adapter still accepts a bare string so one-root callers read unchanged.
  */
 export interface JournalRoots {
+  /** Antigravity CLI's home, with conversations/<uuid>.db and presence/<uuid>.lock. */
+  agy: readonly string[];
   /** Claude Code's `~/.claude/projects`, one per config dir. */
   claude: readonly string[];
   /** Codex's `$CODEX_HOME/sessions`. */
@@ -44,6 +49,8 @@ export interface JournalRoots {
   grok: readonly string[];
   /** Hermes' home — `state.db` at its top level, and one under each `profiles/<name>/`. */
   hermes: readonly string[];
+  /** Kiro V3's `$KIRO_HOME/sessions`, defaulting to `~/.kiro/sessions`. */
+  kiro: readonly string[];
   /** Muse's `sessions` directory — `YYYY/MM/DD/<uuid>/session.jsonl` lives under it. */
   muse: readonly string[];
   /**
@@ -52,9 +59,22 @@ export interface JournalRoots {
    * is not a harness, so `KNOWN_HARNESS_NAMES` (built with no roots) never lists it.
    */
   durable?: readonly string[];
+  /** DeepSeek Harness's `$DSH_HOME/sessions` — `<project>/<session-id>/session.v<N>.jsonl[.zstd]`
+   *  lives under it. The agent is dsh-tui, the TUI that runs on it. */
+  "dsh-tui": readonly string[];
   /** OpenClaw's state folder (`$OPENCLAW_STATE_DIR`, `~/.openclaw`), one SQLite per agent under
    *  `agents/<id>/agent/`. */
   openclaw: readonly string[];
+}
+
+/**
+ * The harnesses' own model catalogs, where a log names no context window (bridge/journal/model-window.ts).
+ * Kept apart from {@link JournalRoots}, which are folders of logs, searched and confined as such. pi
+ * and Oh My Pi need no entry: their catalog sits in the agent dir above the sessions root.
+ */
+export interface ModelCatalogs {
+  /** OpenCode's copy of the models.dev catalog, `$XDG_CACHE_HOME/opencode/models.json`. */
+  opencode?: string;
 }
 
 /**
@@ -63,16 +83,19 @@ export interface JournalRoots {
  * The map is built FROM each adapter's own `agent` field (not a hand-written literal), so a key can
  * never drift from the adapter it points at — the same guarantee the frontend registry gives.
  */
-export function buildJournalRegistry(roots: JournalRoots): Record<string, JournalAdapter> {
+export function buildJournalRegistry(roots: JournalRoots, catalogs: ModelCatalogs = {}): Record<string, JournalAdapter> {
   const adapters: JournalAdapter[] = [
+    agyJournal(roots.agy),
     claudeJournal(roots.claude),
     codexJournal(roots.codex),
     piJournal(roots.pi),
-    opencodeJournal(roots.opencode),
+    opencodeJournal(roots.opencode, catalogs.opencode),
     grokJournal(roots.grok),
     hermesJournal(roots.hermes),
+    kiroJournal(roots.kiro),
     museJournal(roots.muse),
     openclawJournal(roots.openclaw),
+    dshJournal(roots["dsh-tui"]),
   ];
   if (roots.durable !== undefined) adapters.push(durableJournal(roots.durable));
   return Object.fromEntries(adapters.map((a) => [a.agent, a]));
@@ -88,9 +111,9 @@ export function buildJournalRegistry(roots: JournalRoots): Record<string, Journa
  * COULD have a transcript (registry.test.ts fails when the two drift).
  *
  * An alias never adds an adapter, so it is absent from {@link KNOWN_HARNESS_NAMES}: that list
- * answers "which adapters does this build have", and the answer is still eight.
+ * answers "which adapters does this build have", and an alias does not change the count.
  */
-export const AGENT_ALIASES = { omp: "pi" } as const;
+export const AGENT_ALIASES = { omp: "pi", antigravity: "agy" } as const;
 
 /**
  * Agents that report their session to Herdr on the FIRST PROMPT, not when they start (issue #294).
@@ -130,12 +153,18 @@ export const DRAWS_IMAGES_OFF_GRID: readonly string[] = ["omp", "pi"];
  * Herdr reports a session only for agents with an integration; Muse has none, so its panes never
  * carry a ref and the adapter discovers the log by cwd instead (`JournalAdapter.discover`). OpenClaw
  * reports through a source of its own, which Herdr drops (#401), so its adapter reads the session
- * off the pane's footer. The
+ * off the pane's footer. Herdr names no session for a Kiro pane either (kiro-cli 2.32.0, Herdr
+ * 0.9.5), so its adapter matches the pane's foreground TUI to the lock it holds. dsh-tui reports
+ * through a custom source as well, so its adapter asks the kernel which session lock the pane's
+ * foreground process holds. Antigravity CLI (agy) names none either: its adapter asks `lsof` which
+ * `presence/<uuid>.lock` the pane's foreground process holds (not on Windows). pi (and Oh My Pi
+ * under its alias) reports through Herdr's pi integration, but a multiplexer without one (herdr-core,
+ * tmux, zellij) names no session, so its adapter finds the newest log filed for the pane's folder. The
  * name list exists for the one consumer that works from names alone: `collie doctor`, whose
  * history section must not advise `herdr integration install` for an agent no hook could ever
  * report. Pinned against the adapters themselves in registry.test.ts, so the two cannot drift.
  */
-export const DISCOVERS_OWN_SESSIONS: readonly string[] = ["muse", "openclaw"];
+export const DISCOVERS_OWN_SESSIONS: readonly string[] = ["agy", "muse", "openclaw", "kiro", "dsh-tui", "pi"];
 
 /**
  * The same pairs as a Map, which is how {@link adapterFor} asks.
@@ -145,6 +174,11 @@ export const DISCOVERS_OWN_SESSIONS: readonly string[] = ["muse", "openclaw"];
  * guard against and no assertion to write.
  */
 const ALIAS_LOOKUP: ReadonlyMap<string, string> = new Map(Object.entries(AGENT_ALIASES));
+
+/** The adapter name an agent answers to: its alias target, or the name itself. */
+export function journalAgentName(agent: string): string {
+  return ALIAS_LOOKUP.get(agent) ?? agent;
+}
 
 /**
  * The adapter for `agent`, or undefined when the agent has no journal.
@@ -180,5 +214,5 @@ export function journalAgents(registry: Record<string, JournalAdapter>): string[
  * identity off a match against it — see `bridge/mux/types.ts` § `MuxPane.agent`.
  */
 export const KNOWN_HARNESS_NAMES: readonly string[] = journalAgents(
-  buildJournalRegistry({ claude: [], codex: [], pi: [], opencode: [], grok: [], hermes: [], muse: [], openclaw: [] }),
+  buildJournalRegistry({ agy: [], claude: [], codex: [], pi: [], opencode: [], grok: [], hermes: [], muse: [], openclaw: [], kiro: [], "dsh-tui": [] }),
 );

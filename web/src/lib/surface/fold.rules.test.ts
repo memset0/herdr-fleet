@@ -1,11 +1,14 @@
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
+
 import { describe, expect, it } from "vitest";
 
-import { agentOf, fixtureRows, idleFor, readScreen, rowsOf, SURFACE_FIXTURES_DIR } from "../../test/surface-corpus";
-import { findInputFrame, plainRows } from "./frame";
-import { endsInsideFrame, foldSurface, type ScreenInput, SURFACE_SOURCES, type SurfaceInput, surfaceOfScreen } from "./fold";
+import { agentOf, fixtureRows, idleFor, PANES_DIR, readScreen, rowsOf, SURFACE_FIXTURES_DIR } from "../../test/surface-corpus";
+import { findInputFrame, plainRows, rowText } from "./frame";
+import { emptyFoldState, endsInsideFrame, foldSurface, type FoldContext, readFold, type ScreenInput, stepFold, SURFACE_SOURCES, type SurfaceInput, surfaceOfScreen } from "./fold";
 import { requireProfile } from "./profile";
 import { type Ask, isFree, modalWord } from "./surface";
-import { ASK, CLAUDE, LABELS, own } from "../../test/surface-fold";
+import { ASK, CLAUDE, LABELS } from "../../test/surface-fold";
 
 // The fold's own rules and the screens that broke it: the OMP widget, a running turn, foldSurface, the agents panel, and the rows around an idle box.
 
@@ -52,12 +55,45 @@ describe("an OMP extension widget around the open box (#468)", () => {
     expect(r.surface).toEqual(IDLE_FREE);
   });
 
-  it("omp: up to maxTailRows rows under the box read free, one more reads torn", () => {
+  it("omp: up to maxTailRows rows under the box read free whatever they hold, past it only a widget run up to maxWidgetRows", () => {
     const widget = (n: number) => Array.from({ length: n }, (_, i) => ` widget row ${i + 1}`);
+    const readOf = (rows: string[]) => surfaceOfScreen({ seq: 1, source: "screen", at: 0, revision: 1, rows: plainRows(rows), ask: null }, OMP).surface;
     expect(OMP.frame.maxTailRows).toBe(3);
-    expect(surfaceOfScreen({ seq: 1, source: "screen", at: 0, revision: 1, rows: plainRows([...box, ...widget(3)]), ask: null }, OMP).surface).toEqual(IDLE_FREE);
-    expect(surfaceOfScreen({ seq: 1, source: "screen", at: 0, revision: 1, rows: plainRows([...box, "", ...widget(2)]), ask: null }, OMP).surface).toEqual(IDLE_FREE);
-    expect(surfaceOfScreen({ seq: 1, source: "screen", at: 0, revision: 1, rows: plainRows([...box, ...widget(4)]), ask: null }, OMP).surface.reason).toBe("torn");
+    expect(OMP.frame.maxWidgetRows).toBe(12);
+    expect(readOf([...box, ...widget(3)])).toEqual(IDLE_FREE);
+    expect(readOf([...box, "", ...widget(2)])).toEqual(IDLE_FREE);
+    // The gang's tester 5 (2026-10-25): a belowEditor widget of four rows or more made the read torn on 18.6.1 and 18.12.6.
+    for (const n of [4, 6, 11, 12]) expect(readOf([...box, ...widget(n)]), `${String(n)} rows`).toEqual(IDLE_FREE);
+    expect(readOf([...box, ...widget(13)]).reason).toBe("torn");
+  });
+
+  it("omp: past maxTailRows a widget run has no blank row, and no row of the command list", () => {
+    const readOf = (rows: string[]) => surfaceOfScreen({ seq: 1, source: "screen", at: 0, revision: 1, rows: plainRows(rows), ask: null }, OMP).surface;
+    // A blank row inside the run: the reach stays the tail bound, so this is a read cut inside the box, as before.
+    expect(readOf([...box, " one", " two", " three", "", " five"]).reason).toBe("torn");
+    // An entry-shaped row (two spaces, a word, two spaces, a description) is a command list's, and a list is read by the list rules.
+    const listed = readOf([...box, " one", " two", "  tests  passing", " four"]);
+    expect(listed.reason).toBe("torn");
+    expect(isFree(listed)).toBe(false);
+  });
+
+  it("omp: a dialog's rows under the open box stay a strong cue past the old reach, so the read is never free", () => {
+    const dialog = [" Allow this tool?", " ❯ 1. Yes", "   2. No", "   3. Always", " Enter to select · Esc to cancel"];
+    const r = surfaceOfScreen({ seq: 1, source: "screen", at: 0, revision: 1, rows: plainRows([...box, ...dialog]), ask: null }, OMP);
+    expect(isFree(r.surface)).toBe(false);
+    expect(r.surface.modal).not.toBe("none");
+  });
+
+  it.each([
+    ["omp--v18-12-6-widget-below-3.txt", "18.12.6"],
+    ["omp--v18-12-6-widget-below-4.txt", "18.12.6"],
+    ["omp--v18-6-1-widget-below-6.txt", "18.6.1"],
+  ])("omp %s (gang, 2026-10-25): the widget rows under the box read idle and free, the composer empty", (name) => {
+    const r = readScreen(fixtureRows(name, SURFACE_FIXTURES_DIR), agentOf("omp"), OMP);
+    expect(r.frame).not.toBeNull();
+    expect(r.frame!.interior.text).toBe("");
+    expect(r.surface).toEqual(IDLE_FREE);
+    expect(isFree(r.surface)).toBe(true);
   });
 
   it("omp: a draft under the widget's box still reads as a draft", () => {
@@ -65,6 +101,35 @@ describe("an OMP extension widget around the open box (#468)", () => {
     const r = surfaceOfScreen({ seq: 1, source: "screen", at: 0, revision: 1, rows, ask: null }, OMP);
     expect(r.frame?.interior.text).toBe("Reply with only OK. Second line of the message.");
     expect(r.surface.composer).toBe("draft");
+  });
+});
+
+describe("an OMP extension's status row under the box and under a slash list (omp gang, 2026-10-25)", () => {
+  // `ctx.ui.setStatus` draws one plain row under everything else. With a list of four rows or more under
+  // the box the read was unreadable and torn; the profile now names that row as the list's footer.
+  const OMP = requireProfile("omp").idle;
+  const read = (name: string) => readScreen(fixtureRows(name, SURFACE_FIXTURES_DIR), agentOf("omp"), OMP);
+
+  it("omp: the box with only the status row under it reads idle and free", () => {
+    const r = read("omp--v18-12-6-status-row-idle.txt");
+    expect(r.surface).toEqual({ revision: 1, turn: "idle", modal: "none", composer: "empty" });
+  });
+
+  it.each([
+    ["omp--v18-12-6-status-row-palette-4.txt", "/wx"],
+    ["omp--v18-6-1-status-row-palette-4.txt", "/wx"],
+    ["omp--v18-12-6-status-row-palette-10.txt", "/w"],
+    // omp-gang three S2 (2026-10-26): a widget of one to six rows under the palette, with a status row or without.
+    ["omp--v18-6-1-palette-widget-below-6.txt", "/wx"],
+    ["omp--v18-12-6-palette-widget-below-6.txt", "/wx"],
+    ["omp--v18-6-1-palette-widget-and-status.txt", "/wx"],
+    ["omp--v18-12-6-palette-widget-and-status.txt", "/wx"],
+    ["omp--v18-6-1-palette-tick-below.txt", "/wx"],
+    ["omp--v18-12-6-palette-tick-below.txt", "/wx"],
+  ])("omp %s: the typed command with its list and the status row under it reads a draft, not unreadable or torn", (name, typed) => {
+    const r = read(name);
+    expect(r.frame?.interior.text).toBe(typed);
+    expect(r.surface).toEqual({ revision: 1, turn: "idle", modal: "none", composer: "draft" });
   });
 });
 
@@ -316,10 +381,13 @@ describe("rows around an idle box that 1.21.3 sent to (1.22.1 audit)", () => {
   });
 
   it("omp: a screen with no whole box under a strong cue still reads torn", () => {
-    // The slash palette stands under the prompt row, so no frame closes and the read ends inside one.
-    const read = own("omp--slash-palette.txt");
-    expect(findInputFrame(fixtureRows("omp--slash-palette.txt"), idleFor("omp")!)).toBeNull();
-    expect(read.surface.reason).toBe("torn");
+    // The slash palette stands under the prompt row. With the pointer taken off its first entry it is no
+    // list (`leadOpens` needs a pointed list), so no frame closes and the read ends inside one.
+    const raw = readFileSync(join(PANES_DIR, "omp--slash-palette.txt"), "utf8");
+    expect(raw).toContain("\u276f skill:");
+    const rows = rowsOf(raw.replace("\u276f skill:", "  skill:"));
+    expect(findInputFrame(rows, idleFor("omp")!)).toBeNull();
+    expect(readScreen(rows, "omp", idleFor("omp")).surface.reason).toBe("torn");
   });
 });
 
@@ -402,5 +470,180 @@ describe("a session name in the box's top edge (Claude Code 2.1.303, lane 8788, 
     expect(r.frame?.top).toBe(top);
     expect(r.frame?.label).toBe("1.23.0");
     expect(r.surface).toMatchObject({ turn: "running", modal: "none", composer: "empty" });
+  });
+});
+
+// Live rerun 2026-10-23: Claude Code fires no Stop hook when the person interrupts a turn (Escape) or
+// refuses a permission. The UserPromptSubmit edge's running block then held the turn `running` while
+// the screen read idle: until the lost-Stop reads (three free reads over ten seconds, and never with a
+// draft in the box) or the next Stop. The Stop button stayed, and a tap answered `turn_idle`. Real
+// captures of 2.1.309 on Haiku; the stopped row `⎿  Interrupted · What should Claude do instead?`
+// ends the blocks on the first read that shows it.
+describe("a turn stopped without its Stop hook (Claude Code 2.1.309, live rerun 2026-10-23)", () => {
+  const context: FoldContext = { idle: CLAUDE, pollMs: 1500, settleMs: 1500 };
+  const INTERRUPTED = fixtureRows("claude--v2-1-309-interrupted--w120.txt");
+  const DENIED = fixtureRows("claude--v2-1-309-permission-denied--w120.txt");
+  const prompt = (seq: number, at: number): SurfaceInput => ({ seq, source: "edge", at, kind: "prompt" });
+  const dialog = (seq: number, at: number): SurfaceInput => ({ seq, source: "edge", at, kind: "dialog" });
+  /** The screen as plain rows, the box's empty prompt row holding `draft`. */
+  const withDraft = (rows: ScreenInput["rows"], draft: string): ScreenInput["rows"] => {
+    const texts = rows!.map((row) => rowText(row));
+    const at = texts.findLastIndex((text) => /^❯\s*$/u.test(text));
+    expect(at).toBeGreaterThan(0);
+    texts[at] = `❯ ${draft}`;
+    return plainRows(texts);
+  };
+  const run = (log: readonly SurfaceInput[], ctx: FoldContext = context) => {
+    let state = emptyFoldState();
+    for (const input of log) state = stepFold(state, input, ctx);
+    return { state, surface: readFold(state, ctx).surface };
+  };
+
+  it("the screen alone reads both captures idle and free", () => {
+    for (const rows of [INTERRUPTED, DENIED]) expect(surfaceOfScreen(screen(1, 0, rows), CLAUDE).surface).toEqual({ revision: 1, turn: "idle", modal: "none", composer: "empty" });
+  });
+
+  it("after Escape: the prompt edge's block ends on the first read of the stopped row, no lost Stop", () => {
+    const { state, surface } = run([prompt(1, 0), screen(2, 2000, INTERRUPTED)]);
+    expect(surface).toEqual({ revision: 2, turn: "idle", modal: "none", composer: "empty" });
+    expect(state.running).toBeNull();
+    expect(state.lostStops).toBe(0);
+  });
+
+  it("without the profile's stopped rows the block holds the turn running: the defect", () => {
+    const bare: FoldContext = { ...context, idle: { ...CLAUDE, stoppedRows: undefined } };
+    expect(run([prompt(1, 0), screen(2, 2000, INTERRUPTED)], bare).surface.turn).toBe("running");
+  });
+
+  it("after a refused permission: the prompt and dialog blocks both end, the Surface reads free", () => {
+    const { state, surface } = run([prompt(1, 0), dialog(2, 8000), screen(3, 21_000, DENIED)]);
+    expect(surface).toEqual({ revision: 3, turn: "idle", modal: "none", composer: "empty" });
+    expect(isFree(surface)).toBe(true);
+    expect(state.dialog).toBeNull();
+  });
+
+  it("a draft in the box no longer keeps the turn running (the lost-Stop reads need an empty box)", () => {
+    const { surface } = run([prompt(1, 0), screen(2, 2000, withDraft(INTERRUPTED, "my draft text"))]);
+    expect(surface).toMatchObject({ turn: "idle", modal: "none", composer: "draft" });
+  });
+
+  it("a block younger than the settle time stays: the row may still stand from the turn before", () => {
+    const young = run([prompt(1, 0), screen(2, 500, INTERRUPTED)]);
+    expect(young.state.running).not.toBeNull();
+    expect(young.surface).toMatchObject({ turn: "unknown", reason: "contested" });
+    expect(run([prompt(1, 0), screen(2, 500, INTERRUPTED), screen(3, 2000, INTERRUPTED)]).surface.turn).toBe("idle");
+  });
+
+  it("the row over a new turn's running sign ends nothing: the screen reads running", () => {
+    const texts = INTERRUPTED.map((row) => rowText(row));
+    // The box's top rule: the rule right over the last `❯` row.
+    const top = texts.findLastIndex((text, i) => /^─{8,}/u.test(text) && (texts[i + 1] ?? "").startsWith("❯"));
+    expect(top).toBeGreaterThan(texts.findIndex((text) => text.includes("Interrupted")));
+    const running = plainRows([...texts.slice(0, top), "❯ next prompt", "✻ Pondering… (4s · esc to interrupt)", ...texts.slice(top)]);
+    const { state, surface } = run([prompt(1, 0), screen(2, 2000, running)]);
+    expect(surface.turn).toBe("running");
+    expect(state.running).not.toBeNull();
+  });
+
+  it("a dialog screen that still shows the row ends nothing", () => {
+    const rows = fixtureRows("claude-lab--plan-approval--w82.txt");
+    expect(rows.some((row) => rowText(row).includes("Interrupted · What should Claude do instead?"))).toBe(true);
+    const { state } = run([prompt(1, 0), screen(2, 5000, rows)]);
+    expect(state.running).not.toBeNull();
+  });
+
+  // Second live pass (2026-10-23): Collie's own Stop in a fresh session, and a refused permission in
+  // another, kept the turn running 11 to 19 s, until the lost-Stop reads (bridge journal:
+  // `surface.lost-stop pane=w76:p3` at 16:36:16 and 16:38:05). Claude Code's fullscreen TUI pins the
+  // box to the bottom; a short transcript stands at the top with blank rows down to the box, so the
+  // stopped row stood about twenty rows over it, outside the six-row band. Real captures, 120 x 40.
+  const FRESH = fixtureRows("claude--v2-1-309-interrupted-fresh-session--w120.txt");
+  const FRESH_DENIED = fixtureRows("claude--v2-1-309-permission-denied-fresh-session--w120.txt");
+  const rowsOverBox = (rows: ScreenInput["rows"]): number => {
+    const texts = rows!.map((row) => rowText(row));
+    const frame = findInputFrame(rows!, CLAUDE)!;
+    return frame.top - texts.findIndex((text) => text.includes("Interrupted · What should Claude do instead?"));
+  };
+
+  it("a fresh fullscreen session: the stopped row stands far over the box, past blank rows only, and still ends the blocks", () => {
+    expect(rowsOverBox(FRESH)).toBeGreaterThan(CLAUDE.volatile.above.maxRows);
+    expect(rowsOverBox(FRESH_DENIED)).toBeGreaterThan(CLAUDE.volatile.above.maxRows);
+    const escaped = run([prompt(1, 0), screen(2, 2000, FRESH)]);
+    expect(escaped.surface).toEqual({ revision: 2, turn: "idle", modal: "none", composer: "empty" });
+    expect(escaped.state.lostStops).toBe(0);
+    const denied = run([prompt(1, 0), dialog(2, 8000), screen(3, 21_000, FRESH_DENIED)]);
+    expect(denied.surface).toEqual({ revision: 3, turn: "idle", modal: "none", composer: "empty" });
+    expect(denied.state.dialog).toBeNull();
+    expect(denied.state.lostStops).toBe(0);
+  });
+
+  it("the blank rows are not counted, rows with text are: a stopped row under six rows of newer text ends nothing", () => {
+    const texts = INTERRUPTED.map((row) => rowText(row));
+    const at = texts.findLastIndex((text) => text.includes("Interrupted · What should Claude do instead?"));
+    const newer = Array.from({ length: CLAUDE.volatile.above.maxRows }, (_, i) => `  ${String(i + 1)}. a newer line of the transcript`);
+    const buried = plainRows([...texts.slice(0, at + 1), ...newer, ...texts.slice(at + 1)]);
+    const { state, surface } = run([prompt(1, 0), screen(2, 2000, buried)]);
+    expect(surface.turn).toBe("running");
+    expect(state.running).not.toBeNull();
+  });
+
+  // Second live pass: Collie's Stop before the first token. Claude Code takes the turn back and puts
+  // the prompt into the box: no Interrupted row, a draft, so the lost-Stop reads never count, and the
+  // turn read running 20 s and more, until the box was cleared. The Stop receipt said `stopped`; the
+  // bridge gives that to the fold as a `stop` edge (the shadow's `stopSeen`). Real capture.
+  const RESTORED = fixtureRows("claude--v2-1-309-stopped-prompt-restored--w120.txt");
+  const stop = (seq: number, at: number): SurfaceInput => ({ seq, source: "edge", at, kind: "stop" });
+
+  it("Stop before the first token: the restored prompt holds the block on every read; the Stop receipt's stop edge ends it", () => {
+    expect(surfaceOfScreen(screen(1, 0, RESTORED), CLAUDE).surface).toEqual({ revision: 1, turn: "idle", modal: "none", composer: "draft" });
+    const reads = [2000, 5000, 8000, 11_000, 14_000, 21_000].map((at, i) => screen(i + 2, at, RESTORED));
+    const held = run([prompt(1, 0), ...reads]);
+    expect(held.surface.turn).toBe("running");
+    expect(held.state.lostStops).toBe(0);
+    const { state, surface } = run([prompt(1, 0), screen(2, 2000, RESTORED), stop(3, 2400), screen(4, 3000, RESTORED)]);
+    expect(surface).toEqual({ revision: 4, turn: "idle", modal: "none", composer: "draft" });
+    expect(state.running).toBeNull();
+    expect(state.lostStops).toBe(0);
+  });
+});
+
+// Live check 2026-10-30, Claude Code 2.1.312 over tmux, 120 columns (release 1.25.0): a fresh pane
+// draws `You've used 75% of your weekly limit · … · /usage-credits to keep using Claude Code` under
+// the footer and drops it once the box holds two rows. The reader must read it as no dialog and the
+// box as empty and free; the Send Protocol leaves it out of the rows under the box (`below.hints`).
+describe("the usage-limit row under a fresh box (Claude Code 2.1.312, live check 2026-10-30)", () => {
+  const NAME = "claude--v2312-weekly-limit-row--w120.txt";
+  const ROWS = fixtureRows(NAME);
+  const LIMIT_ROW = /^\s*You've used 75% of your weekly limit · .* · \/usage-credits to keep using Claude Code$/u;
+
+  it("the capture holds the row under the footer, the last row of the screen", () => {
+    const texts = ROWS.map((row) => rowText(row).trimEnd()).filter((text) => text.length > 0);
+    const frame = findInputFrame(ROWS, CLAUDE);
+    expect(frame).not.toBeNull();
+    expect(texts.at(-1)).toMatch(LIMIT_ROW);
+    expect(texts.findIndex((text) => LIMIT_ROW.test(text))).toBeGreaterThan(frame!.bottom);
+  });
+
+  it("reads idle, no dialog, the composer empty: free", () => {
+    const read = readScreen(ROWS, agentOf("claude"), idleFor("claude"));
+    expect(read.surface).toEqual({ revision: 1, turn: "idle", modal: "none", composer: "empty" });
+    expect(isFree(read.surface)).toBe(true);
+    expect(read.cues?.strength ?? "none").toBe("none");
+  });
+
+  it("the profile's hint takes the row and its likely variants, never the footer or a dialog row", () => {
+    const hints = (CLAUDE.volatile.below.hints ?? []).map((source) => new RegExp(source, "u"));
+    const isHint = (text: string): boolean => hints.some((hint) => hint.test(text));
+    const row = ROWS.map((r) => rowText(r).trimEnd()).find((text) => LIMIT_ROW.test(text));
+    expect(row).toBeDefined();
+    expect(isHint(row!)).toBe(true);
+    for (const text of [
+      "   You've used 90% of your 5-hour limit · resets 4pm (UTC) · /usage-credits to keep using Claude Code",
+      "   You’ve used 100% of your Opus weekly limit · resets Nov 4, 2am (UTC)",
+      "   You've used 80% of your session limit",
+    ])
+      expect(isHint(text), text).toBe(true);
+    for (const text of ["  ⏸ manual mode on · ? for shortcuts", " Do you want to proceed?", "   You've used the weekly limit", "● You've used 75% of your weekly limit, says the docs"])
+      expect(isHint(text), text).toBe(false);
   });
 });

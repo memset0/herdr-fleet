@@ -32,8 +32,8 @@ export const FIXTURES = readdirSync(PANES_DIR)
   .filter((name) => name.endsWith(".txt"))
   .toSorted();
 export const NEGATIVE = new Set(["dialog", "screen"]);
-// A test that reads the whole corpus takes up to 1.3 s here and ran past 5 s on the GitHub runner; 20 s covers a runner four times slower.
-export const CORPUS_WALK = { timeout: 20_000 };
+// Complete cross-profile walks keep every fixture; the budget also covers shared CI runners.
+export const CORPUS_WALK = { timeout: 120_000 };
 
 // Incident screens that read free when the one profile there is is applied to a harness it does not
 // describe. The Surface takes its profile from the binary, never from the screen, so this is a

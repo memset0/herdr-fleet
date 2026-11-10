@@ -248,6 +248,29 @@ user, host or path is in either file.
 | --- | --- | --- |
 | `pi--v130-gentle-choice.txt` | Three unnumbered options with descriptions, ` → Red` pointed | walk |
 | `pi--v130-gentle-choice-moved.txt` | The same dialog after `herdr pane send-keys <pane> Down`, ` → Green` | walk (the pair in `walk-pairs.ts`) |
+| `pi--v130-gentle-review-consent.txt` | gentle-pi 4.2.0 on pi 1.3.0, the review-consent screen: NO rule frame and no editor or status row, a bold title, two prose rows, three numbered options with `→` at column 0 on option 1, an `Effect:` paragraph, and `↑↓ choose · Enter confirm · Esc cancel · D details` as the screen's last row | walk |
+| `pi--v130-gentle-review-consent-moved.txt` | The same screen after `herdr pane send-keys <pane> Down`: `→` on option 2, and the `Effect:` paragraph describes option 2 | walk (the pair in `walk-pairs.ts`) |
+| `pi--v150-gentle-review-consent--w119.txt` | gentle-pi 4.6.0 on pi 1.5.0 (issue 712, reporter's capture): the same screen, the `Effect:` paragraph wrapped with an 8-space hanging indent, and the git and context status row straight under the footer | walk |
+| `pi--v150-gentle-review-consent-moved--w119.txt` | **Derived**: the capture above with `→` on option 2 (the `Effect:` text is not re-captured; the note rows are blanked in the core signature) | walk (the pair in `walk-pairs.ts`) |
+| `pi--v150-gentle-review-consent-fullscreen--w129.txt`, `-fullscreen--w198.txt` | Gentle Shell fullscreen: one blank row under the footer, then a right-aligned `branch │ mode … ctx … $` row | walk |
+| `pi--v150-gentle-review-consent-regular--w69.txt` | Gentle Shell regular mode: a `✿ gentle shell ⟡ …` row under the footer, and an indented widget row straight over the title. The reporter's user name is cut to `someuse` | walk |
+| `pi--v150-gentle-review-consent-rail-tall--w198.txt` | Gentle Shell's side rail over the top rows, the dialog under it, no status row | walk |
+| `pi--v150-gentle-review-consent-rail-beside--w198.txt` | The dialog's rows beside the rail's boxes (issue 710, open) | raw, Escape card |
+
+## gentle-pi soft-wrapped draft on pi 1.3.0 (issue 553, captured 2026-10-21, Herdr 0.9.5)
+
+pi 1.3.0 with gentle-pi 4.3.0, which replaces pi's footer, so nothing stands under the editor's bottom
+rule. A 201-column Herdr pane in a scratch directory, `/tmp/collie-pi-wrap-probe`, read with
+`herdr pane read <pane> --source visible --format ansi --raw`. A long English probe draft is typed and
+Enter is not pressed: it wraps over five rows, `❯ ` on the prompt row and the continuation rows indented
+two columns, with the right-aligned `claude-opus-5-5 · high` label two rows over the top rule. The `❯`
+and the aligned rows read as a pointed list between two rules, so the frame was dropped and Send
+stopped at "Enter was not pressed". CRLF line ends and the trailing padding are as read. No user or host
+is in the file; the only path is the scratch directory's name in gentle-pi's header row.
+
+| Fixture | State | Reads as |
+| --- | --- | --- |
+| `pi--v130-gentle-draft-wrapped.txt` | A five-row soft-wrapped draft, not sent | composer, draft read back, no modal |
 
 ## Stock pi 1.3.0 with an extension's own footer (issue 485, captured 2026-10-17, Herdr 0.9.5)
 
@@ -315,6 +338,20 @@ header row and a body row, as the bridge types a message (a newline between them
 | `pi--v130-powerline-editor-slash-model--w120.txt` | `/model` typed, pi's command list under the box | draft `/model`, modal none, the list is the command's own (the profile's `commandList`) |
 | `pi--v130-powerline-model-selector--w120.txt` | pi's `/model` selector, which takes the editor's place in column zero | modal unreadable, never free; the pi reader's modal |
 
+**Issue 594, live**, from the rig run of 2026-10-25: pi 1.3.0 with pi-powerline-footer 0.20.2,
+@baggiiiie/pi-context-chart 0.0.5 and a lab goal widget (a stand-in for the reporter's, drawn with
+`setWidget` over the editor as `🎯 active · … · turns N/∞ · Ns`, its seconds ticking once a second), 254
+columns, CRLF line ends as the bridge reads them, no trailing newline. The scratch project path in the
+cwd row was replaced by `~/project`. A fresh session draws pi's welcome splash at the top; the first key
+clears it.
+
+| Fixture | State | Reads as |
+| --- | --- | --- |
+| `pi--v130-powerline-goal-widget-idle--w254.txt` | Fresh session, idle: the splash, the goal widget row over the inset box, four rows under it | free (idle, modal none, empty) |
+| `pi--v130-powerline-goal-widget-running--w254.txt` | A running turn (`⠹ Working` in the top rule), the goal widget, five rows under the box (the prompt widget row and the context chart's four) | running, modal none, composer empty |
+| `pi--v130-powerline-welcome-idle--w254.txt` | Another fresh session before its first key, the splash at the top | free |
+| `pi--v130-powerline-welcome-gone--w254.txt` | The same pane after the probe character and its Backspace: the splash rows are blank | free; against the one before it the rows above only lost text (`idle.volatile.above.losesText`) |
+
 ## pi's permission gate on pi 0.87.1 (captured 2026-10-17, Herdr 0.9.4)
 
 Stock pi 0.87.1 with the example pi ships, `examples/extensions/permission-gate.ts` (`pi -e <path>`), in
@@ -355,6 +392,116 @@ or with no editor at all. The builder kept every row whole. Every file must stay
 The same block with nothing under its bottom rule is built inside `pi/ask.test.ts`, not kept as a
 file: agy's generic menu claims that screen, and the agy suite fails on any foreign fixture it lifts.
 The pi reader refuses it, because pi always paints a status row under a dialog.
+
+## Kiro CLI 2.33.0 workspace trust (captured 2026-10-21)
+
+The `kiro--v3-workspace-trust-*` captures show the startup trust prompt in a new, empty temporary folder under Herdr 0.9.5 on x86_64 Linux. They came from `kiro-cli chat --v3` and Herdr's visible ANSI grid at 120, 60 and 40 columns by 60 rows. Each starts at the dialog's top divider; rows above it were removed. The user name, temporary suffix and workspace-root hash were replaced with equal-length aliases, preserving the wrapped path fragments and ANSI styling.
+
+The captures themselves accept no trust choice. Up/Down move the pointer, the edge captures prove the arrows clamp, and Escape exits. A separate live phone test verified both native buttons through the scratch bridge's real Ask route, accepting trust only for an empty disposable folder. Keys, binding, results and the retained local screenshots are documented in [`kiro/WORKSPACE_TRUST_NOTES.md`](../../lib/harness/kiro/WORKSPACE_TRUST_NOTES.md).
+
+| Fixture | Cols | State / what's in it | Label |
+| --- | --- | --- | --- |
+| `kiro--v3-workspace-trust-continue-w120.txt` | 120 | Default Trust row; complete subject and revocation note | `dialog` |
+| `kiro--v3-workspace-trust-exit-w120.txt` | 120 | Don't trust row after one Down | `dialog` |
+| `kiro--v3-workspace-trust-continue-w60.txt` | 60 | Trust row; wrapped workspace and revocation paths | `dialog` |
+| `kiro--v3-workspace-trust-exit-w60.txt` | 60 | Don't trust row; same wrapped dialog | `dialog` |
+| `kiro--v3-workspace-trust-continue-w40.txt` | 40 | Trust row; both warnings and key hints wrap | `dialog` |
+| `kiro--v3-workspace-trust-exit-w40.txt` | 40 | Don't trust row; same narrow dialog | `dialog` |
+| `kiro--v3-workspace-trust-continue-up-edge-w40.txt` | 40 | Extra Up at the first row leaves Trust selected | `dialog` |
+| `kiro--v3-workspace-trust-exit-down-edge-w40.txt` | 40 | Extra Down at the last row leaves Don't trust selected | `dialog` |
+
+## Kiro CLI 2.32.0 corpus (captured 2026-10-17, Herdr 0.9.5, throwaway Herdr session)
+
+`kiro-cli 2.32.0` on x86_64 Linux, run directly with `chat --v3` under Herdr 0.9.5. Each `kiro--*` file is `herdr pane read <pane> --source visible --format ansi --raw`, the same `pane.read` answer the bridge serves, with LF line ends. Each is cut from the composer divider or an approval panel's `↓` preview row down; transcript rows above it were removed and blank viewport rows remain. The `running-*` and `write-viewport-*` files keep the whole visible grid.
+
+Two runs on the same day made all but the `slash-*` files. Most files come from scratch agents started with `--v3 --trust-tools=''` and the model `qwen3-coder-next`, in a throwaway Herdr session whose terminal was resized between captures so the pane was exactly 120, 60 or 40 columns by 40 rows; the panel or draft stayed open while it was resized. They asked for harmless shell, file and local stdio MCP echo calls, and the shell probes asked for a fixed tool description, so the panel titles (`Print the probe message`, `Print the deny probe message`, `Print the cancel probe message`) are the same in every run. These replace an earlier set made from the same screens through an xterm grid instead of Herdr: the text of all 55 matched row for row, and only the escape encoding changed. The `-trusted-`, `idle-oneline`, `draft-cwd-wrapped` and `kiro--v2-` files come from an earlier live run, also through Herdr, with the default agent configuration (no `--trust-tools`) in a disposable `/tmp/kiro-fixture/demo` folder. They are 120 columns wide, except `kiro--v2-idle-w119.txt` at 119. The `slash-*` files come from a run on 2026-10-18, also through Herdr, with the default agent configuration and an empty scratch `KIRO_HOME`, so the menu lists only built-in commands. The `shell-*` files come from a run on 2026-10-21, also through Herdr, with `--v3 --trust-tools=''`, `qwen3-coder-next` and an empty scratch `KIRO_HOME`; their probes asked for `cwd`, `timeout` and `run_in_background`, a long command, or the command alone. On that day the `approval-*` shell files were cut again from their original captures to start at the `↓ Shell` preview row; the rows below it did not change.
+
+For publication, the user name and the scratch folder were replaced with equal-length aliases, following the path across row breaks where it wraps, and the login-expiry label in the status rows with the equal-length word `Status`; its time value is unchanged. In the earlier run's files the model name was also replaced with the equal-length `qwen3-coder`. Every row keeps its columns. Request markers, option labels, pointers, dividers, footers and diff contents were not changed, and no credentials or real conversation content are included. Workspace trust, permissions and user settings were not edited, no persistent tool-approval option was confirmed, and every scratch process was stopped.
+
+Herdr's agent status was not recorded for these captures, so the table gives the hand-checked label from `surface-labels.json` instead. "Lifts" is the native card with Allow, Deny and the printed Close; "card" is the unread-dialog card with Escape. The keys pressed between captures and the terminal-only limits: [`kiro/APPROVAL_NOTES.md`](../../lib/harness/kiro/APPROVAL_NOTES.md).
+
+| Fixture | Cols | State / what's in it, and what it reads as | Label |
+| --- | --- | --- | --- |
+| `kiro--v2-idle-w119.txt` | 119 | V2 engine (`chat --v2`) idle composer, only the `/copy to clipboard` hint under it; composer | `idle` |
+| `kiro--v3-approval-allow-w120.txt` | 120 | Shell panel (`printf collie_approve_once_probe`), four options, Allow pointed; lifts | `dialog` |
+| `kiro--v3-approval-allow-w60.txt` | 60 | Shell panel (`printf collie_approve_once_probe`), four options, Allow pointed; lifts | `dialog` |
+| `kiro--v3-approval-always-w120.txt` | 120 | Shell panel (`printf collie_approve_once_probe`), four options, Always allow pointed (trust footer); lifts | `dialog` |
+| `kiro--v3-approval-clipped-w40.txt` | 40 | Shell panel at 40 columns, its footer wrapped by column; card | `dialog` |
+| `kiro--v3-approval-denied-request-allow-w120.txt` | 120 | Shell panel of the request the probe denies (`printf collie_deny_probe`), Allow pointed; lifts | `dialog` |
+| `kiro--v3-approval-denied-request-deny-w120.txt` | 120 | Shell panel of the request the probe denies (`printf collie_deny_probe`), Deny pointed; lifts | `dialog` |
+| `kiro--v3-approval-deny-w120.txt` | 120 | Shell panel (`printf collie_approve_once_probe`), four options, Deny pointed; lifts | `dialog` |
+| `kiro--v3-approval-deny-w60.txt` | 60 | Shell panel (`printf collie_approve_once_probe`), four options, Deny pointed; lifts | `dialog` |
+| `kiro--v3-approval-edit-w120.txt` | 120 | Shell panel's `Modify request` editor, a `›` feedback row over `esc to close`; card | `dialog` |
+| `kiro--v3-draft-cwd-wrapped-w120.txt` | 120 | Typed draft while the right-aligned cwd wraps mid-path onto the next row; composer, draft read back | `draft` |
+| `kiro--v3-draft-w120.txt` | 120 | `collie normal draft probe` typed, not sent; composer, draft read back | `draft` |
+| `kiro--v3-draft-w60.txt` | 60 | `collie normal draft probe` typed, not sent; composer, draft read back | `draft` |
+| `kiro--v3-draft-wrapped-w60.txt` | 60 | Single-line draft word-wrapped onto two-space continuation rows; composer, draft read back | `draft` |
+| `kiro--v3-idle-oneline-w120.txt` | 120 | Idle composer, the cwd right-aligned on the status bar's own row; composer | `idle` |
+| `kiro--v3-idle-w120.txt` | 120 | Idle composer: divider, status bar, cwd row, `›` placeholder, footer; composer | `idle` |
+| `kiro--v3-idle-w60.txt` | 60 | Idle composer: divider, status bar, cwd row, `›` placeholder, footer; composer | `idle` |
+| `kiro--v3-mcp-allow-w120.txt` | 120 | Local stdio MCP echo (`collie_echo/echo`), its `↓` argument preview above, Allow pointed; card | `dialog` |
+| `kiro--v3-mcp-allow-w60.txt` | 60 | Local stdio MCP echo (`collie_echo/echo`), its `↓` argument preview above, Allow pointed; card | `dialog` |
+| `kiro--v3-mcp-denied-request-allow-w120.txt` | 120 | Local stdio MCP echo of the request the probe denies, Allow pointed; card | `dialog` |
+| `kiro--v3-mcp-denied-request-deny-w120.txt` | 120 | Local stdio MCP echo of the request the probe denies, Deny pointed; card | `dialog` |
+| `kiro--v3-mcp-deny-w120.txt` | 120 | Local stdio MCP echo (`collie_echo/echo`), its `↓` argument preview above, Deny pointed; card | `dialog` |
+| `kiro--v3-mcp-deny-w60.txt` | 60 | Local stdio MCP echo (`collie_echo/echo`), its `↓` argument preview above, Deny pointed; card | `dialog` |
+| `kiro--v3-mcp-wrapped-allow-w120.txt` | 120 | Local stdio MCP echo with a long tool name and argument, Allow pointed; card | `dialog` |
+| `kiro--v3-mcp-wrapped-allow-w60.txt` | 60 | Local stdio MCP echo with a long tool name and argument, Allow pointed; card | `dialog` |
+| `kiro--v3-mcp-wrapped-clipped-w40.txt` | 40 | Long MCP echo panel at 40 columns, title, resource and footer wrapped; card | `dialog` |
+| `kiro--v3-mcp-wrapped-deny-w120.txt` | 120 | Local stdio MCP echo with a long tool name and argument, Deny pointed; card | `dialog` |
+| `kiro--v3-mcp-wrapped-deny-w60.txt` | 60 | Local stdio MCP echo with a long tool name and argument, Deny pointed; card | `dialog` |
+| `kiro--v3-read-allow-w120.txt` | 120 | Read panel under its `↓ Read … (L1-1)` preview, three options, Allow pointed; lifts | `dialog` |
+| `kiro--v3-read-allow-w60.txt` | 60 | Read panel under its `↓ Read … (L1-1)` preview, three options, Allow pointed; lifts | `dialog` |
+| `kiro--v3-read-denied-request-allow-w120.txt` | 120 | Read panel of the request the probe denies (`read-deny.txt`), Allow pointed; lifts | `dialog` |
+| `kiro--v3-read-denied-request-deny-w120.txt` | 120 | Read panel of the request the probe denies (`read-deny.txt`), Deny pointed; lifts | `dialog` |
+| `kiro--v3-read-deny-w120.txt` | 120 | Read panel under its `↓ Read … (L1-1)` preview, three options, Deny pointed; lifts | `dialog` |
+| `kiro--v3-read-deny-w60.txt` | 60 | Read panel under its `↓ Read … (L1-1)` preview, three options, Deny pointed; lifts | `dialog` |
+| `kiro--v3-read-wrapped-allow-w120.txt` | 120 | Read panel whose path wraps in its `↓ Read` preview, Allow pointed; lifts | `dialog` |
+| `kiro--v3-read-wrapped-allow-w60.txt` | 60 | Read panel whose path wraps in its `↓ Read` preview, Allow pointed; lifts | `dialog` |
+| `kiro--v3-read-wrapped-deny-w120.txt` | 120 | Read panel whose path wraps in its `↓ Read` preview, Deny pointed; lifts | `dialog` |
+| `kiro--v3-read-wrapped-deny-w60.txt` | 60 | Read panel whose path wraps in its `↓ Read` preview, Deny pointed; lifts | `dialog` |
+| `kiro--v3-replace-allow-w120.txt` | 120 | Replace panel under its one-line diff preview, three options, Allow pointed; lifts | `dialog` |
+| `kiro--v3-replace-allow-w60.txt` | 60 | Replace panel under its one-line diff preview, three options, Allow pointed; lifts | `dialog` |
+| `kiro--v3-replace-denied-request-allow-w120.txt` | 120 | Successor replace of the same file, same panel text and another diff, Allow pointed; lifts | `dialog` |
+| `kiro--v3-replace-denied-request-deny-w120.txt` | 120 | Successor replace of the same file, same panel text and another diff, Deny pointed; lifts | `dialog` |
+| `kiro--v3-replace-deny-w120.txt` | 120 | Replace panel under its one-line diff preview, three options, Deny pointed; lifts | `dialog` |
+| `kiro--v3-replace-deny-w60.txt` | 60 | Replace panel under its one-line diff preview, three options, Deny pointed; lifts | `dialog` |
+| `kiro--v3-replace-edit-w120.txt` | 120 | Replace panel's `Modify request` editor under its diff; card | `dialog` |
+| `kiro--v3-replace-trusted-allow-w120.txt` | 120 | Default agent configuration: replace panel with four options, a bare-number context row in its diff, Allow pointed; lifts | `dialog` |
+| `kiro--v3-replace-trusted-deny-w120.txt` | 120 | Default agent configuration: replace panel with four options, a bare-number context row in its diff, Deny pointed; lifts | `dialog` |
+| `kiro--v3-running-steered-w120.txt` | 120 | Running turn after a steer: `› collie steer probe` in the transcript, the busy prompt row; composer, turn running | `running` |
+| `kiro--v3-running-w120.txt` | 120 | Running turn, whole grid: `›  Kiro is working · 1s · …` on the prompt row; composer, turn running | `running` |
+| `kiro--v3-shell-args-allow-w120.txt` | 120 | Shell panel whose `↓ Shell` preview lists `cwd=sub`, `run_in_background=true` and `timeout=5000`, Allow pointed; lifts | `dialog` |
+| `kiro--v3-shell-args-allow-w60.txt` | 60 | Shell panel whose `↓ Shell` preview lists `cwd=sub`, `run_in_background=true` and `timeout=5000` over two rows, Allow pointed; lifts | `dialog` |
+| `kiro--v3-shell-args-deny-w120.txt` | 120 | Shell panel whose `↓ Shell` preview lists `cwd=sub`, `run_in_background=true` and `timeout=5000`, Deny pointed; lifts | `dialog` |
+| `kiro--v3-shell-args-deny-w60.txt` | 60 | Shell panel whose `↓ Shell` preview lists `cwd=sub`, `run_in_background=true` and `timeout=5000` over two rows, Deny pointed; lifts | `dialog` |
+| `kiro--v3-shell-args-no-timeout-allow-w120.txt` | 120 | The same panel as `shell-args-allow-w120` for a call with no `timeout`: only the preview differs; lifts | `dialog` |
+| `kiro--v3-shell-bare-allow-w120.txt` | 120 | Shell call that set only `command`: the preview still lists `run_in_background=false`, Allow pointed; lifts | `dialog` |
+| `kiro--v3-shell-bare-deny-w120.txt` | 120 | Shell call that set only `command`: the preview still lists `run_in_background=false`, Deny pointed; lifts | `dialog` |
+| `kiro--v3-shell-wrapped-allow-w120.txt` | 120 | Long `printf` command wrapped onto a second row in the preview and in the panel, Allow pointed; lifts | `dialog` |
+| `kiro--v3-shell-wrapped-allow-w60.txt` | 60 | Long `printf` command wrapped onto three rows in the preview and in the panel, Allow pointed; lifts | `dialog` |
+| `kiro--v3-shell-wrapped-deny-w120.txt` | 120 | Long `printf` command wrapped onto a second row in the preview and in the panel, Deny pointed; lifts | `dialog` |
+| `kiro--v3-shell-wrapped-deny-w60.txt` | 60 | Long `printf` command wrapped onto three rows in the preview and in the panel, Deny pointed; lifts | `dialog` |
+| `kiro--v3-slash-help-w120.txt` | 120 | `/help` typed: the `/` menu filtered to its one row; popup | `popup` |
+| `kiro--v3-slash-menu-w120.txt` | 120 | `/` typed: the command menu's first eight rows and `(+35 more)`; popup | `popup` |
+| `kiro--v3-slash-model-w120.txt` | 120 | `/model` typed: the `/` menu filtered to its one row; popup | `popup` |
+| `kiro--v3-slash-quit-w120.txt` | 120 | `/quit` typed: the `/` menu filtered to its one row; popup | `popup` |
+| `kiro--v3-write-allow-w120.txt` | 120 | Write panel under its one-line diff preview, three options, Allow pointed; lifts | `dialog` |
+| `kiro--v3-write-allow-w60.txt` | 60 | Write panel under its one-line diff preview, three options, Allow pointed; lifts | `dialog` |
+| `kiro--v3-write-denied-request-allow-w120.txt` | 120 | Write panel of the request the probe denies, Allow pointed; lifts | `dialog` |
+| `kiro--v3-write-denied-request-deny-w120.txt` | 120 | Write panel of the request the probe denies, Deny pointed; lifts | `dialog` |
+| `kiro--v3-write-deny-w120.txt` | 120 | Write panel under its one-line diff preview, three options, Deny pointed; lifts | `dialog` |
+| `kiro--v3-write-deny-w60.txt` | 60 | Write panel under its one-line diff preview, three options, Deny pointed; lifts | `dialog` |
+| `kiro--v3-write-lines-allow-w120.txt` | 120 | Complete 15-line write diff with one- and two-digit line numbers, Allow pointed; lifts | `dialog` |
+| `kiro--v3-write-lines-deny-w120.txt` | 120 | Complete 15-line write diff with one- and two-digit line numbers, Deny pointed; lifts | `dialog` |
+| `kiro--v3-write-lines-deny-w60.txt` | 60 | Complete 15-line write diff with one- and two-digit line numbers, Deny pointed; lifts | `dialog` |
+| `kiro--v3-write-trusted-allow-w120.txt` | 120 | Default agent configuration: write panel with four options, indented and blank added lines, Allow pointed; lifts | `dialog` |
+| `kiro--v3-write-trusted-always-w120.txt` | 120 | Default agent configuration: write panel with four options, indented and blank added lines, Always allow pointed (trust footer); lifts | `dialog` |
+| `kiro--v3-write-trusted-deny-w120.txt` | 120 | Default agent configuration: write panel with four options, indented and blank added lines, Deny pointed; lifts | `dialog` |
+| `kiro--v3-write-viewport-allow-w120.txt` | 120 | 50-line write proposal whose preview runs above the viewport, whole grid, Allow pointed; card | `dialog` |
+| `kiro--v3-write-viewport-allow-w60.txt` | 60 | 50-line write proposal whose preview runs above the viewport, whole grid, Allow pointed; card | `dialog` |
+| `kiro--v3-write-viewport-deny-w120.txt` | 120 | 50-line write proposal whose preview runs above the viewport, whole grid, Deny pointed; card | `dialog` |
+| `kiro--v3-write-viewport-deny-w60.txt` | 60 | 50-line write proposal whose preview runs above the viewport, whole grid, Deny pointed; card | `dialog` |
 
 ## Codex corpus (captured 2026-08-22, Codex v0.149.0, sandbox panes)
 
@@ -662,7 +809,7 @@ Grok's composer is a rounded box at the tail: `╭─…─╮` / `│ ❯ … �
 | `grok--draft-scrollbar.txt` | Grok Build 1.0.46 on macOS, 2026-10-08: byte-faithful composer tail from the live Collie API after pasting a 40-line test draft without submitting. Only lines 21–40 are visible, with a separately styled `█` scrollbar inside the right frame. That rail is not message text; a literal typed block glyph must remain. The prompt row is outside the bridge's six-row binding window, so the existing `composerPrompt` returns null while `composerReady` stays true | `idle` |
 | `grok--draft-scrollbar-partial.txt` | Grok Build 1.0.46 on macOS, 2026-10-08: byte-faithful composer tail from an isolated live bridge after the real guarded reply path pastes 40 numbered lines and a final instruction. Lines 26–40 and the instruction remain visible; the separately styled rail begins with `▁` and continues with `█`. The original full-block-only reader returns stalled without submitting. The prompt lies outside the existing bridge binding window | `done` |
 | `grok--draft-wrapped.txt` | Draft wrapped onto a continuation row inside the box | `idle` |
-| `grok--model-picker.txt` | Grok Build 1.0.46, macOS, 2026-10-08: byte-faithful `/model` completion-list tail, with the pointer on Grok 4.7, the four-row counter, composer and Enter hint. No identifying paths. The verified recipe is in [MODEL_PICKER_NOTES.md](/web/src/lib/harness/grok/MODEL_PICKER_NOTES.md) | `idle` |
+| `grok--model-picker.txt` | Grok Build 1.0.46, macOS, 2026-10-08: byte-faithful `/model` completion-list tail, with the pointer on Grok 4.7, the four-row counter, composer and Enter hint. No identifying paths. The verified recipe is in [MODEL_PICKER_NOTES.md](../../lib/harness/grok/MODEL_PICKER_NOTES.md) | `idle` |
 | `grok--model-picker-moved.txt` | Same live list after Down moves the pointer to Grok 4.7 Fast, without choosing a model | `idle` |
 | `grok--model-window.txt` | Second `/model` stage, 256k pointed, two visible rows; Enter on the model inserted its name and opened this list | `idle` |
 | `grok--model-window-moved.txt` | Same live window list after Down points at 500k, without submitting | `idle` |
@@ -1087,6 +1234,35 @@ Every key behaviour named below was sent one keystroke at a time and read back.
 | `claude--v2283-wizard-two-line-question.txt` | Two-question wizard, step 1, question on two gutter rows |
 | `claude--v2283-shell-before-first-frame.txt` | The shell prompt with `claude-danger` typed, read while herdr already reported the agent as `claude` (about 0.3 s before the first frame) |
 | `claude--v2283-shell-after-exit.txt` | The shell prompt just after Claude exited, still reported as `claude` (about 0.5 s) |
+
+## AskUserQuestion field corpus (captured 2026-10-14, Claude Code 2.1.299, herdr 0.9.4, Windows, throwaway Herdr pane)
+
+The `Type something.` field typed into, cleared and re-answered, one keystroke at a time, for
+[`ASK_FIELD_NOTES.md`](../../lib/grammar/ASK_FIELD_NOTES.md) and ADR 0113. A 157-column pane in a
+scratch folder, trimmed to the last 30 rows, home path scrubbed. Every answer named below was read
+back from the session journal.
+
+| Fixture | State / what's in it |
+|---|---|
+| `claude--v2299-ask-field-single-focused-empty.txt` | Single question, `4` pressed: pointer on the empty `4. Type something.`, footer gains `ctrl+g to edit in Notepad`. Answers nothing |
+| `claude--v2299-ask-field-single-focused-typed.txt` | The field focused, holding `Teal, like the sea`. `Enter` answered with it |
+| `claude--v2299-ask-field-single-typed-off-row.txt` | The same text, `Up`: pointer on `3. Blue`. The field's digit now SUBMITS the held text |
+| `claude--v2299-ask-field-single-focused-wrapped.txt` | Focused, a value wrapped to two display lines (continuation indented five columns) |
+| `claude--v2299-ask-field-single-focused-three-lines.txt` | Focused, a value wrapped to three display lines; three `ctrl+u` emptied it from the end |
+| `claude--v2299-ask-field-wizard-focused-empty.txt` | Three-question wizard, step 1, field's digit pressed: focused and empty, no advance |
+| `claude--v2299-ask-field-wizard-focused-typed.txt` | The same field holding `Mango`. `Enter` answered and advanced to step 2 |
+| `claude--v2299-ask-field-wizard-revisit-typed.txt` | Step 1 revisited after answering by typing: `3. Mango ✔`, pointer on row 1 |
+| `claude--v2299-ask-field-wizard-revisit-focused.txt` | Then `Down` × 2: `❯ 3. Mango  ✔`, focused, caret at the end |
+| `claude--v2299-ask-field-wizard-revisit-cleared.txt` | Then `ctrl+u ctrl+k`: `❯ 3. Type something. ✔`, empty |
+| `claude--v2299-ask-field-wizard-review-typed.txt` | The review step listing typed answers (`→ Mango`, `→ Lisbon`) beside a picked one |
+| `claude--v2299-ask-field-multi-ticked-empty.txt` | multiSelect after `1` and `4`: `[✔] Cheese`, `[✔] Type something` (the digit ticks, never focuses), pointer on row 1 |
+| `claude--v2299-ask-field-multi-focused-typed.txt` | `Down` × 3 and a paste: `❯ 4. [✔] Pineapple`, focused |
+| `claude--v2299-ask-field-multi-focused-unticked.txt` | `Enter` on that row: `❯ 4. [ ] Pineapple` (Enter toggles; the text stays) |
+| `claude--v2299-ask-field-multi-focused-cleared.txt` | `ctrl+u ctrl+k`: `❯ 4. [ ] Type something`, cleared and unticked |
+| `claude--v2299-ask-field-multi-pointer-submit.txt` | A typed, unticked `4. [ ] Mushroom` with the pointer on `Submit` |
+| `claude--v2299-ask-field-wizmulti-focused-empty.txt` | Two-question wizard, step 1 multiSelect (advance row `Next`): pointer on the empty, ticked field |
+| `claude--v2299-ask-field-wizmulti-focused-typed.txt` | The same field holding `Pineapple`, ticked |
+| `claude--v2299-ask-field-wizmulti-focused-unticked.txt` | `Enter` on it: `[ ] Pineapple` |
 
 ## Draft-frame and modal-edge corpus (captured 2026-09-26, Claude Code 2.1.283, herdr 0.9.0, throwaway Herdr panes)
 
@@ -1784,7 +1960,7 @@ are counted in every walk and not offered; the card's name ends `● current: <i
 | `omp--v18-4-switch-nomatch.txt` | `zzqqxx` typed: `No matching models`, no detail rows. Declines; gets the card | not recorded |
 | `omp--v18-4-switch-quick-roles.txt` | `@` typed: `Quick role switch — applies its model and thinking for this session`, `@smol`, `❯ @default ●`, `@slow`, footer `↑/↓ roles · ⏎ apply role model · type to search · ⎋ close`. Declines; gets the card | not recorded |
 | `omp--v18-4-switch-task.txt` | Alt+P: `╭─ Switch Task Model ─╮`, footer `… · ⎋ close · Alt+P session model`. Declines; gets the card | not recorded |
-| `omp--v18-4-switch-nerd.txt` | 103 columns, `symbolPreset: nerd` set in the sandbox config: private-use glyphs for the pointer, marks, search icon and two keycaps. Declines; gets the card | not recorded |
+| `omp--v18-4-switch-nerd.txt` | 103 columns, `symbolPreset: nerd` set in the sandbox config: private-use glyphs for the pointer, marks, search icon and two keycaps. Lifts since 2026-11-06 (omp/switch.ts, the `nerd` preset) | not recorded |
 | `omp--v18-4-switch-clipped.txt` | 74 columns: the footer clipped to `… @ quick roles …`, so no way out is on screen. Declines, and no card, like `/tree` | not recorded |
 
 **Five more, 2026-10-03, for the walk pairs** ([ADR 0080](../../../../.adr/0080-a-pointed-list-is-walked-verified-then-confirmed.md)
@@ -1850,6 +2026,22 @@ box covers the statusline. Every row above the box is the sandbox session's own 
 
 The answers were typed with `herdr pane send-text` into the sandbox session only, and the workspace was
 closed afterwards.
+
+### The same editor on omp 18.16.0 over herdr-core (captured 2026-11-05, issue 704)
+
+Four captures of the same box on omp 18.16.0, read off a lab herdr-core with `hc read` through the
+bridge's adapter, so they are plain text (no SGR). Each is cut to the tail from the Ask echo block
+down, 200 columns wide, LF line ends. No path, user, host or key appears in them. Since #704 the omp
+profile reads this box through a layout of its own (`answers`, `submit`, `newlineSubmits`,
+`trailer.hint`), so the Send Protocol types a reply from the phone into it and submits it with
+`Ctrl+Q`; `fold.answer-box.test.ts` reads each one as captured and unstyled.
+
+| Fixture | State / what's in it | Label |
+|---|---|---|
+| `omp--v18-16-0-custom-answer-empty--w200.txt` | `Enter` on `Other (type your own)`: `╭─ Custom answer: …─╮`, an empty `│ > ` row, the hint `⏎ or Ctrl+Q submit  ⎋ cancel  …` | `idle` |
+| `omp--v18-16-0-custom-answer-typed--w200.txt` | The same box holding `a ripe mango` | `draft` |
+| `omp--v18-16-0-custom-answer-wrapped--w200.txt` | A long answer soft-wrapped onto continuation rows indented by the gutter's width | `draft` |
+| `omp--v18-16-0-note-editor-empty--w200.txt` | `n` on an option: the box titled `Note for apple: …`, empty | `idle` |
 
 ## OMP 18.8 pi composer slash palette (captured 2026-10-07, oh-my-pi `omp` v18.8.0, scratch panes)
 
@@ -2073,12 +2265,13 @@ signature.
 | `muse--palette-partial.txt` | Slash palette open under partial input: `❯ /us` + the `/usage` suggestion. The read stays polluted on purpose — Enter would accept the suggestion, so verifying the typed text would bless another command (#276) | `idle` |
 | `muse--draft-single.txt` | Stranded one-line draft on the `❯` row | `idle` |
 | `muse--draft-wrapped.txt` | Long draft soft-wrapped onto a 2-space-indented continuation row (breaks at the hyphen in `soft-wrap`) | `idle` |
+| `muse--draft-multiline-live.txt` | Live Muse 1.4.11 capture (2026-10-21): three-line prose draft typed but not sent, prompt row plus soft-wrapped continuation rows over the bottom rule. The frame is whole (the titled top rule is in view); before #552 the down-box dialog scan read `❯` and the rows under it as a pointed list (`unreadable`, Enter withheld). Muse's layout names `frame.draftLines` (its dialogs point with `›` and `⟩`, never with `❯`), so rows under the glyph with no option row, no key hint and no named command list read as the draft's own lines: `modal: none` / `composer: draft` (#552) | `idle` |
 | `muse--draft-paste-token.txt` | A 3003-char single line collapsed to `[Pasted Content 3003 chars]` — per-LINE collapse (a 3300-char burst of short lines stayed literal), N in code points, threshold in (1000, 1200] | `idle` |
 | `muse--draft-blank-row.txt` | Two-paragraph draft: a blank row between the `❯` head and the continuation. The tail walk steps over it, so the prompt binds, the draft folds, and no card draws (#274) | `idle` |
 | `muse--draft-image-chip.txt` | An attached image path converted in place to `[Image #1]` (N in attach order). The read stays verbatim; the attach grammar maps it back for verify (#278) | `idle` |
 | `muse--draft-quoted-path.txt` | A non-image path double-quoted in place (`"/tmp/…"`). Same split: verbatim read, attach grammar verifies (#278) | `idle` |
 | `muse--working.txt` | A finished turn: the transcript ends `◆ Worked for 2m 57s · 4:24 PM` and the composer is free. The name is the first capture's; relabelled idle on 2026-10-16 (M56 spec 14), since no mid-turn screen was ever captured under it | `idle` |
-| `muse--turn-running.txt` | Derived 2026-10-16 from `muse--working.txt`: its last transcript row is replaced by the running row `◇ Double checking (2m 40s · esc to interrupt)`, in the form of the `Calling tools (1m 01s · esc to interrupt)` row of `muse--approval-ls-147.txt`. Not a live capture; a live one is pending | `working` |
+| `muse--turn-running.txt` | Derived 2026-10-16 from `muse--working.txt`: its last transcript row is replaced by the running row `◇ Double checking (2m 40s · esc to interrupt)`, in the form of the `Calling tools (1m 01s · esc to interrupt)` row of `muse--approval-ls-147.txt`. Not a live capture; live ones landed 2026-10-18 as `muse--running-command-1410` and `muse--running-checking-1410` (#519) | `working` |
 | `muse--done.txt` | Completed turn: `◆ Ran command …`, `◆` summary, `◆ Worked for 1m 06s`, idle composer holding the `Start a message with ! to run a shell command yourself` placeholder (grey, not a draft) | `idle` |
 | `muse--tip-loop.txt` | The same idle composer holding the rotated `/loop 10m <prompt> schedules a recurring prompt` placeholder tip — the tip rotates, and an unlisted one reads as a ghost draft (#274) | `idle` |
 | `muse--tip-paste.txt` | The same idle composer holding the `Paste an image with Ctrl+V — file paths and URLs work too` placeholder tip — the tip rotates per context (#278) | `idle` |
@@ -2118,7 +2311,17 @@ signature.
 | `muse--palette-hint-moved.txt` | Same, after Down: the bold has moved to `/resume-claude`, so the read must not verify `/resume` | `idle` |
 | `muse--palette-typed-arg.txt` | `/model x` typed: the hint is gone and `x` wears the typed-text colour. The read is `/model x` | `idle` |
 | `muse--palette-skill.txt` | `/plan` typed: its one suggestion is a built-in skill row, `  /plan · built-in · default skill  On an explicit…`, tags between the command and the gap. The read is `/plan`. Visible-screen read 2026-10-15, cwd swapped for the sandbox path and model label renamed `mini` | `idle` |
+| `muse--idle-1410.txt` | Muse Code 1.4.10 idle after finished turns: `── Voice input (⌥ + v to start) ──` top rule, bare `❯` (no hole hint showed), `muse-wonder-full-1.0 · xhigh · /private/tmp/collie-audit/work · YOLO` statusline. Reads free (#519) | `idle` |
+| `muse--done-1410.txt` | Same session just after the `sleep 20` turn: `◆ Ran command · Run sleep 20 · ✓ · 20s · ctrl+o`, `◆ DONE-1410`, empty box. Reads free (#519) | `idle` |
+| `muse--draft-1410.txt` | `❯ VERIFY-DRAFT-1410` typed and not sent, cleared with Ctrl+U after the read. Reads as a draft (#519) | `idle` |
+| `muse--probe-draft-1410.txt` | The profile probe char `⌁` (U+2301) alone in the 1.4.10 box: it renders as draft text and one Backspace removed it (probed live, then cleared). A fixture, not a probed send: `probe.status` stays provisional until a live `SendProtocol` send passes (#519) | `idle` |
 | `muse--slash-palette-1410.txt` | Bare `/` on Muse Code 1.4.10 (byte-faithful live capture, 2026-10-18, #519): seven command rows (`/bug` pointed, bold) and `↓ 72 more` painted inside the box between the prompt row and the bottom rule. The profile's inside `commandList` reads the palette pointing at `/bug`, so a bare `/` is no own list and the screen stays not-free; with the pointed command typed in full it reads as the typed command's own list (MUSE-03) | `idle` |
+| `muse--running-command-1410.txt` | Live mid-turn 1.4.10: `◇ Running command · Run sleep 20 — running (10s · esc to interrupt)` + `└ (ctrl+b to send to background)`, framed empty box below. Reads running — the first live Muse running capture; `muse--turn-running.txt` above is derived (#519) | `working` |
+| `muse--running-checking-1410.txt` | Same turn after the reply row printed: `◆ DONE-1410` and still `◇ Double checking (32s · esc to interrupt)` above the box. Reads running (#519) | `working` |
+| `muse--filter-effort.txt` | `/effort` open: bare `❯`, bottom rule, `Effort  |  Select Meta reasoning effort`, `filter`, five rows with `⟩ xhigh … current`, footer `↑↓ move · type to filter · enter confirm · esc go back`; the statusline is gone (the picker holds its slot). Not lifted: the composer refuses and the unread-dialog card offers Escape (MUSE-16) | `blocked` |
+| `muse--filter-effort-typed.txt` | Same picker after typing `xh`: `filter: xh`, one matching row left, the `❯` above still bare — typed text lands in the filter, never the box | `blocked` |
+| `muse--filter-effort-nomatch.txt` | After typing `1` next: `filter: xh1`, `no matches for "xh1" — Backspace to clear`, no pointed row — the digit-is-filter-text proof | `blocked` |
+| `muse--filter-hud.txt` | `/hud` open: `filter` under the rule, toggle rows, footer `↑↓ move · enter/space toggle · type to filter · esc close`, and the statusline still painted below the picker. (Its typed twin is not a fixture — see the provenance note below; the adapter test rebuilds it from these rows) | `blocked` |
 
 **Nothing was approved blindly.** The one approved command was `ls -la` on the
 empty sandbox (output verified); the trust prompt covered a throwaway `/tmp`
@@ -2131,6 +2334,34 @@ The four `muse--palette-*` rows of 2026-10-15 are visible-screen captures of Mus
 throwaway Herdr session (`herdr pane read --source visible --format ansi`). The statusline's
 shortened cwd was swapped for `/private/tmp/collie-muse-sandbox`, the same 32 characters, and its
 model label renamed `mini`. Nothing was submitted while capturing.
+
+The six `muse--*-1410` rows PR 520 added on 2026-10-18 (idle, done, draft, probe draft and the two
+running turns) are visible-screen captures of Muse Code 1.4.10
+(`muse --version`: `Muse Code 1.4.10 (1.4.10-R6427.1)`) in a throwaway Herdr scratch pane in
+`/private/tmp/collie-audit/work`, taken with `herdr pane read --format ansi --source visible` (#519).
+CRLF throughout, no trailing newline, as the reader returned them. **One sanitization pass,
+length-preserving:** the shell prompt above the banner named two of the operator's own folders, and
+each became a placeholder of the same character count (`example-project-0000000` and
+`example-projects0`, SGR untouched); an email/home-path/UUID/secret-shape sweep of the six files
+returns nothing else. What was spent: one real turn (`sleep 20`, then the `DONE-1410` reply) for the
+two running captures and `muse--done-1410`; the draft and probe reads submitted nothing and were
+cleared with Ctrl+U and Backspace. `muse--slash-palette-1410` was on main before PR 520 and has its
+own row above. These captures are
+capture-grade evidence only: Muse has no harness-lab entry (see the lab README), so neither the
+profile range nor `probe.status` moved with them.
+
+The four `muse--filter-*` files of 2026-10-18 (MUSE-16, issue 519) are visible-screen reads
+(`herdr pane read --source visible`, plain text — no SGR, and the adapter matches shape, never
+colour) of a scratch Muse pane in `/private/tmp/collie-audit/work`, cut at the Voice rule: the
+transcript above it held account/billing panes and was dropped, so each file is the probed tail
+verbatim and nothing more. The probe typed only filter text and arrows inside the pickers and
+left both with Escape; effort (`xhigh`) and every HUD flag were verified unchanged afterwards,
+and Enter was never pressed inside a picker. The typed `/hud` screen (`filter: eff`, two rows
+left) was probed but is deliberately not a fixture: under a foreign Surface profile its few
+under-rule rows walk as a statusline and the generic corpus reads it free (its own profile
+reads it unreadable, and the Muse adapter refuses it), so the adapter test rebuilds that
+geometry from `muse--filter-hud.txt` instead. Full probe log:
+[`DIALOG_NOTES.md`](../../lib/harness/muse/DIALOG_NOTES.md) §7.
 
 
 ## opencode corpus (captured 2026-09-26, opencode 1.18.32, herdr 0.9.0, private Herdr session)
@@ -2234,6 +2465,29 @@ The last seven rows were captured on opencode 1.18.34, the rest of this corpus o
 `idle`, not `blocked`, under the question dialogs probed in round two (see "Round two" in
 `QUESTION_NOTES.md`). Each of the seven was checked for user and host names, home paths, tokens and
 session ids and holds only probe strings and the model name.
+
+## opencode 2.1 question corpus (captured 2026-10-27, opencode 2.1.1, throwaway tmux pane)
+
+Captures of the same `question` tool dialog on **opencode 2.1.1**, in a throwaway tmux session at
+120 by 40, `OPENCODE_DISABLE_AUTOUPDATE=1`, with the prompts sent by hand. Read with
+`tmux capture-pane -p -e`. Byte-faithful; the only text above the dialog is the probe prompts and
+the model's own short replies. The differences from 1.18 are measured in
+`web/src/lib/harness/opencode/QUESTION_NOTES.md` → "Round three": a `Questions` title row, the
+pointer painted as an accent ink rather than a chip, `Submit` in place of `Confirm`, a bold active
+chip, a review body with no `Review` heading, and a checkbox on the free-text row.
+
+| Fixture | State / what's in it | Herdr status |
+| --- | --- | --- |
+| `oc--v211-question--single.txt` | One single-select question, `Which colour?`, three options with descriptions plus `4. Type your own answer`, `Questions` title above, pointer (accent ink on the digit and label) on `1. Red`, footer `↑↓ select  enter submit  esc dismiss` | not read |
+| `oc--v211-question--single--moved.txt` | After one `Down`: the accent ink is on `2. Green`, nothing else changed | not read |
+| `oc--v211-question--multi.txt` | One multi-select question, four options: tab bar `Toppings  Submit`, `[ ]` boxes, the free-text row reads `5. [ ] Type your own answer`, footer `⇆ tab  ↑↓ select  enter toggle  esc dismiss` | not read |
+| `oc--v211-question--multi--toggled.txt` | After `Enter` on `1. [ ] Ham` and one `Down`: `1. [✓] Ham` (accent box, bright label, grey digit) and the pointer's accent ink on `2. Olives` | not read |
+| `oc--v211-question--multi--review.txt` | The `Submit` tab of a lone multi call: `Toppings: Ham, extra` with no `Review` heading, footer `⇆ tab  enter submit  esc dismiss` | not read |
+| `oc--v211-question--two.txt` | Two questions in one call: tab bar `Colour  Size  Submit`, `Colour` active (bold), footer `⇆ tab  ↑↓ select  enter confirm  esc dismiss` | not read |
+| `oc--v211-question--two--answered.txt` | Back on `Colour` after answering it: `1. Red ✓`, the pointer on it, `Size` still unanswered | not read |
+| `oc--v211-question--two--review.txt` | The `Submit` tab with both answered: `Colour: Red` and `Size: Small` on consecutive rows, no `Review` heading | not read |
+| `oc--v211-question--multi--free-text.txt` | The free-text input OPEN: the row reads `5. [✓] <typed>`, the list's footer gives way to `⇆ tab  enter done  esc close`. Stays raw; the card with Escape covers it | not read |
+
 
 ## Claude Code box table with a VS16 emoji (captured 2026-10-13, Claude Code 2.1.296, herdr 0.9.0, sandbox pane)
 
@@ -2476,8 +2730,9 @@ operator's own statusline. The captures back the `cursor` input profile.
 | `cursor--working-queued.txt` | Enter in a turn queued the draft: a `┌─ follow-ups` box above the input box with `│ ○ queued note` and `│ enter steer · ↑ select/edit · esc cancel`, and `ctrl+c to stop` at the right end of the `→` row. Labelled `running` |
 | `cursor--ask-question.txt`, `cursor--ask-question-moved.txt` | The agent's question in a `┌` box that replaces the input box, with the pointer on the first and the second option. Labelled `dialog` |
 | `cursor--idle-after-turn.txt` | The turn is over: `→ Add a follow-up` in grey. Labelled `idle` |
+| `cursor--idle-bottom-docked.txt` | **Derived, not captured** (issue 640): `cursor--idle-after-turn.txt` cut after the prompt row, so `→ Add a follow-up` is the last row of the screen with no `▀` rule and no statusline under it, as ceb3 describes a bottom-docked prompt. The profile's open-bottom frame alternate (`idle.frameAlternates`, interior walk) reads it. Replace it with a real capture when one exists. Labelled `idle` |
 | `cursor--permission-shell.txt` | A shell command approval (Run Everything off) that replaces the box: `Run this command?`, `→ Run (once) (y)` and three more options. A probe character and a Backspace typed here changed nothing. Labelled `dialog` |
-| `cursor--after-skip.txt` | Escape on that approval: a box with `→ Tell the agent what to do instead (Enter to send, empty to skip, Esc to cancel)` and no statusline under it. The profile does not list that hint, so the box reads as a draft and a send stops. Labelled `other` |
+| `cursor--after-skip.txt` | Escape on that approval: a box with `→ Tell the agent what to do instead (Enter to send, empty to skip, Esc to cancel)` and no statusline under it. That hint is the box's placeholder in this state (typing replaces it, Enter sends), and the profile lists it in `idle.placeholders.texts`, so the box is free. Labelled `idle` (issue 640) |
 | `cursor--shell-mode-empty.txt`, `cursor--shell-mode-draft.txt` | `!` turned the box into a shell prompt: a yellow `!` and the grey hint `Run a command — e.g., git status`, then `! echo hi`. The hint is not a placeholder of the profile, so an empty shell prompt reads as a draft and a message never goes into it. Labelled `draft` |
 | `cursor--v20261016-idle-after-queued.txt` | 2026.10.16: a send held during a turn went out when the turn ended (`queued note from collie` in the transcript), and the box is empty again. Labelled `idle` |
 
@@ -2600,6 +2855,18 @@ Inherent to vanilla Claude Code: the model writes AskUserQuestion's question tex
 |---|---|
 | `claude--v2304-ask-no-question-mark--w135.txt` | **Derived** from the field report's `display` (an unread-dialog report from a `cui` session), escapes kept, line endings LF. Hardening against a user theme (ui-themes): the coloured strip and blank column left of the dialog, the rules wrapped into a `──` stub above the chip and above `Chat about this`. The chip ` ☐ Green #29`, a five-row question in the `│` gutter ending in `.`, two options with two-row descriptions, `3. Type something.`, `4. Chat about this`, the footer, then a task checklist. Every letter of the transcript, the chip label, the question, the option labels and descriptions and the checklist items was replaced by neutral words of the same width; every escape, glyph, digit, space, `│` and rule is kept, and no `?` was added. `Type something.`, `Chat about this`, the footer and the checklist's count rows are as captured. Lifts a `select` card. Labelled `dialog` |
 | `claude--v2304-ask-no-question-mark-plain--w135.txt` | **Derived** from a plain `claude` 2.1.304 capture (lab, 135 columns, escapes kept, line endings LF): the transcript above the dialog's rule, the lab prompts included, replaced by neutral words of the same width. The dialog is as captured: ` ☐ Ship it`, `The release branch has passed every check. Pick how to proceed with the merge.`, `Merge now (Recommended)`, `Hold the merge`, `3. Type something.`, `4. Chat about this` and the footer. Lifts a `select` card. Labelled `dialog` |
+| `claude--v2304-ask-chip-question-mark.txt` | Plain `claude` (`--safe-mode --setting-sources ""`) at 120 columns, read through `readPane` and trimmed to the prompt bubble and the dialog: the chip ` ☐ Deploy?` ends in `?` while the question row `The staging build passed every check. Pick how to proceed with the rollout.` ends in `.`. `singleSelectChipUnderRule` anchors on the `☐` chip under the top rule and `questionUnderChip` reads only the rows below that chip, so the question is the row under the chip and never `☐ Deploy?`. Labelled `dialog` |
+| `claude--v2304-ask-two-paragraph--w80.txt` | Plain `claude` (`--safe-mode --setting-sources ""`) at 80 columns, trimmed to the prompt bubble and the dialog: ` ☐ Release`, a two-paragraph question across seven `│` gutter rows (paragraph 1 carries `https://ci.example.test/runs/42?tab=checks`, a bare `│` row separates the paragraphs, and paragraph 2 ends in `?`), pointer on `1. Production`. `questionUnderChip` joins all non-empty rows below `☐ Release` so the first row is neither dropped at `MAX_QUESTION_ROWS = 6` nor leaked into `model.subject`, and the bare `│` row does not insert a double space. Labelled `dialog` |
+| `claude--v2312-draft-upload-path--w100.txt` | Claude Code 2.1.312 in tmux at 100 columns (lab 2026-10-30, after the field case of 2026-10-29): one bracketed paste of a two-paragraph message whose first paragraph ends with a Collie upload path (`/uploads/w7C_pF-mvtrpn7j-e4f81595.png`, an existing file). 2.1.312 keeps the path as TEXT on a row of its own after the space and drops the blank line; 2.1.305 attached it as `[Image #1]`. The box reads as a draft of all four rows joined, and `boxMatches` takes this literal form beside the image form (`WholePaste.literal`). A path that is the whole paste still becomes `[Image #1]` on 2.1.312. Labelled `draft` |
+| `claude--v2312-weekly-limit-row--w120.txt` | Claude Code 2.1.312 in tmux at 120 columns (live check 2026-10-30, release 1.25.0, a scratch bridge's watch read, plain text): a fresh pane on Haiku with an empty box, the footer `⏸ manual mode on · ? for shortcuts`, and under it the usage row `You've used 75% of your weekly limit · resets Nov 4, 2am (…) · /usage-credits to keep using Claude Code`. Claude Code drops the row once the box holds two rows, so the rows under the box went from 2 to 1 and a send ended typed_not_submitted (changed). The profile names the row a hint (`idle.volatile.below.hints`), so the Send Protocol leaves it out of that count. The time zone was replaced with `Europe/Lisbon`, same width. Reads idle, no dialog, the composer empty. Labelled `idle` |
+| `claude--v2317-survey-context-row--w160.txt` | Claude Code 2.1.317 at 160 columns (issue 705, 2026-11-05), **reconstructed**, not captured: the issue gave the screen as a redacted row-shape table, not text, so this is the 2.1.303 survey screen (`claude--v2303-titled-edge-survey--w160.txt`) with the update row replaced by Claude's right-aligned context field `4% until auto-compact`, the colours of that fixture kept (SGR). Rows: `● How is Claude doing this session? (optional)`, `  1: Bad    2: Fine   3: Good   0: Dismiss`, the field right-aligned on the row under the keys, the titled top edge (`main`), the empty box, one footer row. Without the profile's notice gap `^ +\d{1,3}% until auto(?:-[\w…]*)?$` the Surface read the key row as a dialog and refused every send (`unconfirmed`, then `stale_surface`). Reads idle, modal none, the composer empty, free, and lifts the survey card over a live box. Labelled `idle` |
+| `claude--v2317-survey-context-row-plain--w160.txt` | The same screen with every SGR byte stripped, as herdr-core hands it out (`readIsUnstyled` holds). Same reading, same label. Labelled `idle` |
+| `claude--v2317-verbose-tokens-notice-idle--w154.txt` | Claude Code 2.1.317 at 154 columns with `verbose` on (field case of 2026-11-03, PR 668): built from the PR's synthetic screen, plain text, the statusline words neutral. A `Brewed for` row, the right-aligned `[-]` mark, a `✦ Heads up · ` notice with its key row `  1: Learn more   2: Knew this already   0: Dismiss`, then the session's token count `230267 tokens` right-aligned on a row of its own, the empty box and two footer rows. Without the profile's notice gap `^ +\d+ tokens$` the Surface read the key row as a dialog and refused every send. Reads idle, modal none, the composer empty, free. Labelled `idle` |
+| `claude--v2317-next-steps-suggestions-empty-box--w100.txt` | Claude Code 2.1.317 at 100 columns with the `next-steps` plugin (discussion 659, 2026-11-03, SGR kept): after a finished turn the plugin draws `next:` and three numbered prompts plus `0: dismiss` above the box, and puts the top suggestion into the empty box as dim ghost text. Claude Code draws its cursor as one reverse-video cell on the ghost's first letter (`ESC[7m` + `A`, then `ESC[0m ESC[2m` + the dim rest). The `next:` block reads `modal: none`. The reverse-video cell is neither dim nor ghost-coloured, so before the cursor rule in `readPlaceholder` (`holeEvery`) the hole counted as typed text and the box read `composer: draft`. Reads idle, the composer empty, free. Labelled `idle` |
+| `claude--v2317-next-steps-suggestions-one-line-draft--w100.txt` | The same screen with the person's one-line draft `also add a docstring` in the box: typed text in the default ink, the cursor a reverse-video blank after it. The `next:` rows stay above the box. Reads a draft of `also add a docstring`, not a placeholder (typed cells are not dim). Labelled `draft` |
+| `claude--v2317-next-steps-suggestions-dismissed--w100.txt` | The same pane after `0` dismissed the suggestions: the `next:` block and its `[-]` mark are gone, and the box still holds the dim ghost suggestion with the cursor on its first letter. Reads idle, the composer empty, free. Labelled `idle` |
+| `claude--v2304-select-preview-cjk.txt` | Plain `claude` (`--safe-mode --setting-sources ""`) at 120 columns, trimmed to the prompt bubble and the dialog: single-question preview AskUserQuestion (` ☐ デザイン`, `どのウィジェットのデザインにしますか？`), pointer on `1. カード型`, options `2. コンパクト` and `3. ミニマル` left of the boxed preview at display column 34. `splitAtDisplayColumn` splits by terminal display width so double-width CJK option labels do not shift the cut into the preview box's left border. Labelled `dialog` |
+| `claude--v2304-select-preview-cjk-moved.txt` | The same live pane after sending one `Down` key (`herdr pane send-keys <pane> Down`): pointer moved onto `2. コンパクト`, right-hand preview updated to option 2's compact box. Labelled `dialog` |
 
 ## The survey's transcript question, 2.1.306 (captured 2026-10-21, 153 columns, Herdr)
 
@@ -2643,7 +2910,7 @@ through.
 |---|---|
 | `pi--v130-slash-model-list--w120.txt`, `--w80.txt` | pi 1.3.0, the box holds `/model`, under it `→ model` and `scoped-models`, then the folder and stats rows. Labelled `popup` |
 | `pi--v130-slash-settings-list--w120.txt`, `--w80.txt` | The box holds `/settings`, one entry `→ settings`. Labelled `popup` |
-| `pi--v130-slash-mod-partial--w120.txt` | The box holds `/mod`, the pointer on `model`: the list points at another command. Labelled `dialog` |
+| `pi--v130-slash-mod-partial--w120.txt` | The box holds `/mod`, the pointer on `model`: the list points at another command. Labelled `popup` since issue 638 (pi's `leadOpens`, see the pi fuzzy list section below); `dialog` before |
 | `pi--v130-model-selector-empty--w120.txt` | The selector `/model` opens, drawn between the box's two rules: `Only showing models from configured providers`, a `>` search row, `No matching models` and the key hints. Labelled `dialog` |
 | `pi--v130-settings-screen--w120.txt` | The settings screen `/settings` opens, in the box's place. Labelled `dialog` |
 | `pi--v0871-slash-model-list--w120.txt`, `--w80.txt` | pi 0.87.1, the same `/model` list on a pane that is not full. Labelled `popup` |
@@ -2651,7 +2918,7 @@ through.
 | `pi--v0871-model-selector-empty--w120.txt` | pi 0.87.1, the selector `/model` opens. Labelled `dialog` |
 | `omp--v18-6-slash-model-list--w120.txt`, `--w80.txt` | omp 18.6.1, the box holds `/model`, under it ten entries from `❯ ⬢  model` to `↻  loop`, a scrollbar column; at 80 columns the descriptions wrap. Labelled `popup` |
 | `omp--v18-6-slash-settings-list--w120.txt`, `--w80.txt` | The box holds `/settings`, its list pointing at `settings`. Labelled `popup` |
-| `omp--v18-6-slash-mod-partial--w120.txt` | The box holds `/mod`, the pointer on `model`. Labelled `dialog` |
+| `omp--v18-6-slash-mod-partial--w120.txt` | The box holds `/mod`, the pointer on `model`. Labelled `popup` since 1.24.1 (omp's `leadOpens`, see the omp fuzzy list section below); `dialog` before |
 | `omp--v18-6-model-selector-empty--w120.txt` | The Models picker `/model` opens, a full-screen box with providers and models. Labelled `dialog` |
 | `omp--v18-6-settings-screen--w120.txt` | The settings screen `/settings` opens. Labelled `dialog` |
 
@@ -2742,6 +3009,90 @@ separator draws U+E0BB and no closer. The `minimal` preset has no pi glyph and o
 | `omp--v18.11.1-slash-idle--w120.txt` | `statusLine.separator: slash`, empty box. Labelled `idle` |
 | `omp--v18.11.1-minimal-idle--w120.txt` | `statusLine.preset: minimal`, empty box. Labelled `idle` |
 | `omp--v18.11.1-ascii-idle--w120.txt` | `symbolPreset: ascii`, empty box. Labelled `idle` |
+
+## omp 18.12.2 `/goal` in a goal turn (captured 2026-10-22, real OMP, private Herdr 0.9.5, PR 577)
+
+The screens of a real OMP 18.12.2 (`omp --version` reads `omp/18.12.2`) while a goal turn streams, taken
+as Collie sends: the probe `⌁`, Backspace, the command text, then Enter, with a read between each step.
+They are the evidence behind `keys.commandsRunInTurn` in `omp.json`, and the screens
+`bridge/surface/protocol.test.ts` ("OMP 18.12.2 `/goal` in a goal turn, replayed from the real capture")
+and `command-list.test.ts` read.
+
+How they were made: a private Herdr 0.9.5 server (its own `HOME`, XDG folders and socket), one pane of
+119 columns by 40 rows (a read keeps the rows down to the last one that holds text, 20 to 34 of them). OMP ran stock
+(`--no-lsp --no-title`) from the installed binary with a scratch `HOME`, so no user credential or
+setting was used, and a config that held `goal.enabled`, `setupVersion: 2` and `startup.checkUpdate: false`.
+The model was `lab/slow`, a local OpenAI-compatible endpoint that streams one word a second and calls no
+model; it received one request. The goal was `/goal Lab objective: keep streaming ticks`, set before the
+first screen. Every file is `herdr pane read <pane> --source visible --format ansi --raw`, escapes and
+CRLF line ends kept, no row cut or changed. The only path on a screen is the lab folder, shown in the
+status line as `collie-goal-capture-lab/work`. No user, host, key or token is in any file.
+
+| Fixture | State / what's in it |
+|---|---|
+| `omp--v18-12-2-goal-turn-running--w119.txt` | Before `/goal pause`: the goal's first ticks streaming, `⎋ Working…`, the status line `⠙ 11s … 🎯 Goal 0 …`, an empty `╰─` box. The screen S0 reads. Labelled `running` |
+| `omp--v18-12-2-goal-turn-running-probe--w119.txt` | The probe `⌁` in the box. Labelled `draft` |
+| `omp--v18-12-2-goal-pause-typed--w119.txt` | The probe cleared and `/goal pause` typed: `╰─ /goal pause`, and under it the list of the command's arguments, one row `❯ pause   Pause the current goal`. Labelled `popup` |
+| `omp--v18-12-2-goal-pause-result--w119.txt` | 0.4 s after Enter: ` Goal mode paused.` over `⎋ Working…`, the status segment `⏸ Goal 0`, the stream still going. Labelled `running` |
+| `omp--v18-12-2-goal-pause-result-later--w119.txt` | 3 s after Enter: the stream has gone on (`tick 17`), `Goal mode paused.` is still the last status row. Labelled `running` |
+| `omp--v18-12-2-goal-resume-before--w119.txt` | Before `/goal resume`: paused, `⏸ Goal`, the box empty. Labelled `running` |
+| `omp--v18-12-2-goal-resume-probe--w119.txt` | The probe in the box, paused. Labelled `draft` |
+| `omp--v18-12-2-goal-resume-typed--w119.txt` | `/goal resume` typed, the argument list's row `❯ resume   Resume a paused goal`. Labelled `popup` |
+| `omp--v18-12-2-goal-resume-result--w119.txt` | After Enter: ` Goal mode resumed.`, the segment back to `🎯 Goal 0`, the stream going. Labelled `running` |
+| `omp--v18-12-2-goal-bare-before--w119.txt` | Before a bare `/goal`: resumed, `🎯 Goal`, the box empty. Labelled `running` |
+| `omp--v18-12-2-goal-bare-probe--w119.txt` | The probe in the box. Labelled `draft` |
+| `omp--v18-12-2-goal-bare-typed--w119.txt` | `/goal` typed: ten command rows under the box, the pointer on `🎯 goal   Goal: active (Lab objective: keep streaming ticks)`. Labelled `popup` |
+| `omp--v18-12-2-goal-bare-menu--w119.txt` | After Enter: the goal menu, a rounded box `Goal: Lab objective: keep streaming ticks (active)` with `❯ Show details`, `Adjust budget…`, `Pause`, `Drop` and `↑/↓ navigate  ⏎ select  ⎋ cancel`, the stream's last rows above it. It owns the keyboard. Labelled `dialog` |
+
+Each send's step after the probe (Backspace) read the same screen as the one before it, so that read
+has no file of its own. The Escape that closed the menu was the lab's own and is not in a file.
+
+What the screens show. Enter pressed during the goal turn ran the command at once and never queued or
+steered it: no `Steering` or `After yield` row came up, and the status line changed with the command.
+OMP's own words are `Goal mode paused.` and `Goal mode resumed.`. A `/goal pause` or `/goal resume` typed
+into the box brings up the list of that command's arguments under the box, with the pointer on the
+argument typed (`commandList.argumentList`, `command-list.ts`).
+
+## omp 18.12.6 tool-approval panel (captured 2026-10-25, real omp, rig pane, issue batch 1.24.1)
+
+Two screens of a real omp 18.12.6 (`omp --version`) with its tool-approval panel up for a `bash` call
+(`echo gang-test`), under a Collie rig bridge (port 18703, `approval` mode, model `anthropic/claude-haiku-4.5`
+on OpenRouter, a scratch `HOME` and project folder under `~/.cache/collie-lab/`). Each is the rig's plain
+pane read, 120 columns, copied unchanged: the rig's read carries no SGR, so these two files hold no escape
+sequences (every other omp approval capture here does). The reader looks at text only, the pointer is the
+`❯` glyph, so the missing paint costs nothing. No user, host, key or token appears; the one path on a
+screen is the lab's own, cut to `…ng/04-dialogs/state/harness/omp/project` by omp.
+
+The panel is a new layout (the pi-tui overlay panel): no blank spacer rows, the choices under the body, a
+third row `Approve bash for this session`, a divider over a new footer (`↑/↓ choose · ⏎ select ·
+Ctrl+⏎/Ctrl+Q approve · ⎋ deny · Ctrl+O details · type to deny and steer`), and the composer's band (the
+status row and the empty `╰─`) still drawn under the box. Enter approves, Escape denies and Down then Enter
+approves for the session; all three were proved by raw keys in the lab. Before the reader of
+`web/src/lib/harness/omp/approval.ts` learned this shape the Surface said `modal: unreadable` on it and
+every send was refused `unconfirmed`.
+
+| Fixture | State / what's in it |
+|---|---|
+| `omp--v18-12-6-approval-bash--w120.txt` | A fresh session in its first turn: the `What's New` banner, the user line, the model's short reasoning, the finished `$ echo gang-test` tool box, and the panel with the pointer on `Approve`. Labelled `dialog`, lifts as `Approve`, `Approve bash for this session`, `Deny` |
+| `omp--v18-12-6-approval-bash-later--w120.txt` | The same panel 18 s into the turn, taken after a refused `Type here` tap: the reasoning's tail above a boxed tool call, the `⎋ Run echo gang-test` row with omp's title tag to its right, and the panel with the pointer still on `Approve`. Labelled `dialog` |
+
+No capture holds the pointer on another row, so the moved states in the tests are the capture with the `❯`
+moved (`bridge/surface/ask.test.ts`) or drawn the way the source lays the rows out (`approval.test.ts`).
+
+## omp skill chip and pasted image chip (captured 2026-10-25, real omp 18.6.1 and 18.12.6, rig pane)
+
+Plain pane reads from the same Collie rig as the approval panel above (no SGR, 120 columns), cut to whole
+rows. omp rewrites a box that holds `/skill:<name> <arg>` into a chip, `✦ <name> <arg>`, as soon as a space
+follows the name; a skill with no argument stays as typed. Before the profile's `collapse.pattern` knew the
+chip every skill with an argument ended `typed_not_submitted / mismatch`, on both versions. A pasted image
+path becomes a chip too, `🖼 #N` (U+1F5BC) on 18.6.1 and `📷 #N` (U+1F4F7) on 18.12.6; only the first matched.
+
+| Fixture | State / what's in it |
+|---|---|
+| `omp--v18-6-skill-chip--w120.txt` | omp 18.6.1, cut to its last two rows: the band (`π > ◒ Haiku 4.5 > 🗺 Plan ⏸ > … > $0.05 ▶──6%─…`) and the prompt row `╰─ ✦ darius-work-plan reply with the single word OK and call no tools`. Typed text was `/skill:darius-work-plan reply with the single word OK and call no tools`. Labelled `draft` |
+| `omp--v18-12-6-skill-chip--w120.txt` | The same on omp 18.12.6, cut to its last two rows: the band with no cost segment and the same chip row. The rows above held a 402 banner of the run, left out. Labelled `draft` |
+| `omp--v18-12-6-image-chip--w120.txt` | omp 18.12.6 after a bracketed paste of one image path: the title tag `🎨 COLOR: …` at the right, omp's image card `╭── 📷 #1 ───╮` with its `200x200` footer, the band, and the prompt row `╰─ 📷 #1`. CRLF normalised to LF. Labelled `draft` |
+
 ## Hermes corpus (captured 2026-10-16, Hermes Agent v0.22.2 classic CLI, Herdr 0.9.1, sandbox pane)
 
 `hermes--*.txt` come from one disposable Herdr pane running the installed `hermes --cli` with a
@@ -2771,7 +3122,17 @@ this corpus. Recipes: [`hermes/CLARIFY_NOTES.md`](../../lib/harness/hermes/CLARI
 | `hermes--slash-popup` | `/mo` typed, grey auto-suggestion `a`, completion menu under the input | composer, draft `/mo` |
 | `hermes--model-picker` | `/model`, the model list; status slot blank, input still idle | picker, Ctrl+C card |
 | `hermes--palette` | Ctrl+P palette; status slot blank, input still idle | picker, Ctrl+C card |
+| `hermes--tui-idle-hint` | Ink TUI (`hermes --tui`), issue 549, a fresh session: status row ` ─ 就緒 │ … ─ ~/workspace` one column in, ` ❯ 有什麼想問的？…` under it, no rule rows. From NCheuk's plain-text capture of 2026-11-04 (no SGR); the two transcript rows above are invented and the rows are padded to one width | composer, hint read as an empty box, free |
+| `hermes--tui-idle-title` | The same once the session has a title: the status row ends in the title and ` ❯` is bare (Ink shows no hint after the first turn) | composer, empty, free |
+| `hermes--tui-idle-en` | The English idle screen of the issue body (MigueMercedes, Hermes 0.22.2): ` ─ ready │ …` over ` ❯ Try "explain this codebase"`; the shell row above is the capture's | composer, hint read as an empty box, free |
+| `hermes--tui-draft` | A one-line draft ` ❯ testing idle with draft` under the status row, no title (NCheuk, 2026-11-04) | composer, draft read back |
+| `hermes--tui-draft-title` | The same with a titled status row | composer, draft read back |
+| `hermes--tui-busy` | A turn running: ` ─ (⊙_⊙) formulating…   · 13m 32s │ …` over ` ❯ Ctrl+C 中斷…`. NCheuk's capture of 2026-11-03 (issue 549 and PR 661): plain text, 215 columns, transcript rows invented | composer, turn running, the busy hint no draft (a send is held) |
+| `hermes--tui-busy-echo` | The same with an echoed ` ❯ some earlier echoed command` row in the transcript above | same read: the lowest box wins |
+| `hermes--tui-busy-fresh` | A turn running in a fresh session, ` ─ ヽ(>∀<☆)☆ deliberating…  · 0s │ …` (NCheuk, 2026-11-04) | composer, turn running |
+| `hermes--tui-busy-title` | The same with a titled status row | composer, turn running |
 | `hermes--exited` | The shell after `/exit` | no input, no card |
+| `hermes--v0225-title-idle` | Hermes 0.22.5, issue 657: the session title sits in the top rule, `── Session Title ─`, over the `❯` row and a 120-cell bottom rule. Three rows only, from the reporter's report; the styling, the placeholder row and the bottom rule's width (Hermes draws it across the pane) come from `hermes--idle`, and the rows start in column 0 (the report's one-space indent is Markdown, and a leading space fails the column-0 anchors). Not a `herdr pane read` of ours | composer, no draft, free |
 | `hermes--clarify-choices` | One question, three choices and Other, `❯` on 1, countdown `(3547s)` | digits 1 to 4 |
 | `hermes--clarify-choices-moved` | The same after Down, `❯` on 2 | digits 1 to 4 |
 | `hermes--clarify-choices-w60` | The same at 60 columns, prompt `?` | digits 1 to 4 |
@@ -2791,3 +3152,695 @@ this corpus. Recipes: [`hermes/CLARIFY_NOTES.md`](../../lib/harness/hermes/CLARI
 | `hermes--approval-w60` | The same at 60 columns, prompt `⚠` | Allow once, Deny |
 | `hermes--approval-long` | A 120-character command, `5. Show full command` | Allow once, Show full command, Deny |
 | `hermes--approval-long-full` | After `5`: row 5 gone, `❯` on Deny | Allow once, Deny |
+
+## Steer and queue mid-turn (captured 2026-10-23, M69 spec 01, pi 1.3.0, OMP 18.6.1, Codex 0.164.0, scratch tmux, 120 columns)
+
+Real screens of three harnesses while a slow turn runs (a bash call, `for i in $(seq 1 40); do echo $i; sleep 1; done`). A line,
+`also say hello at the end`, was typed into the box and sent with the harness's steer key (Enter on all three), and in a second run
+with its queue key (pi Alt+Enter, OMP Ctrl+Q, Codex Tab). Each run has five captures: `typed` (the line in the box, no key pressed),
+`after-now` (read straight after the key, about 0.1 s), `after` (2 s later) and `done` (the turn ended and the line was answered).
+Taken with `tmux capture-pane -p -e` in a private tmux server (`tmux -L`), isolated `HOME`, no Herdr; the lab's folder was replaced with
+`/home/demo/sandbox/collie-labs/steerqueue`, a path of the same length. Findings table: `experiments/harnesses/steer-queue-2026-10-23.md`.
+
+The `<h>` is `pi--v130`, `omp--v18-6` or `codex--v0164`; every name ends in `--w120.txt`.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `<h>-steer-typed` | Turn running, the line in the box | pi `── ⠙ Working ──` rule, OMP spinner and seconds in the status bar, Codex `tab to queue message` hint |
+| `<h>-steer-after-now` | Enter pressed, read at once | pi: box empty, no row yet. OMP: box still holds the line. Codex: `Messages to be submitted after next tool call` over `↳ <line>` |
+| `<h>-steer-after` | 2 s after Enter | pi `Steering: <line>` row. OMP: the line stands in the transcript and the tool box says `Backgrounded early to handle an incoming message`. Codex: the line stands in the transcript as `› <line>`, no `↳` row |
+| `<h>-steer-done` | Turn ended | The agent answered the line after the tool call (pi, Codex) or after the backgrounded job (OMP). Idle |
+| `<h>-queue-typed` | Turn running, the line in the box | As the steer-typed capture |
+| `<h>-queue-after-now` | Queue key pressed, read at once | pi: box empty, no row yet. OMP: box still holds the line. Codex: `Queued follow-up inputs` over `↳ <line>` |
+| `<h>-queue-after` | 2 s after the key | pi `Follow-up: <line>`. OMP `After yield · 1`, `1. <line>`. Codex `Queued follow-up inputs`, `↳ <line>`, `shift+← edit last queued message` |
+| `<h>-queue-done` | Turn ended | The agent finished the first task, then ran the line as a second turn. Idle |
+
+## Steer witness gaps from the live rerun (captured 2026-10-23, pi 1.3.0, OMP 18.6.1, Claude Code 2.1.309, scratch tmux, 120 columns)
+
+Real screens, taken after the int/edge-5 live rerun found three receipts or turn states wrong. Taken with `tmux capture-pane -p -e` in
+a private tmux server (`tmux -L`), isolated `HOME` or `CLAUDE_CONFIG_DIR`, no hooks, no Herdr. pi and OMP ran on
+`openrouter/anthropic/claude-haiku-4.5`, Claude Code on Haiku. The lab's folder was replaced with `/home/demo/sandbox/collie-labs/steer-queue-fix`,
+a path of the same length (OMP's shortened `…che/collie-lab/edge5fix-lab` became `…collie-labs/steer-queue-fix`, Claude's
+`~/.cache/collie-lab/edge5fix-lab` became `~/sandbox/collie-labs/steerq-fix`).
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `pi--v130-steer-after-queued--w120.txt` | `running` | A slow bash call runs; `ok` was queued with Alt+Enter, then `say banana` sent with Enter. pi draws `Steering: say banana`, then `Follow-up: ok`, then `↳ Alt+Up to edit all queued messages`: the queued row stands between the Steering row and the hint |
+| `omp--v18-6-steer-pending-block--w120.txt` | `running` | OMP streams a long plain-text answer (no tool runs); `say banana` sent with Enter waits for the next step in a block `Steering · 1` / `1. say banana` / `└ Alt+↑ to edit` over the spinner row. The queue draws the same rows and hint under `After yield · 1` (`omp--v18-6-queue-after`): only the header tells them apart. Taken while streaming, not during a tool batch: during a parallel bash batch OMP backgrounded the calls at once and took the line, with no block |
+| `omp--v18-6-steer-over-queued--w120.txt` | `running` | OMP writes a long file (the write tool's body streams); `ok` was queued with Ctrl+Q, then `say banana` sent with Enter. Two blocks stack over one hint: `Steering · 1` / `1. say banana`, then `After yield · 1` / `1. ok`, then one `└ Alt+↑ to edit`. Second live pass: the steer witness took the `After yield · 1` header for a wrapped row and the receipt said unknown. The lab folder replaced as above; taken in a second private tmux server |
+| `claude--v2-1-309-interrupted--w120.txt` | `idle` | Claude Code 2.1.309 (Haiku, the operator's three-row statusline): a turn read a file with its Read tool, then Escape while it thought. `⎿  Interrupted · What should Claude do instead?` over an empty box; no Stop hook fires. The same screen 2 s and 8 s after the key. Before the first output Escape takes the turn back instead and puts the prompt into the box |
+| `claude--v2-1-309-permission-denied--w120.txt` | `idle` | Claude Code 2.1.309: a Bash permission dialog answered `4. No`. `● Bash(…)`, `⎿  Interrupted · What should Claude do instead?`, `✻ Crunched for 2s · done 3:49 PM` over an empty box; no Stop hook fires |
+| `claude--v2-1-309-interrupted-fresh-session--w120.txt` | `idle` | Claude Code 2.1.309 under the operator's fullscreen TUI (`"tui": "fullscreen"`), a fresh session (`/clear`): a Bash call (`find /usr /opt -type f \| xargs md5sum \| wc -l`) interrupted with Escape. The short transcript stands at the top, `⎿  Interrupted · What should Claude do instead?` on row 14, then blank rows down to the box on row 35: the stopped row stands outside the six-row band above the box. Second live pass; taken in a second private tmux server, no hooks, isolated `CLAUDE_CONFIG_DIR` |
+| `claude--v2-1-309-permission-denied-fresh-session--w120.txt` | `idle` | The same fresh fullscreen session: a Bash permission dialog answered `4. No`. `Ran 1 shell command`, the Interrupted row and `✻ Crunched for 2s` at the top, blank rows, then `◐ medium · /effort` over the box |
+| `claude--v2-1-309-stopped-prompt-restored--w120.txt` | `draft` | The same fresh fullscreen session: `Write 700 numbered lines, …` sent, Escape 1.2 s later, before the first token. Claude takes the turn back and puts the prompt into the box; no Interrupted row and no Stop hook. Only Collie's own Stop receipt tells the fold the turn ended |
+
+## The prompt echo over a running turn (captured 2026-10-25, Claude Code 2.1.310, 120 columns, Herdr)
+
+Claude Code echoes each sent prompt in the transcript as `❯ ` and the text, and a long prompt wraps to
+rows indented to column 2. The bridge's whole-screen cue read over a found box took that echo for a
+pointed list, and with a numbered list in the answer under it for a dialog: a phone send into the
+running turn was refused `not_free` and held until the turn ended, where it should have gone in with
+Enter for Claude's own queue (`idle.promptEchoes` in claude.json). Taken from a disposable pane in
+the harness lab's own Herdr session (collie-rig), read through its scratch bridge's
+`GET /api/pane/:id?lines=60`, ANSI kept, CRLF rows, Haiku, the operator's three-row statusline. The
+exec row's `/var/home/<user>` is replaced with `/home/demo/user`, a path of the same length; every
+other byte is as read. Each screen is the S0 read of a send that a turn running `for i in $(seq 1 40);
+do echo $i; sleep 1; done` took.
+
+| Fixture | State / what's in it |
+|---|---|
+| `claude--v2-1-310-working-echo-numbered--w120.txt` | A three-row echo (`❯ First reply with a numbered list of 6 colors…`, two rows at column 2), the answer's list `1.` to `6.`, the Bash call counting, the spinner over an empty box. Reads `running`, `none`, `empty`; the whole-screen cue read was strong (the send held), now weak (it queues). Labelled `running` |
+| `claude--v2-1-310-working-echo-bullets--w120.txt` | The held case with no number near the box: the earlier turns (the numbered one among them) above, then a three-row echo (`❯ First reply with a bullet list of 6 colors…`), a bullet list (`- red - …`), the Bash call and the spinner. The echo alone read as a pointed list of three rows: strong (the send held), now none. Labelled `running` |
+| `claude--v2-1-310-working-echo-one-line--w120.txt` | The same pane with a one-row echo (`❯ Run this exact bash command…`): the whole-screen read was already none and the send queued. Labelled `running` |
+
+## A walky talky message queued in a running turn (captured 2026-10-26, Claude Code 2.1.310, 120 columns, Herdr)
+
+Browser leg case 16: a walky talky message sent while a turn streams a numbered list. Claude queues it
+and draws it over the box in the echo's shape: `❯ ` and the header line, the body and
+`ctrl+enter to send now` at column 2, a blank row, then the box with the faint placeholder
+`Press up to edit queued messages`. The framed cue read took those three rows for a pointed list, so
+the Surface claimed `unreadable` at S2 and the send ended `unknown(dialog_after_enter)`; the framed read
+now leaves out an echo-shaped run too (cues.ts `readCuesFor`). Both are the Send Protocol's own reads of
+that send in the rig's scratch bridge, cut to the last 24 rows, ANSI and trailing blanks stripped. They
+live in `web/src/fixtures/surface/` and are pinned by `cues.test.ts` and
+`bridge/surface/protocol.claude-queued.test.ts` only.
+
+| Fixture | State / what's in it |
+|---|---|
+| `claude--v2-1-310-walky-turn-empty-box--w120.txt` | S0: the answer's list up to `15.`, the empty box, `⏸ manual mode on · esc to interrupt` under it. Reads `running`, `none`, `empty` |
+| `claude--v2-1-310-walky-queued-two-rows--w120.txt` | S2, after Enter: the list up to `18.`, the three-row queued block, a blank row, the box with the placeholder. Reads `running`, `none`, `empty`; it read `unreadable` before |
+
+## Several queued messages, and pickers with no box (captured 2026-10-26, Claude Code 2.1.310, 119 columns, Herdr)
+
+A throwaway Herdr server in its own `XDG_CONFIG_HOME`, a scratch git project under
+`~/.cache/collie-lab/claude-queued/`, a copied `CLAUDE_CONFIG_DIR` (credentials without the refresh token,
+deleted after the run), `claude --model haiku --permission-mode default --strict-mcp-config`, and
+`stty cols 119 rows 40` (the headless pane shows 119 columns). Messages were typed with
+`herdr pane send-text`, `ctrl+j` between lines, and Enter, while a turn streamed a numbered list of fruits.
+Each file is `herdr pane read --source visible`, cut to the last 24 rows, trailing blanks stripped; no
+path is on them.
+
+What 2.1.310 draws: each queued message is its own block, `❯ ` and its first line, the later lines at
+column 2, and a blank row between two blocks. Only the last block carries `ctrl+enter to send now`. While
+the answer streams the blocks stand straight over the box; while the model still thinks they stand over
+the spinner and its tip row. A `- [ ]` line is no checkbox to the cues (the dash comes first). A numbered
+line under the first line no longer makes the block a list (cues.ts `withoutPromptEchoes`: only the
+pointer row decides). Escape with messages queued ends the turn and sends them as the next prompt; Up
+puts them all back into the box, joined. `/resume` and the rewind list replace the box, as the 208 older
+Claude dialog captures do, so the echo rule never reads them. Pinned by `cues.test.ts` and
+`bridge/surface/protocol.claude-queued.test.ts`.
+
+| Fixture | State / what's in it |
+|---|---|
+| `claude--v2-1-310-queued-three-blocks--w119.txt` | Streaming: a two-line block, then `❯ Queued two: reply B.`, then `❯ Queued three: reply C.` with the hint, blank rows between, the box with the placeholder. Reads `running`, `none`, `empty` |
+| `claude--v2-1-310-queued-over-spinner--w119.txt` | Thinking, no answer yet: the turn's own prompt echo, then four queued blocks (two-line, one-line, a numbered body, a `- [ ]` body) over `✽ Wandering… (5s · thinking)` and a tip row. Reads `running`, `none`, `empty` |
+| `claude--v2-1-310-queued-checkbox-body--w119.txt` | Streaming, the last block `❯ Checklist:` over `  - [ ] reply F`, `  - [ ] reply G` and the hint. Reads `running`, `none`, `empty` |
+| `claude--v2-1-310-queued-numbered-body--w119.txt` | Streaming, the last block `❯ Please do these:` over `  1. reply D`, `  2. reply E` and the hint. Reads `running`, `none`, `empty`; it read `unreadable` before |
+| `claude--v2-1-310-queued-numbered-first--w119.txt` | The known limit: the last block `❯ 1. reply H first` over `  2. reply I second` and the hint, the shape of a dialog's pointer on its first option. Reads `running`, `unreadable`, `empty` |
+| `claude--v2-1-310-resume-two-sessions--w119.txt` | `/resume` with two past sessions: `  ❯ Fruit taste descriptions list` over `    1 minute ago · master · 196KB`, the second session, the two-row key footer. No box. Lifts an ask; the cues alone read strong |
+| `claude--v2-1-310-rewind--w119.txt` | Escape Escape on an empty box: `Rewind`, one earlier prompt, `  ❯ (current)`, `Enter to continue · Esc to cancel`. No box. Lifts an ask; the cues alone read strong |
+
+## omp fuzzy command list under the box (captured 2026-10-25, omp 18.6.1 and 18.12.6, omp-gang testers 01 and 02)
+
+Real pane reads from the testers' rig: a scratch Herdr with its own bridge, `omp` on `openrouter/anthropic/claude-haiku-4.5`,
+120 columns, read through `GET /api/pane/:id` and cut to the last 16 rows (`omp--v18-6-1-slash-open-tall--w120.txt` is the
+whole read). Rows are kept as read, with their CRLF line ends. The scratch working folder is already cut by omp's own `…`.
+omp draws a fuzzy list of up to ten rows under the open box for any text that starts with `/`: `/help`, which omp does not
+have, lists ten commands that match it in part, the pointer on the first; `/mo` points at `model`; `/` points at the
+skills row. Enter would run the pointed command, not the typed one. Until 1.24.1 the box past such a list was found only
+when the pointer rested on the typed text, so these read `unreadable/torn`. `commandList.leadOpens` makes the list the
+typed text's own popup.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-6-1-slash-open-tall--w120.txt` | `popup` | 18.6.1, `/` typed: the whole read, ten rows from `✦ skill:` to `⤵ login`, a scroll bar column |
+| `omp--v18-6-1-slash-help-unlisted--w120.txt`, `omp--v18-12-6-slash-help-unlisted--w120.txt` | `popup` | `/help` typed (omp has no such command): ten rows, the pointer on `plan-review` |
+| `omp--v18-6-1-slash-mo-fuzzy--w120.txt`, `omp--v18-12-6-slash-mo-fuzzy--w120.txt` | `popup` | `/mo` typed: ten rows, the pointer on `model`, which a bare Enter runs (checked by hand on 18.6.1) |
+| `omp--v18-6-1-slash-nothere-fuzzy--w120.txt`, `omp--v18-12-6-slash-nothere-fuzzy--w120.txt` | `popup` | `/nothere` typed: nine rows, the pointer on `skills` |
+| `omp--v18-12-6-slash-comment-loop-row--w120.txt` | `popup` | 18.12.6, `//comment` typed in command mode: one row, `❯ ↻ loop`. The 402 notice's key id is zeros |
+| `omp--v18-12-6-stale-list-row-empty-box--w120.txt` | `idle` | 18.12.6 after a cancelled `//comment` (Ctrl+C): the box is empty and the last list row, `❯ ↻ loop`, stays under it. omp 18.6.1 redraws that row away; 18.12.6 keeps it until the next key. `commandList.staleWhenEmpty` leaves it out of the rows under the box that a send compares. The 402 notice's key id is zeros |
+
+## pi fuzzy command list under the box (captured 2026-11-01, pi 1.4.0, issue 638)
+
+Captured from a scratch Herdr session (`collie-canary`, its own server), pi 1.4.0 started with `--approve`
+in a scratch agent folder, 120 columns, 39 rows, read through Collie's own Herdr adapter while the Send
+Protocol ran a `mode=command` send (the read after the text was typed). Rows kept as read, CRLF. pi
+shortens the home folder to `~`, so no user name shows. Herdr types the text as keys, so pi's list opens;
+a tmux bracketed paste does not open it. pi 1.3.0 draws the same lists. pi draws a fuzzy list under the
+box for a text that starts with `/`: a half-typed command lists the commands that match it in part, and
+a command with an argument lists the matching arguments. Enter would run or pick the pointed entry, not
+the typed text. Until issue 638 the pi profile did not name `leadOpens`, so these screens read
+`unreadable`, the send ended `typed_not_submitted (modal_cue)` with the generic detail, and every later
+send on the pane was refused `unconfirmed` until a person pressed Escape in the terminal. With
+`commandList.leadOpens` the list is the typed text's own popup, and the rows of that list no longer
+count as rows under the box, so the probe that closes the list is no moved screen.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `pi--v140-slash-model-list--w120.txt` | `popup` | `/model` typed: `→ model` and `scoped-models`, then the folder and stats rows. The pointer rests on the typed command, so Enter runs it |
+| `pi--v140-slash-s-fuzzy--w120.txt` | `popup` | `/s` typed: five rows from `→ settings` to `resume` and a `(1/8)` count |
+| `pi--v140-slash-model-arg-list--w120.txt` | `popup` | `/model haiku` typed: the matching models, `→ anthropic/claude-haiku-4.5` first, and a `(1/23)` count |
+
+The two older captures of `/` alone with the whole palette, `pi--v110-slash-palette.txt` and
+`pi--v120-slash-palette-padded.txt`, move from `dialog` to `popup` with the same rule: the box holds the
+person's `/`, and the palette is its own.
+
+## OMP drafts taller than the box (captured 2026-10-25, omp gang reports 06 and 07, OMP 18.6.1, Herdr rig)
+
+These two live in `fixtures/surface/`: the Send Protocol's tests read them (`idle.frame.scroll` in
+`omp.json`), and the phone's omp adapter corpus, which pins every capture in this folder, does not.
+OMP caps its editor at 17 draft rows on a pane of 30 rows or more and keeps the cursor's rows in view,
+so a long draft shows only its last rows. Plain text (the rig read the visible rows without SGR),
+transport CRLF normalized to LF, trailing blanks cut. The lab folder path is the rig's own scratch
+folder; no secrets were present.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--draft-scrolled-2000-chars--v18.6.1.txt` | `draft` | 33 rows: a 2,000-character draft Collie typed (`... w0 w1 ... w401  END`), left by `typed_not_submitted(mismatch)`. The box starts at `╰─ w7 w8 ...`; the head of the text is out of view (07 F1) |
+| `omp--draft-scrolled-26-lines--v18.6.1.txt` | `draft` | The last 45 rows of a 130x45 pane: a 26-line draft the person typed, at the 17-row cap, `draft line 2` to `draft line 18` in view. A Replace on this box once pressed 1,536 Backspaces and left 39 characters of the draft (06 C5) |
+
+## A queued message that Stop gives back to the box (captured 2026-10-25, OMP 18.6.1, Collie's rig, 119 columns, ADR 0122)
+
+Two screens of tester 03's case 0 (`~/.cache/collie-lab/omp-gang/03-running-turn/captures/c0-18.6.1.log`), read through
+the rig bridge's own pane read, so they are plain text with no SGR bytes. A slow plain-text turn ran ("List 120 different
+fruits"); `second message` was sent into it, and Collie queued it with Ctrl+Q (receipt `sent`, `queued: true`). Then Stop
+pressed Escape. OMP ended the turn and moved the queued text back into its input box, and it never became a prompt. The
+lab folder stands as OMP shortened it (`…-running-turn/state/harness/omp/project`); no user, host or key is in either file.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-6-1-queued-before-stop--w119.txt` | `running` | The answer streams; `After yield · 1` / `1. second message` / `└ Alt+↑ to edit` over `⎋ Working…` and the spinner row; the `╰─` box is empty. Taken 3 s after the queued send |
+| `omp--v18-6-1-stop-returned--w119.txt` | `draft` | 1.5 s after Stop: the list and the Working row are gone, the status row is at rest (`π >`), and the box reads `╰─ second message`. The same screen 18 s later. The next plain send is refused `draft_present` |
+
+## A stale bottom frame below the live editor (captured 2026-10-25, OMP 18.6.1 under Herdr, 120 columns)
+
+One screen of Altan's own OMP pane on the dev lane, read through Herdr's pane read with its SGR bytes
+(`~/.cache/collie-lab/omp-gang/09-stale-frame/w78p5-stale-frame.ansi`). The file is byte-faithful in
+layout, not in content: every row, column, SGR sequence and frame character is as captured, and the
+conversation text, the project names and the folder in the status row are replaced with neutral text
+of the same length. A layout change never reached the pane in full: OMP drew its live editor higher
+up, on row 35, right under the answer, and the bottom two rows still show the status row and the box
+of the earlier layout, with an old draft in it. `xy` was typed before the capture, and it shows in the
+live editor, not in the bottom box.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-6-1-stale-frame-below-live--w120.txt` | `draft` | Labelled as the reader reads it today: idle, no dialog, and a draft, because the box at rows 38-39 reads `╰─ and what about the design`. That box is a stale image and takes no keys; the live editor is the `╰─ xy` row 35 with no frame of its own. Every send on this screen was refused `draft_present`, and a Replace pressed 41 Backspaces into the live editor and ended `unknown`. The Send Protocol now probes a draft before it refuses or clears one; a probe that does not land in the box, on a screen that reads the same once more, ends `stale_screen` with nothing deleted |
+
+## OMP widget and status rows under the box (captured 2026-10-25, omp gang tester 15, OMP 18.6.1 and 18.12.6, Collie's rig)
+
+These live in `fixtures/surface/`: the Send Protocol's tests and the Surface's read read them
+(`idle.frame.maxWidgetRows` and `commandList.footer` in `omp.json`), and the phone's omp adapter corpus, which pins every capture in
+this folder, does not read a widget under the box. Plain text through the rig bridge's pane read, transport
+CRLF normalized to LF, the rig's header line cut. An extension's `ctx.ui.setWidget` with `placement:
+"belowEditor"` draws its rows straight under the box's `╰─` row, with no blank row; the lab folder is the
+rig's own scratch folder, and no secret was present.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-12-6-widget-below-3.txt` | `idle` | 18.12.6, three widget rows under the box: within the tail bound, free before and after the change |
+| `omp--v18-12-6-widget-below-4.txt` | `idle` | 18.12.6, four widget rows: the read was `torn` and a send was held 30 minutes |
+| `omp--v18-6-1-widget-below-6.txt` | `idle` | 18.6.1, six widget rows under the box and the "Update Available" panel higher up |
+| `omp--v18-12-6-status-row-idle.txt` | `idle` | 18.12.6, an extension's `ctx.ui.setStatus` row (`PLAN 3/6`, flush left) directly under the empty box |
+| `omp--v18-12-6-status-row-palette-4.txt` | `popup` | 18.12.6, `/wx` typed: a four-row list, the pointer on `wx`, and the status row under the list. The read was unreadable and torn, and the send stopped at `modal_cue` |
+| `omp--v18-6-1-status-row-palette-4.txt` | `popup` | 18.6.1, the same four-row list and status row |
+| `omp--v18-12-6-status-row-palette-10.txt` | `popup` | 18.12.6, `/w` typed: ten list rows with a scrollbar column, the pointer on `wx`, the status row under the list |
+
+Gang three, 01-regression (captured 2026-10-26, omp 18.6.1 and 18.12.6, 120 columns; the status row's folder names the lab only): the same
+four-row `/wx` list over an extension's widget. A widget row is drawn with ONE leading space, so `commandList.footer` (`^ ?\S`, at most
+`idle.frame.maxWidgetRows` + 1 rows) takes it as it takes a flush-left status row. Before, the footer was `^\S` and four rows, and these read as a dialog.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-6-1-palette-widget-below-6.txt`, `omp--v18-12-6-palette-widget-below-6.txt` | `popup` | `/wx` typed over `/wb 6`: the list, then six widget rows (` below row 1` to ` below row 6`) |
+| `omp--v18-6-1-palette-widget-and-status.txt`, `omp--v18-12-6-palette-widget-and-status.txt` | `popup` | The same, and the flush-left status row `PLAN 3/6` under the widget |
+| `omp--v18-6-1-palette-tick-below.txt`, `omp--v18-12-6-palette-tick-below.txt` | `popup` | `/wx` typed over `/tfb`: the list, then one ticking widget row |
+
+A live band over the box (captured 2026-10-28, OMP 18.13.1 and Codex 0.163.0, Collie's rig; in `fixtures/surface/`; the folder names
+the lab only). The OMP pair is plain text; the Codex pair keeps its SGR, so the empty box's faint placeholder reads as one. A lab
+extension's eight-row widget over the editor ticks its top row every 100 ms, seven rows over the status row and outside
+`idle.volatile.above.maxRows`: every `/command` refused `probe_failed` and a message went in, until `idle.volatile.above.ticks`.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-13-1-live-band-8.txt` | `idle` | The widget's rows (`⠦ waiting on 1 job · 15.3s · 962 tok/s · 2938 tok`, then `band row 2 of 8` to `band row 8 of 8`) over the status row and the empty box |
+| `codex--v0-163-0-welcome-idle.txt` | `idle` | A fresh Codex: the header, the braille welcome picture, the empty box |
+| `codex--v0-163-0-welcome-slash-status.txt` | `popup` | The same with `/status` typed: the picture's rows went blank and the command list stands over the box. A command here was left typed (`changed`) until its S1 compare took `idle.volatile.above.losesText` |
+
+A Codex 0.163.0 idle footer with a warning (captured 2026-10-28 in Collie's rig; in `fixtures/surface/`; plain text, so the empty box's placeholder carries no faint paint, and the cwd became `~/project`). The footer row reads `? for shortcuts` and, after wide spacing, `⚠ 1 warning · f2 to view`. A command sent in a turn was refused `probe_failed` ("The probe character changed more than the box") until `idle.volatile.below.hints` took that trailing segment, because the footer then becomes `tab to queue message`.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `codex--v0-163-0-idle-warning.txt` | `idle` | A turn's `Waiting for background terminal` row over the empty box; the footer row carries the warning segment |
+| `codex--v0-163-0-in-turn-probe.txt` | `idle` | The same screen with the probe character typed: `› ⌁`, and the footer row now `tab to queue message` |
+
+A pasted box drawing in the draft (gang three, 01-regression W1, same date and versions; in `fixtures/surface/`; the rows keep their padding to 120 columns, which is what tells the person's `│` from a border):
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-6-1-quoted-box-draft--w120.txt`, `omp--v18-12-6-quoted-box-draft--w120.txt` | `draft` | `Here is what omp showed me:` then a quoted `Allow tool: bash` box (`╭─ ... ─╮`, `│ ❯ Approve │`, `│   Deny │`, `╰──╯`) and `why did it ask?`. omp's box has no right border here, so every `│` and `╯` is the person's text. The row pattern named a trailing glyph as a border and cut it, so the Send Protocol saw `mismatch`; now `border` in `omp.json` is a border only when no white space follows it |
+
+omp's `claude` composer shape (`composer.shape: claude`: a prompt glyph on the first row of a draft, the others indented) with a two-line draft (gang three, 01-regression W2, same date and versions; in `fixtures/surface/`): the rows read as a pointed list, the Surface says `unreadable`, and the shape is a known gap. A plain send is refused `unconfirmed` and a Clear is refused `unreadable` (it was `dialog_open`, though nothing opened).
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-6-1-composer-claude-two-lines--w100.txt`, `omp--v18-12-6-composer-claude-two-lines--w100.txt` | `unreadable` | The rule, `❯ draft line 1`, `  draft line 2`, the rule and the status row. Cut to those six rows |
+
+## A pane that is still a shell while the agent starts (captured 2026-10-25, omp gang tester 15, OMP 18.12.6, Collie's rig)
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `shell--omp-launch-window.txt` | `screen` | 737 ms after the rig typed `exec '…/start.sh'` into a fresh shell: the image banner and the command table, then the typed line on the starship prompt row. omp is not up (it boots in about 20 s on 18.12.6), the multiplexer names no agent, and the box is not on screen. A send here went in blind (`sent`, Enter into the shell) and the text later sat as an unsent draft in omp's box |
+
+## omp file popup under a path typed in the box (captured 2026-10-25, omp 18.6.1 and 18.12.6, omp-gang testers 05 and 12)
+
+Real pane reads from the testers' rig, the same setup as the fuzzy list section above, cut to the last 16 rows (the
+`~` one is a fresh pane, cut to 12), rows kept as read with their CRLF line ends. A text that is a file path at the
+start of the box makes omp draw its file popup under it: one `❯ name.png` row for the path of one file, with no
+description. The phone sends an upload path as a command (it starts with `/`). A file name has the shape of a
+command name, so until 1.24.1 the row read as a command list pointing at another command and the send ended
+`typed_not_submitted (modal_cue)` (issue 497, part 5). `commandList.notForText` in `omp.json` says a path at the
+start of the box opens no command list. The testers' home folder `/var/home/<user>` became `/home/demo/lab1`, a path
+of the same length, so no row moves. Source (pi-tui `editor.ts`, 18.12.6): with this popup open and the typed path
+equal to its only entry, Enter cancels the popup and submits the text; the tester's own Enter on 18.6.1 did.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-6-1-path-popup--w120.txt`, `omp--v18-12-6-path-popup--w120.txt` | `popup` | An upload path alone in the box, `❯ w2_p1-....png` under it |
+| `omp--v18-12-6-path-popup-two-paths--w120.txt` | `popup` | Two upload paths on two rows (the second wrapped), the popup for the last one |
+| `omp--v18-6-1-path-popup-tilde--w120.txt` | `popup` | 18.6.1, `~/.../x.png` typed in a fresh pane: `❯ x.png` under it. Read as a draft with no list. A plain send of it (it is no command) still stops at `changed`, as the row under the box is new |
+
+## omp 18.6.1 `Allow tool: goal` (captured 2026-10-25, omp-gang tester 02)
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-6-1-approval-goal--w120.txt` | `dialog` | The last 16 rows of a `/goal` turn: the transcript row `⏳ Goal: complete`, then `Allow tool: goal` with no body (two blank rows), `Approve` pointed, `Deny`, and the first shape's footer. Lifts as Approve, Deny, Cancel with no description on Approve (approval.ts, `BODYLESS_TOOLS`) |
+
+## omp 18.12.6 Ask with option previews (captured 2026-10-25, omp-gang tester 04)
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-12-6-ask-previews--w120.txt` | `dialog` | The echo block `╭─── Ask 1 questions`, then the panel: three options, each with a description row and a `│ ` preview row, `Other`, and the footer ending `Alt+H hide`. Pointer on the first row. Lifts with the preview on each option (ask.ts, OPTION PREVIEWS) |
+
+## omp 18.16.0 Ask with the glyph hide keycap (captured 2026-11-05, herdr-core `hc read`, 200 columns)
+
+A real one-question `ask` call (Claude Haiku 4.5 in omp 18.16.0, the `unicode` symbol preset), trimmed to the dialog;
+the status row above it named the operator's accounts and was dropped.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-16-0-ask-single-glyph-hide--w200.txt` | `dialog` | `과일을 고르세요` with 사과, 배, 포도 and `Other`, pointer on the first row, the footer ending `⌥H hide` instead of `Alt+H hide`. Lifts (ask.ts) |
+| `omp--v18-16-0-ask-single-glyph-hide-moved--w200.txt` | `dialog` | The same dialog after one `Down` (`hc keys … down`), pointer on 배. Its walk pair |
+| `omp--v18-16-0-answer-editor-empty--w200.txt` | `idle` | `Enter` on `Other` opened `Custom answer: 과일을 고르세요`, hint `⏎ or ⌃Q submit  ⎋ cancel  ⌃G external editor`: the same prompt-style box as the `custom-answer-*` rows above, in the glyph keycap dialect, with no Ask box above it. Reads as a free box since #704 |
+
+## omp 18.16.0 plan review (captured 2026-11-07, Herdr 0.9.5, 80 and 140 columns)
+
+A real plan-mode turn in a scratch repo (Claude Haiku 5.5 over OpenRouter, the `unicode` symbol preset),
+captured with `herdr pane read --source recent --format ansi`. The overlay fills the pane, so each capture
+is the whole screen. omp 18.18.0 draws the same overlay (its `plan-review-overlay.ts` is unchanged). No
+private text was present. Grammar: `omp/plan-review.ts`.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-16-0-plan-review--w80.txt` | `dialog` | `Plan Review` box, the plan, then `Plan mode - next step` and the five options, pointer on `Approve and execute`, footer `↑/↓ select · ⏎ confirm · c copy · ⇥ regions · Ctrl+G editor · ⎋ cancel`. Lifts |
+| `omp--v18-16-0-plan-review-moved--w80.txt` | `dialog` | The same review after one `Down`, pointer on `Approve and compact context`. Its walk pair |
+| `omp--v18-16-0-plan-review-regions--w80.txt` | `dialog` | After `Tab`: focus on the plan body, the footer names scroll keys and no `⏎ confirm`. Declines, and names no way out |
+| `omp--v18-16-0-plan-review-contents--w140.txt` | `dialog` | A plan with two headings: the Contents sidebar splits the top border (`┬`) and the divider (`┴`). Lifts |
+| `omp--v18-16-0-plan-review-slider--w140.txt` | `dialog` | Two role models: the `continue with  ◂  smol  ◀ default ▶  ▸` slider and its `↳ Claude Haiku 5.5` row above the options, footer with `←/→ model`. Lifts, the tier in the question |
+| `omp--v18-16-0-plan-review-slider-moved--w140.txt` | `dialog` | The same after two `Down`, pointer on `Approve and keep context`. Its walk pair |
+| `omp--v18-16-0-plan-review-slider-clipped--w80.txt` | `dialog` | The slider at 80 columns: omp cuts the footer with `…` before `⎋ cancel`. Declines, and names no way out |
+
+## omp's rewind picker, Esc Esc (captured 2026-10-25, omp-gang tester 04 case 7)
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-6-1-rewind-picker--w120.txt` | `dialog` | The last 22 rows of an 18.6.1 turn behind the picker: the transcript, a dashed `╭┄┄` frame holding the chosen turn, and the footer `64/64  ↑/↓ step  ←/→ user turns  f filter  ⏎ rewind  Ctrl+O expand  ⎋ cancel`. No box, no status row. Reads `unreadable` from `idle.overlayRows` in the profile |
+| `omp--v18-12-6-rewind-picker--w120.txt` | `dialog` | The same picker on 18.12.6 (`29/29`) |
+
+## omp 18.6.1 typeahead popups under the box (captured 2026-10-25, omp-gang tester 12)
+
+All are composers, labelled `popup`. The profile names them in `idle.volatile.below.popups` (rules `file`, `issue`, `emoji`, `path`, `actions`); the Surface leaves their rows out of the cue read and the Send Protocol out of its row count, and a send committed with Ctrl+Q goes out with the popup open (omp's key handler for it runs before the autocomplete handler). The emoji rule is written from omp 18.12.6's `emoji-autocomplete.ts` and has no capture yet.
+
+| Fixture | What it shows |
+| --- | --- |
+| `omp--v18-6-1-at-popup--w120.txt` | `please read @READ`, one popup row `❯ README.md   README.md` |
+| `omp--v18-6-1-at-popup-path--w120.txt` | `@/tmp/x.png`, one popup row `❯ x.png` |
+| `omp--v18-6-1-hash-popup--w120.txt` | `fix item #1`, two popup rows `PR #1` and `Issue #1`: a pointer list, the weak cue that read `modal: unknown` |
+| `omp--v18-6-1-hash-popup-single--w120.txt` | `see PR #12`, one popup row |
+| `omp--v18-6-1-hash-popup-stale--w120.txt` | an EMPTY box after Ctrl+C with `PR #1` and `Issue #1` still under it; they go with the next key |
+
+A text that ends in a bare `#` (`ends with hash #`) makes omp draw its editor-action list (`Copy current line`, a key-chord column, seven rows). That list is the `actions` rule (omp-gang three, 2026-10-26, omp 18.6.1 and 18.12.6, cut from the 120-column captures; the status row's path names the lab folder only):
+
+| Fixture | What it shows |
+| --- | --- |
+| `omp--v18-6-1-hash-end-actions--w120.txt` | `ends with hash #`, seven action rows, the pointer on `Copy current line` |
+| `omp--v18-12-6-hash-end-actions--w120.txt` | The same list on 18.12.6 |
+
+`tag:#abc` ends in a word, not a bare `#`: it opens no popup, and its screens read as before.
+
+## omp 18.6.1 a draft that quotes a dialog (captured 2026-10-25, omp-gang tester 12)
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-6-1-quoted-dialog-draft--w120.txt` | `draft` | A nine-row prompt in the box that asks for a permission box printed in a code fence (`╭─ Allow tool: bash`, `❯ Approve`, `Deny`, a footer), then `my notes`. The quoted rows are the person's text. omp draws the draft's rows under the prompt at three columns, which `idle.frame.draftIndent` says, so the modal cues (`dialogsInBox` reads the box rows) leave them out. A dialog omp draws in the box's place starts at the box's column and stays a dialog. The draft is taller than the bridge's tail window, so no prompt region binds (the sweep goes out unbound) |
+
+## omp 18.12.6 plan-mode Ask (captured 2026-10-25, omp-gang tester 14)
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-12-6-ask-plan-mode--w120.txt` | `dialog` | The last 20 rows when `x` was sent with plan mode on: a status row `⎋ Gather task for plan mode`, then the Ask panel `What work should I plan?` with four choices, each with a description row and a preview row, `Other (type your own)` and the footer ending `Alt+H hide`. Lifts like the previews dialog (ask.ts, OPTION PREVIEWS) |
+
+## Status rows the profile did not read (captured 2026-10-25, OMP 18.6.1 and 18.12.6, omp gang 11-geometry)
+
+Captures of tester 1 (`~/.cache/collie-lab/omp-gang/11-geometry/captures/1.3-*`), read through the rig bridge's pane read, so
+plain text with no SGR bytes, cut to the rows that matter (the last rows of the screen). The host name in the status row is
+replaced with `example`, a word of the same length. `config.yml` held `statusLine: {preset: full, separator: slash}` or
+`{preset: ascii, separator: ascii, symbolPreset: ascii}`. Until 1.24.1 `idle.frame.top` wanted a run of three rule glyphs in
+the status row and a symbol as its first token: the full preset at 80 columns draws `─5%─┃200K─` for its gauge, and the ascii
+preset starts on `[high]` and draws its rule with `-`. Both read `unknown/unknown/unknown`, and a send was refused `unconfirmed`.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-12-6-status-full-slash-idle--w80.txt` | `idle` | 18.12.6, 80 columns, preset `full`, separator `slash`: the gauge keeps `─5%─┃200K─` |
+| `omp--v18-12-6-status-full-slash-draft--w80.txt` | `draft` | The same screen with `abc` typed |
+| `omp--v18-6-1-status-full-slash-idle--w80.txt` | `idle` | 18.6.1, the same preset, with the update notice over the box |
+| `omp--v18-12-6-status-ascii-idle--w130.txt` | `idle` | 18.12.6, preset `ascii`, symbols `ascii`: the first token is `[high]`, the rule is `-`, the compaction tick is `|` |
+| `omp--v18-12-6-status-ascii-draft--w80.txt` | `draft` | 18.12.6, the same preset at 80 columns with `abc` typed: `-5%------|200K-` |
+| `omp--v18-6-1-status-ascii-idle--w80.txt` | `idle` | 18.6.1, the same preset at 80 columns: `-4%------|200K-` |
+
+## The command list with `symbolPreset: ascii` (captured 2026-10-25, OMP 18.6.1 and 18.12.6, omp gang 11-geometry)
+
+`config.yml` held `symbolPreset: ascii`. `/session` typed in command mode, as the rig bridge's pane read it (plain text, no
+SGR), cut to the status row, the box and the list. The list draws its cursor with the theme's `nav.cursor`, which is `❯` in the
+unicode preset, U+F054 in the nerd preset and `>` in the ascii preset. Until 1.24.1 `commandList.pointer` knew the first two,
+so the list was no popup of the typed command, and `/session` ended `typed_not_submitted (modal_cue)` with its text left in
+the box.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-12-6-ascii-symbols-session-list--w130.txt` | `popup` | 18.12.6, `/session` typed: the pointer row is `> session     Session management commands`, nine more rows under it |
+| `omp--v18-6-1-ascii-symbols-session-list--w130.txt` | `popup` | 18.6.1, the same list, status row `pi > [high] Haiku 4.5 > [D] ... >--4%----` |
+
+## Drafts the box wraps by cutting a token (captured 2026-10-25, OMP 18.6.1 and 18.12.6, omp gang 11-geometry)
+
+Typed through the rig bridge, then read from the pane at 80 columns, cut to the status row and the box. OMP wraps a draft at a
+break and drops the break. A token wider than a row, and a run of double-width cells, are cut where the row is full instead, so the
+draft has no space at that wrap. Until 1.24.1 the reader joined every wrap with a space (Clear's Restore text came back with one
+extra character).
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-6-1-draft-cjk-wrapped--w80.txt` | `draft` | 67 CJK characters, no spaces: the first row ends one cell short of the width |
+| `omp--v18-12-6-draft-url-wrapped--w80.txt` | `draft` | a 140-character URL: the first row is full, the cut is inside the token |
+
+## `composer.shape: field` (captured 2026-10-25, OMP 18.12.6, omp gang 11-geometry)
+
+The editor shape `field` has no rule and no border. Every draft row opens with the block `▐` and closes with `▌` on the last
+column, a blank row and the status row follow. The empty box is one `▐` row with the hint `⇧⇥ to change thinking effort` before
+the cap. The profile reads it as an interior frame under a blank row (`idle.frameAlternates`, the last one). The older chrome walk
+of the adapter does not read it, so `composerReady` stays false on these two.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-12-6-composer-field-idle--w130.txt` | `idle` | the empty box with its effort hint |
+| `omp--v18-12-6-composer-field-two-lines--w130.txt` | `draft` | two typed lines, one `▐` row each |
+
+The shape `claude` (rule, `❯`, rule) reads empty and with one line, but not with two, and has no fixture here on purpose: a two-line draft reads `unreadable` because the cue reader takes the `❯` row and the indented row under it, between two rules, for a pointer on a listed row. `ownPrompt` is not safe on that edges entry. The wanted read is an expected-fail test, and the gap a `todo`, in `fold.pi-omp.test.ts` ("omp's composer.shape field"). Left for after 1.24.1.
+
+## omp: a path-like command over one fuzzy entry (captured 2026-10-26, omp 18.6.1 and 18.12.6, omp-gang three, tester 05)
+
+Two captures in `fixtures/surface/`, cut to the last 13 rows, the Send Protocol's tests read them (`bridge/surface/protocol.test.ts`, "a path-like command over a pointed list"). A path-like text sent as a command (`/tmp/x`, `/etc/hosts`, `/bin/sh`, `/exit/now`) makes omp 18.6.1 draw ONE fuzzy entry under the box, `❯ ↻ loop   Loop: off`, whatever the path is, and Enter runs `/loop` ("Loop mode enabled"). The profile's `commandList.notForText` keeps such a text's rows out of the Surface's read (the file popup stands there), so the check before Enter must not take its list from that read. Only the `/tmp/x` list was captured on 18.6.1: the tests type the other three paths into the same list. omp 18.12.6 draws no list for these texts; its capture is the screen after the send, an empty box, used as the base for a no-list scene.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-6-1-path-like-loop-list--w120.txt` | `popup` | `/tmp/x` typed, `❯ ↻ loop        Loop: off` under it |
+| `omp--v18-12-6-path-like-no-list--w120.txt` | `idle` | 18.12.6, an empty box after `/tmp/x` went out as a message (no list is ever drawn for a path there) |
+
+## omp: the /model picker with Collie's probe in its search (captured 2026-10-25 and 2026-10-26, omp 18.6.1 and 18.12.6, omp-gang three, testers 12 and 5)
+
+Two captures in `fixtures/surface/`, the full 40-row screen as read, the Send Protocol's tests read them (`bridge/surface/protocol.test.ts`, "omp's /model picker owns the keyboard"). The picker is a full-screen `Models` box with a `🔍 >` search row, no input box and no frame. The Surface reads it `unknown / unreadable / unknown` with a strong cue, so a send ends `unconfirmed` with nothing typed. The 18.6.1 capture is tester 12's Type here run: the probe `⌁` stands in the search row. The 18.12.6 capture has an empty search. The tests derive the empty and the two-character search rows from them with the row's width kept.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-6-1-model-picker-search-probe--w120.txt` | `screen` | `/model` open on 18.6.1, `🔍 > ⌁` in the search row |
+| `omp--v18-12-6-model-picker--w120.txt` | `screen` | `/model` open on 18.12.6, an empty search |
+
+## omp: a local shell line that is running (captured 2026-10-26, omp 18.6.1 and 18.12.6, omp-gang three, tester 5)
+
+Two captures in `fixtures/surface/`, the Surface's and the Stop's tests read them (`web/src/lib/surface/fold.pi-omp.test.ts`, `bridge/surface/stop.test.ts`). A `!` line (`!sleep 25`) runs in omp's own bash block, `$ sleep 25` and `⠋ Running… (⎋ to cancel)` between two rules, with no model turn on and nothing in the journal. `idle.runningRows` knew only the `Working…` rows, so the Surface read the turn idle and Stop was refused `turn_idle`; the row is now a running row, and Escape, which the row names, is the profile's interrupt key. The 18.12.6 capture is cut to its last 14 rows. The 18.6.1 capture is derived from tester 5's `during-local-bash` screen, which was taken after a plain message was sent during the command: the echo of that message (`sent during local bash`) and the lab's `401` notice were cut, because they stand between the Running block and the box and put the row out of the volatile band (`volatile.above.maxRows`, 6). That screen as taken still reads idle on 18.6.1: a row above the band is not seen, and the band is not widened for it.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-6-1-local-bash-running--w120.txt` | `running` | 18.6.1, the Running block over the empty box (derived, see above) |
+| `omp--v18-12-6-local-bash-running--w120.txt` | `running` | 18.12.6, `$ sleep 40` and its Running row over the empty box |
+
+## omp: a desk draft with the queue prefix, painted (captured 2026-10-26, omp 18.6.1, omp-gang three, tester 5)
+
+One capture in `fixtures/surface/`, cut to its last 12 rows with its colours kept (`web/src/lib/surface/fold.pi-omp.test.ts`, "omp's queue-prefix draft"). A draft typed at the desk that starts with `->` or `=>` makes omp draw its `Queueing ➤` label on the box's first row, in the grey `rgb(107,114,128)`, and the body on the row under it. That grey is also the profile's `inlineHint` colour (the empty box's ghost hint), so the capture pins that the painted label is not taken for a hint: the Surface reads `draft` with the text `Queueing ➤ hello queue draft`. The tester's view said `empty` for several seconds after the draft was typed; the view (`/api/snapshot`) is the pane's last poll, and an idle pane polls every 12 s, so a desk edit shows late. The `=>` prefix draws the same label (omp-gang 13-drafts, case 35b). The 18.12.6 screens are `omp--draft-queueing-label--v18.12.6.txt` and `omp--draft-queueing-body--v18.12.6.txt`, listed above.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-6-1-draft-queueing-painted--w120.txt` | `draft` | 18.6.1, `-> hello queue draft` typed at the desk, label and body painted |
+
+## Claude Code Authentication box (2.1.307, 2.1.309 and 2.1.310, issue 542)
+
+The box Claude Code draws above its live input box while its `awsAuthRefresh` command runs, filled with
+what the command prints. The 2.1.307 capture comes from a Herdr pane (SGR truecolour, no OSC 8), cut to
+the last status row. The 2.1.309 captures come from detached tmux panes running a stand-in command that
+prints device-code style output with fake codes (`ABCD-EFGH`) and `example.awsapps.com` addresses: tmux
+256-colour SGR, OSC 8 hyperlinks around the addresses (Herdr strips them), and trailing blank rows cut.
+tmux's own `tmux focus-events off` hint stays under the statusline as a third status row.
+
+The three 2.1.310 captures come from a private tmux pane 52 columns wide, with the same kind of stand-in
+command, after a message (`hi`) was sent while the box was up: Claude Code then draws its turn spinner row
+between the box's bottom edge and the input box's rule, with a blank row on each side of it. The temporary
+folder in the header was replaced with a same-length placeholder.
+
+The files are named for the width they were drawn at, which is the input box's rule, not the box's own
+edge: `output--w61` is a 61-wide edge (57 content cells) and `output--w120` a 113-wide edge (109 content
+cells) on a 120-column pane. Every path that showed this machine's temporary folder in Claude Code's
+header was replaced with a neutral path of the same length, and the `…`-shortened copy of it with the
+same characters, so no rule or box width moves.
+
+| Fixture suffix | State |
+| --- | --- |
+| `v2307-auth-refresh-output--w61` | Filled box, both mid-word breaks (`ABCD` / `-EFGH`, `https://ex` / `ample...`) |
+| `v2307-auth-refresh-before-output--w61` | Title-only box before the command prints: three rows, 18 cells wide (the box shrinks to its title), over the 61-wide input rule |
+| `v2309-auth-refresh-output--w40` | Filled box, 36 content cells: two addresses broken next to a `/` one column short of the edge (`.../start/#` / `/device?...`, 35 of 36) among the mid-word breaks that fill the row |
+| `v2309-auth-refresh-output--w52` | Filled box, 48 content cells: an address broken right after a `/` one column short of the edge (`https://example.awsapps.com/` / `start/#/...`, 47 of 48) beside two mid-word breaks |
+| `v2309-auth-refresh-output--w64` | Filled box, 60 content cells: three addresses broken mid-word at the last column (`https://examp` / `le...`, `https://example.awsapps` / `.com/...`, `.../lat` / `est/...`) |
+| `v2309-auth-refresh-output--w120` | Filled box, no break: four addresses, a 113-wide edge on a 120-column pane |
+| `v2309-auth-refresh-locked--w{52,80,120}` | Another Claude Code process runs the command: text only, no address |
+| `v2310-auth-refresh-before-output-spinner--w52` | Title-only box after a message was sent, `✢ Whirlpooling… ` (no timer yet) under it: a turn runs, and the surface reads it free because the running sign needs the timer |
+| `v2310-auth-refresh-output-spinner--w52` | Filled box, 48 content cells, `✶ Garnishing… ` (no timer yet) under it: the same free read of a running turn |
+| `v2310-auth-refresh-output-spinner-timer--w52` | Filled box, `✻ Moonwalking… (49s)` under it: the timer is drawn, and the surface reads the turn as running |
+
+## Codex Ultra prompt glyph (derived 2026-10-29, issue 615)
+
+Codex 0.164.0 and 0.165.0 draw the composer prompt as `»` (U+00BB) at Ultra effort and `›` (U+203A) at Max. The first two fixtures below are **derived, not captured**: each is a copy of the named original with ONLY the composer row's leading `›` swapped for `»`. Every other byte is unchanged. They stay because the tests pair each with its `›` original and prove the glyph is the only difference. The last two are the reporter's real captures from the issue (see below).
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `codex--v0165-ultra-empty--w120.txt` | `idle` | Derived from `codex--v0164-queue-done--w120.txt`: the empty dim `» Ask Codex to do anything` composer under a finished turn (the `› ` echoes in the transcript stay as they were), status row and hint row. Both readers must find the box and report it empty and free |
+| `codex--v0165-ultra-draft.txt` | `draft` | Derived from `codex--v0156-headless-draft.txt`: the draft `» hello from the phone probe` over the status row. The draft must read back |
+| `codex--v0165-ultra-empty--w170.txt` | `idle` | **Real capture.** The reporter's Codex 0.165.0 pane on issue 615 (GPT Ultra, model `GPT-6.1-Sol ultra fast`, purple `»` prompt): empty dim `» Ask Codex to do anything` composer on a filled grey band, the long status row (`GPT-6.1-Sol ultra fast · ~ · Context 1% used · weekly 90% left ...`), and a hint row with `? for shortcuts` and `⚠ 2 warnings · f2 to view`, under the welcome header and blank rows. Both readers must find the box and report it empty and free |
+| `codex--v0165-ultra-draft--w170.txt` | `draft` | **Real capture.** The same pane with the draft `» Hello, test draft` typed and not sent; the hint row shows only the `⚠ 2 warnings · f2 to view` notice. The draft must read back as `Hello, test draft` |
+
+The two `--w170` files came from the reporter of issue 615 (@Skydev0h): `herdr pane read --source visible --format ansi`, 170 columns by 82 rows, the working directory `~`, nothing sensitive. They are stored as read, with the transport CRLF line ends and the SGR bytes untouched.
+
+## Codex 0.166.0 logo and warning row (captured 2026-10-29, harness lab drift, scratch tmux, 120 by 40)
+
+Codex 0.166.0 draws a 17-row braille logo over an EMPTY box when the pane has 32 rows or more. It goes at the first
+character in the box and comes back after Backspace, on a fresh start and on plain `codex`, and it is absent at 31 rows
+or fewer. Any `-c` override also adds `⚠ 1 warning · f2 to view` to the footer ("command-line configuration overrides
+... requires embedded mode"); once the box holds text, the `? for shortcuts` hint goes and the warning stays alone on
+its row. The harness lab's probed send was refused `probe_failed` until `idle.volatile.below.hints` named that row. A
+message's probe on Codex reads only the box and the rows under it, so the logo never reached it; a command's probe also
+compares the rows above, where `idle.volatile.above.losesText` already lets the logo go.
+
+Taken with `tmux capture-pane -p -e` in a private tmux server (`tmux -L`), isolated `HOME` and `CODEX_HOME`, no Herdr.
+The `art-*` and `warning-*` files come from the lab's manual run; `art-backspace` from a second session of the same
+version, read right after the probe's Backspace (only its colour depth differs from `art-empty`). The lab's folder was
+replaced with `/home/demo/sandbox/collie-labs/codex-v0166-logo-arts/project`, a path of the same length.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `codex--v0166-art-empty--w120.txt` | `idle` | Header, the logo, the empty dim `› Ask Codex to do anything` box, the status row and `← for agents · ? for shortcuts` |
+| `codex--v0166-art-typed--w120.txt` | `draft` | `x` typed: the logo and the hint row are gone, the box and the status row stand where they were |
+| `codex--v0166-art-backspace--w120.txt` | `idle` | After Backspace: the logo and the hint row are back |
+| `codex--v0166-warning-art-empty--w120.txt` | `idle` | Started with a `-c` override: the logo, the empty box, and `? for shortcuts` with `⚠ 1 warning · f2 to view` after wide spacing |
+| `codex--v0166-warning-typed--w120.txt` | `draft` | `x` typed: the logo is gone, and `⚠ 1 warning · f2 to view` stands alone on the footer row |
+
+## herdr-core corpus (captured 2026-10-30, M78 spec 04, hc 0.1.14, Claude Code 2.1.314, pi 1.3.0, omp 18.6.1)
+
+The first captures taken through a bridge on `COLLIE_MUX=herdr-core`: a scratch core (`HC_SESSION=m78-lab`,
+its own `HC_SOCKET`), a scratch bridge from the worktree, and each harness in a named core terminal,
+read with `scripts/capture-fixture.sh` (`/api/pane/:id?lines=300`). **Plain text, no escape byte at all**:
+the core's `terminal.read` hands out text only (HC_API.md), so a grey hint, a ghost completion or an
+inverse selection looks like any other text here. The core's history keeps a screen the harness redrew,
+so several files start with an older screen (an earlier slash list, a repeated welcome banner) above the
+live one; that is what the phone reads on a core, and it is kept.
+
+Width: a terminal started over the API is 200 x 120, and the last ACTIVE viewer sets the size, so each
+capture ran while a viewer of the named size (`--w120`: 120 x 40, `--w60`: 60 x 40) was attached from a
+pty; after the viewer leaves the core puts the terminal back to 200 x 120. Claude ran on Haiku with
+`--permission-mode default` and a scratch `CLAUDE_CONFIG_DIR`; pi and omp called a local fake model (no
+spend). pi carries its stock `examples/extensions/question.ts`. Drafts were typed through the bridge's
+reply route (`submit: false`, the core's framed attach), the two paragraphs with `ctrl+j` between.
+Privacy: the user name in the lab paths became `alice` (same length), and omp's `…n/.cache` the
+matching `…e/.cache`; no other private text was on screen. The lab is
+`experiments/herdr-core-coverage/lab/` in the workspace, the findings `04-live-lab.md` there.
+
+| Fixture | State | Reads as (current reader) |
+| --- | --- | --- |
+| `claude--v21314-core-idle--w120.txt` | A fresh session, empty box, no `Try "…"` hint (the hint did not come up in the lab) | composer, empty, free |
+| `claude--v21314-core-idle--w60.txt` | The same at 60 columns, after a cleared draft | composer, empty, free |
+| `claude--v21314-core-draft--w120.txt` | `collie core draft probe` typed | composer, draft read back |
+| `claude--v21314-core-draft--w60.txt` | The same at 60 columns; the banner's path is shortened to `/…/` | composer, draft read back |
+| `claude--v21314-core-draft-two-paragraphs--w120.txt` | Two paragraphs with an empty row between, `ctrl+g to edit in nano` on the status row | composer, draft (both paragraphs, joined) |
+| `claude--v21314-core-working--w120.txt` | One second into a turn, `✽ Synthesizing… (1s · thinking)`, a tip row, `esc to interrupt` | running |
+| `claude--v21314-core-permission--w120.txt` | `Bash command` card for `touch probe.txt`, four options, `Esc to cancel · Tab to amend`; history above holds an older slash list | permission ask, four options |
+| `claude--v21314-core-permission--w60.txt` | The same card at 60 columns, option 2 and 3 wrapped | permission ask, four options |
+| `claude--v21314-core-ask--w120.txt` | AskUserQuestion `Which colour do you prefer?`, Red, Green, Blue, `Type something.`, `Chat about this` | question ask, four options |
+| `claude--v21314-core-menu-model--w120.txt` | `/model` menu, `❯ 5. Haiku ✔`, effort row, `Enter to set as default · s to use this session only · Esc to cancel` | menu ask |
+| `claude--v21314-core-slash-list--w120.txt` | `/` typed: the whole command list under the box, `❯` on `/add-dir` | draft `/`, modal unreadable (the TUI's slash-all captures read unknown or none) |
+| `pi--v130-core-idle--w120.txt` | Empty editor; pi's two offline warnings (no `fd`, no `rg` on the lab PATH) above | composer, empty, free |
+| `pi--v130-core-draft--w120.txt` | `collie core draft probe` typed | composer, draft read back |
+| `pi--v130-core-working--w120.txt` | A held turn, `── ⠧ Working ──` on the top rule | running |
+| `pi--v130-core-question--w120.txt` | The stock `question` tool: Red, Green, Blue, `4. Type something.`, `>` on 1, `↑↓ navigate • Enter to select • Esc to cancel` | question ask with three options, walk (M78 spec 07: read by text on a read with no styling; it read unreadable before) |
+| `pi--v130-core-question-moved--w120.txt` | The same question after two Down presses through the bridge's keys route: `>` on 3 (M78 spec 07 lab, the lab path's user name replaced) | question ask with three options, walk from 3, pair |
+| `omp--v1861-core-idle--w120.txt` | Banner, update notice, the status rule and the empty `╰─` row | composer, empty, free |
+| `omp--v1861-core-draft--w120.txt` | `collie core draft probe` typed; omp draws a grey ghost completion `s` after it, which the plain text cannot tell apart | composer, draft `collie core draft probes` (**wrong text**: the true draft ends in `probe`) |
+| `omp--v1861-core-working--w120.txt` | A held turn, `⎋ Working…`, the spinner in the status rule | running |
+
+On the bridge itself omp 18.6.1 reads as a **shell** on herdr-core: it sends no OSC 7501 status, and
+the core adapter names an agent only from that report, so the omp profile above is not applied live.
+
+### Local Gentle Shell 4.5.1 float editor (2026-11-02)
+
+`pi--v140-gentle-float-*--w100.txt` were captured without editing from an isolated
+Gentle Shell 4.5.1 / Pi 1.4.0 pane on herdr-core 0.1.16, attached at 100 columns
+and 30 rows. An input extension consumed messages before any model call. The
+captures cover an empty editor, a draft, a multiline draft and a test selector
+with its pointer on both choices. No operator conversation is included.
+
+The two `quote-rail` captures are derived, not captured: three ` ▎ ` rows, the left rail of
+a quoted block, replace three transcript rows of a stock capture. They prove that the float
+editor's frame never claims a rail in the transcript (issue 660 review, 2026-11-03).
+
+| Fixture | Derived from | Reads as |
+| --- | --- | --- |
+| `pi--v110-stock-idle-quote-rail.txt` | `pi--v110-stock-idle.txt`, rows 4 to 6 | composer, empty, free: the stock box, the quote is transcript |
+| `pi--v130-core-question-quote-rail--w120.txt` | `pi--v130-core-question--w120.txt`, rows 19 to 21 (blank before) | question ask, not free: no float editor |
+
+## Claude Code 2.1.306 exit dialog with background work (captured 2026-11-05)
+
+`/exit` in a disposable 110-column pane with one `sleep 600` background shell, the marker walked down
+with one Down each. Privacy: the working directory, the model and plan row and the turn's status row
+were replaced with neutral text. The bytes from the dialog's rule to the end are as captured.
+
+| Fixture | State | Reads as |
+| --- | --- | --- |
+| `claude--background-work-exit-1.txt` | `❯` on `1. Exit and stop tasks` | menu, Confirm and Cancel |
+| `claude--background-work-exit-2.txt` | `❯` on `2. Move to background and exit` | menu, same identity, new signature |
+| `claude--background-work-exit-3.txt` | `❯` on `3. Stay` | menu, same identity, new signature |
+
+## Claude Code 2.1.318 `/model` picker under the usage notice (captured 2026-11-06)
+
+`/model` in a disposable 120-column, 40-row pane in the first seconds of a session, read from the live
+dev lane (8788) while the picker showed the unread-dialog card. The weekly-limit notice fills the
+picker's top edge row from end to end, and only one `▔` is left at its far right (119 columns, one
+leading space). It stays for 1.5 to 5 s and goes away. Privacy: nothing private was on screen; the
+folder is a lab folder.
+
+| Fixture | State | Reads as |
+| --- | --- | --- |
+| `claude--v2318-model-picker-usage-notice-edge--w120.txt` | `/model` menu, `❯` on `2. Opus 5.5 ✔`, ten rows, effort row, the notice row as the edge | menu, the signature starts under the notice row |
+
+## Codex 0.166.0 on herdr-core (captured 2026-11-05, hc 0.1.14, the Codex report of 2026-11-05)
+
+A Codex user on Collie 1.26.1 saw the unread-dialog card after every send. These are the screens that
+showed it, read the way the bridge reads a core terminal (`terminal.read`, plain text, no escape byte):
+a scratch core with its own `HC_SOCKET`, Codex 0.166.0 in a scratch folder, a viewer of 120 by 40
+attached from a pty while each read ran. The legacy reader took no status row without its paint, so it
+found no box on any of them, and while a turn ran `esc to interrupt` stood in the last rows and the card
+came up. Privacy: the user name in the lab path became `alice` (same length); no other private text was
+on screen.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `codex--v0166-core-working--w120.txt` | `running` | The turn before it (`Worked for 1s`), the new message, `• Working (7s • esc to interrupt) · 1 background terminal running`, the empty box, the status row and `← for agents · ? for shortcuts` |
+| `codex--v0166-core-idle--w120.txt` | `idle` | The same pane after the turn (`Worked for 11s`), the empty box, the status row and the hint row |
+| `codex--v0166-core-draft--w120.txt` | `draft` | `collie core draft probe` typed in the box, the status row last and no hint row |
+
+## pi 1.5.0 on herdr-core, a model with no price (captured 2026-11-06, hc 0.1.18)
+
+pi prints the session cost in its footer only when the model has a price in `models.json` (or runs on a
+subscription); the context usage (`0.4%/272k (auto)`) is always printed. A pi whose models carry no price
+therefore draws a stats row with no `$`, and the herdr-core reader, which found pi's status rows by the
+cost, took every dialog of such a pi for unreadable. The capture is pi's example `permission-gate.ts`
+(pi 1.5.0) asking about `chmod 777 gate-probe.txt`, in a disposable 200 x 40 terminal of an isolated
+herdr-core session, read through the bridge (`scripts/capture-fixture.sh`). The working directory is a
+scratch path with no user name. Privacy: the model label at the end of the stats row was replaced with
+neutral text of the same length (`(local) example-model • max`); nothing else was changed.
+
+| Fixture | State | Reads as |
+| --- | --- | --- |
+| `pi--v150-core-permission-gate-no-cost--w200.txt` | `⚠️ Dangerous command:` over `chmod 777 gate-probe.txt`, `Allow?`, `→ Yes` / `No`, `↑↓ navigate  enter select  escape/ctrl+c cancel`; stats row `↑1.0k ↓45 0.4%/272k (auto)` with no cost | question ask, Yes / No and Cancel, walk |
+
+## pi with `❯` in column 0 of its own editor, a newline draft (issue 722)
+
+The reporter's extension keeps pi's editor and its two rules and puts `❯ ` in column 0 on the first input
+row, in the border colour; the rows under it keep two columns of lead. A draft typed with newlines then
+lines up under the glyph like a pointed list between two rules, and every send stopped at "Enter was not
+pressed". `pi--v150-gentle-quiet-two-line-draft.txt` is the screen of the report, plain text as the
+report card printed it (pi 1.5.0, herdr). The `pi--v130-quiet-prompt-*` captures are a repro of the same
+editor (an extension that subclasses `CustomEditor` and prefixes its rows), on pi 1.3.0, the version on
+the capture host, in a disposable 140 x 40 tmux server with `PI_SKIP_VERSION_CHECK=1` and no model
+configured, read with `tmux capture-pane -e -p`. Privacy: the install path in pi's no-model warning was
+replaced with neutral text of the same length; the working directory is a scratch path.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `pi--v150-gentle-quiet-two-line-draft.txt` | `draft` | The report's screen: two widget boxes at column 138, blank rows, the rule, `❯ a`, `  Olá`, the rule. No styling, so no caret cell: the box stays a list, unreadable, never free |
+| `pi--v130-quiet-prompt-two-line-draft--w140.txt` | `draft` | `❯ a`, then `  Olá` with pi's caret cell (`ESC[7m` space) after it. Reads as the draft `a Olá` (`frame.draftCaret`) |
+| `pi--v130-quiet-prompt-three-line-draft--w140.txt` | `draft` | A third row, `  tudo bem`, the caret cell after it |
+| `pi--v130-quiet-prompt-three-line-cursor-up--w140.txt` | `draft` | The same draft after `Up Up`: the caret cell on the prompt row, after `a` |
+| `pi--v130-quiet-prompt-settings--w140.txt` | `dialog` | `/settings` over the same editor: a search field with its own caret cell, a `→` pointer and a key hint. Stays a dialog |
+
+## omp 18.17.0, `/switch` and `/usage` on a phone (captured 2026-11-06, 120 columns by 40 rows, herdr 0.9.5)
+
+A reviewer reported that Collie's Chat view does not show `/usage` and `/switch` properly with omp. Each
+screen was read as the bridge reads it (`GET /api/pane/<id>`, escape codes kept) from a lab pane in a lab
+folder, with dummy provider keys, so the picker lists the whole catalog and no model turn ran. The `nerd`
+captures use `symbolPreset: nerd` in the lab config. Privacy: the folder shows as `~/.cache/collie-lab/...`,
+the account on the usage screen is the made-up `lab-user@example.invalid` (a stored login with a dummy
+token, so omp printed `unavailable` for its usage), and nothing else private was on screen.
+
+| Fixture | State | What it shows |
+| --- | --- | --- |
+| `omp--v18-17-0-switch--w120.txt` | `dialog` | `/switch` in the `unicode` preset: three recents, the rule, the pointer on the current `anthropic/claude-opus-5-5 ●`. Lifts (switch.ts) |
+| `omp--v18-17-0-nerd-switch--w120.txt` | `dialog` | The same picker in the `nerd` preset: `U+F002` search icon, `U+F054` pointer, `U+F111` dot, `U+EE9C` and `U+E70F` badge icons, `U+F0311` and `U+F12B7` keycaps in the footer. Before the `nerd` preset was read it declined and showed the unread-dialog card. Lifts |
+| `omp--v18-17-0-nerd-switch-moved--w120.txt` | `dialog` | One `Down` later: the pointer on `claude-fable-5-1`. The walk pair of the capture above |
+| `omp--v18-17-0-nerd-switch-search--w120.txt` | `dialog` | `opus-5` typed in the `nerd` picker: seven results, no rule. The way out reads `Clear search` |
+| `omp--v18-17-0-usage-dashboard--w120.txt` | `dialog` | `/usage`: a full-screen `╭─ Usage` box on the alternate screen, one account row (`unavailable`), a 53-week activity heatmap, about twenty blank rows, then `r refresh · ⏎ details · ⎋ close`. No grammar lifts it: it stays raw and takes the unread-dialog card with its Escape. The cues read `⎋ close` and, since 2026-11-06, `⏎ details` |
+
+## Codex 0.166.0 and 0.167.0 dialogs behind the trouble tally (captured 2026-11-07)
+
+The daily ping of 2026-11-07 counted 13 unread-dialog cards on `codex@0.167.0/herdr` from one solo
+install. A lab Codex 0.167.0 (and 0.166.0 beside it) ran in a Herdr pane of 120 and of 80 columns, 61
+rows, with its own `CODEX_HOME` holding the SessionStart hook Herdr's Codex integration installs. Every
+running turn read (composer found, no card); these screens did not. Privacy: the lab folder became
+`/tmp/collie-codex-lab`, and the command center's detail pane keeps only `/tmp/` and the folder's name.
+
+| Fixture | State | Reads as |
+| --- | --- | --- |
+| `codex--v0166-trust--w120.txt` | 0.166.0 folder trust, `2. Back to Agent Command Center`, `enter continue · esc back` | prompt-select, trust |
+| `codex--v0167-trust--w120.txt` | The same on 0.167.0 | prompt-select, trust |
+| `codex--v0167-trust--w80.txt` | The same at 80 columns, the paragraph on four rows | prompt-select, trust |
+| `codex--v0167-hooks-review--w120.txt` | `Hooks need review`, three rows, `›` on `1. Review hooks`, `enter confirm · esc skip` | prompt-select, trust (HOOKS_NOTES.md) |
+| `codex--v0167-hooks-review--w80.txt` | The same at 80 columns | prompt-select, trust |
+| `codex--v0167-hooks-review-moved--w80.txt` | The same after one `Down`, `›` on `2. Trust all and continue` | prompt-select, trust; the walk pair |
+| `codex--v0167-resume-tall--w120.txt` | `/resume` with one session: the title on row 1, the footer on rows 59 and 60 | menu (the title used to be out of reach) |
+| `codex--v0167-working--w120.txt` | A turn running: `• Working (4s • esc to interrupt) · 1 background terminal running`, the box, the status row, `← for agents · ? for shortcuts` | raw, composer found, no card |
+| `codex--v0167-command-center--w120.txt` | The agent command center, one task, a detail pane, `? help  esc back  ↑/↓ move  enter open  n new` | the unread-dialog card, by design |

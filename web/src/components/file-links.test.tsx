@@ -1,14 +1,25 @@
-import { act, render, renderHook, waitFor } from "@testing-library/react";
+import { act, fireEvent, render, renderHook, screen, waitFor } from "@testing-library/react";
 import { http, HttpResponse } from "msw";
 import type { ReactNode } from "react";
-import { MemoryRouter } from "react-router";
+import { MemoryRouter, useLocation } from "react-router";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
+import { fetchSnapshot } from "@/lib/api";
 import { __resetConnectionHealth, latchLost } from "@/lib/connection-health";
+import { noteSnapshotTaken, snapshotsTaken } from "@/lib/snapshot-clock";
+import { parseJsonObject } from "@/lib/json";
 import { paneLinkHandlers, PaneFileLinks } from "@/test/file-links";
 import { server } from "@/test/setup";
 
-import { FILE_EXIST_ABSENT_TTL_MS, FILE_EXIST_DEBOUNCE_MS, usePaneFileLinks } from "./file-links";
+import {
+  FILE_EXIST_ABSENT_TTL_MS,
+  FILE_EXIST_DEBOUNCE_MS,
+  FileLinksProvider,
+  useFileLinks,
+  usePaneFileLinks,
+  type FileLinkOpener,
+  type FileLinkTarget,
+} from "./file-links";
 import { MarkdownText } from "./markdown-text";
 
 // The pane screen's opener (ADR 0088): the root from the snapshot, home from the launchers answer,
@@ -121,6 +132,114 @@ describe("usePaneFileLinks", () => {
   });
 });
 
+// A refusal ends. A 403 (a gate, an older bridge) held the phone off until a reload; now the next live
+// snapshot lifts it, and a missing route (501, 404) holds a fixed time instead.
+interface ExistMode {
+  status: number | null;
+}
+
+describe("a refused file check", () => {
+  /** An existence route that answers `status` while `mode.status` is set, and yes to everything after. */
+  function refusing(mode: ExistMode, counter: { calls: number }) {
+    server.use(
+      http.get("/api/launchers", () => HttpResponse.json({ launchers: [], home: "/home/you" })),
+      http.post(/\/files\/exist$/, async ({ request }) => {
+        counter.calls++;
+        if (mode.status !== null) return HttpResponse.json({ error: "refused" }, { status: mode.status });
+        const body = parseJsonObject(await request.text());
+        const paths = Array.isArray(body?.paths) ? body.paths : [];
+        return HttpResponse.json({ exists: paths });
+      }),
+    );
+  }
+
+  it("a 403 holds 30 s, then the next live snapshot allows asks", async () => {
+    const counter = { calls: 0 };
+    const mode: ExistMode = { status: 403 };
+    refusing(mode, counter);
+    const { result } = renderHook(() => usePaneFileLinks({ paneId: "w1:p1", pane, panes, workspaces }), { wrapper });
+    await waitFor(() => expect(result.current).not.toBeNull());
+    result.current!({ path: "lib/a.ts" });
+    await settle();
+    expect(counter.calls).toBe(1);
+
+    // A snapshot inside the hold lifts nothing: a device that may not read is not asked once per poll.
+    mode.status = null;
+    noteSnapshotTaken();
+    result.current!({ path: "lib/b.ts" });
+    await settle();
+    expect(counter.calls).toBe(1);
+
+    // Past the hold, the snapshot taken since the refusal lifts it.
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 30_001);
+    try {
+      result.current!({ path: "lib/b.ts" });
+      await settle();
+      expect(counter.calls).toBe(2);
+      await waitFor(() => expect(result.current!({ path: "lib/b.ts" })).not.toBeNull());
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("a 403 stays refused past the hold until a snapshot arrives", async () => {
+    const counter = { calls: 0 };
+    const mode: ExistMode = { status: 403 };
+    refusing(mode, counter);
+    const { result } = renderHook(() => usePaneFileLinks({ paneId: "w1:p1", pane, panes, workspaces }), { wrapper });
+    await waitFor(() => expect(result.current).not.toBeNull());
+    result.current!({ path: "lib/a.ts" });
+    await settle();
+    expect(counter.calls).toBe(1);
+
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 30_001);
+    try {
+      result.current!({ path: "lib/b.ts" });
+      await settle();
+      expect(counter.calls).toBe(1);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("a 501 holds for thirty seconds, snapshots or not, then asks again", async () => {
+    const counter = { calls: 0 };
+    const mode: ExistMode = { status: 501 };
+    refusing(mode, counter);
+    const { result } = renderHook(() => usePaneFileLinks({ paneId: "w1:p1", pane, panes, workspaces }), { wrapper });
+    await waitFor(() => expect(result.current).not.toBeNull());
+    result.current!({ path: "lib/a.ts" });
+    await settle();
+    expect(counter.calls).toBe(1);
+
+    // A snapshot says nothing new about a route an old bridge lacks.
+    noteSnapshotTaken();
+    result.current!({ path: "lib/b.ts" });
+    await settle();
+    expect(counter.calls).toBe(1);
+
+    mode.status = null;
+    const clock = vi.spyOn(Date, "now").mockReturnValue(Date.now() + 30_001);
+    try {
+      result.current!({ path: "lib/b.ts" });
+      await settle();
+      expect(counter.calls).toBe(2);
+    } finally {
+      clock.mockRestore();
+    }
+  });
+
+  it("fetchSnapshot counts a live snapshot, and a disconnected one counts nothing", async () => {
+    const before = snapshotsTaken();
+    server.use(http.get("/api/snapshot", () => HttpResponse.json({ bridge: "disconnected", panes: [], workspaces: [] })));
+    await fetchSnapshot();
+    expect(snapshotsTaken()).toBe(before);
+    server.use(http.get("/api/snapshot", () => HttpResponse.json({ bridge: "connected", panes: [], workspaces: [] })));
+    await fetchSnapshot();
+    expect(snapshotsTaken()).toBe(before + 1);
+  });
+});
+
 // The rendering rule, end to end through the real opener: plain text until the answer, then a link.
 describe("chat prose with the existence check", () => {
   const chat = (text: string) =>
@@ -177,5 +296,219 @@ describe("chat prose with the existence check", () => {
     await settle();
     expect(calls).toBe(1);
     expect(container.querySelector("a")).toBeNull();
+  });
+
+  it("tapping a raster image path opens a bottom-sheet preview without leaving the route, while a non-image path navigates", async () => {
+    const asked: string[][] = [];
+    const imageUrls: string[] = [];
+    const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+    server.use(
+      ...paneLinkHandlers(["shots/home.png", "src/cart.ts"], asked),
+      http.get(/\/api\/pane\/[^/]+\/files\/image$/, ({ request }) => {
+        const url = new URL(request.url);
+        imageUrls.push(`${url.pathname}${url.search}`);
+        return new HttpResponse(pngBytes, {
+          status: 200,
+          headers: { "content-type": "image/png" },
+        });
+      }),
+    );
+    let currentLocation = "";
+    function LocationProbe() {
+      const loc = useLocation();
+      currentLocation = `${loc.pathname}${loc.search}`;
+      return null;
+    }
+    const { container } = render(
+      <MemoryRouter>
+        <LocationProbe />
+        <PaneFileLinks>
+          <MarkdownText text="see `shots/home.png` and `src/cart.ts`" />
+        </PaneFileLinks>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(container.querySelectorAll("a")).toHaveLength(2));
+    const [imageLink, codeLink] = [...container.querySelectorAll("a")];
+    fireEvent.click(imageLink!);
+    await waitFor(() => expect(screen.getByRole("img", { name: "home.png" })).toBeInTheDocument());
+    expect(document.querySelector("[data-slot='file-image']")).not.toBeNull();
+    expect(imageUrls).toEqual(["/api/pane/w1%3Ap1/files/image?path=shots%2Fhome.png"]);
+    expect(currentLocation).toBe("/");
+
+    fireEvent.click(codeLink!);
+    expect(currentLocation).toBe("/pane/w1%3Ap1/changes/files?path=src%2Fcart.ts");
+  });
+
+  it("omits a zero-byte binary label when a sheet image preview is refused", async () => {
+    server.use(
+      http.get("/api/launchers", () => HttpResponse.json({ launchers: [], home: "/home/you" })),
+      http.post("/api/pane/:id/files/exist", () => HttpResponse.json({ exists: ["shots/huge.png"] })),
+      http.get("/api/pane/:id/files/image", () => new HttpResponse(null, { status: 413 })),
+    );
+    const { container } = render(
+      <MemoryRouter>
+        <PaneFileLinks>
+          <MarkdownText text="see `shots/huge.png`" />
+        </PaneFileLinks>
+      </MemoryRouter>,
+    );
+    await waitFor(() => expect(container.querySelectorAll("a")).toHaveLength(1));
+    fireEvent.click(container.querySelector("a")!);
+    await waitFor(() => expect(screen.getByText(/too large to show/i)).toBeInTheDocument());
+    expect(screen.queryByText(/0 B/)).toBeNull();
+  });
+});
+
+// The sheet of a printed picture belongs to the provider: the opener it hands down reaches the sheet's
+// state through the context, and the sheet closes for good.
+describe("the image sheet of a file links provider", () => {
+  const imageOpener: FileLinkOpener = ({ path }) => ({
+    href: `/files?path=${path}`,
+    onOpen: () => {},
+    image: { paneId: "w1:p1", scope: {}, root: "/home/you/webapp", rel: path },
+  });
+  const pngBytes = new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  const servePng = () =>
+    server.use(
+      http.get(/\/api\/pane\/[^/]+\/files\/image$/, () => new HttpResponse(pngBytes, { status: 200, headers: { "content-type": "image/png" } })),
+    );
+
+  /** Hands the opener the context gave this render to the test, so a later render can use it late. */
+  interface Grabbed {
+    current: FileLinkOpener | null;
+  }
+  function Grab({ into }: { into: Grabbed }) {
+    into.current = useFileLinks();
+    return null;
+  }
+
+  it("opens the sheet from a target taken in an earlier render, after the opener was replaced", async () => {
+    servePng();
+    const grabbed: Grabbed = { current: null };
+    const ui = (value: FileLinkOpener | null) => (
+      <FileLinksProvider value={value}>
+        <Grab into={grabbed} />
+      </FileLinksProvider>
+    );
+    const { rerender } = render(ui(imageOpener));
+    const stale: FileLinkTarget = grabbed.current!({ path: "shots/home.png" })!;
+    rerender(ui(({ path }) => imageOpener({ path })));
+    act(() => stale.onOpen());
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+    await waitFor(() => expect(screen.getByRole("img", { name: "home.png" })).toBeInTheDocument());
+  });
+
+  it("stays closed after a close, a re-render, and the opener going away and coming back", async () => {
+    servePng();
+    const grabbed: Grabbed = { current: null };
+    const ui = (value: FileLinkOpener | null) => (
+      <FileLinksProvider value={value}>
+        <Grab into={grabbed} />
+      </FileLinksProvider>
+    );
+    const { rerender } = render(ui(imageOpener));
+    act(() => grabbed.current!({ path: "shots/home.png" })!.onOpen());
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+
+    fireEvent.keyDown(window, { key: "Escape" });
+    expect(screen.queryByRole("dialog")).toBeNull();
+    rerender(ui(imageOpener));
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    // Open again, lose the opener while the sheet is up, and bring it back: the sheet does not return.
+    act(() => grabbed.current!({ path: "shots/home.png" })!.onOpen());
+    await waitFor(() => expect(screen.getByRole("dialog")).toBeInTheDocument());
+    rerender(ui(null));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    rerender(ui(imageOpener));
+    expect(screen.queryByRole("dialog")).toBeNull();
+  });
+
+  it("closes the open sheet when the same provider switches to another pane, and opens it again on the first", async () => {
+    servePng();
+    const grabbed: Grabbed = { current: null };
+    const paneOpener = (paneId: string): FileLinkOpener => {
+      const opener: FileLinkOpener = ({ path }) => ({
+        href: `/files?path=${path}`,
+        onOpen: () => {},
+        image: { paneId, scope: {}, root: "/home/you/webapp", rel: path },
+      });
+      opener.paneKey = `\0\0${paneId}\0/home/you/webapp`;
+      return opener;
+    };
+    const ui = (value: FileLinkOpener | null) => (
+      <FileLinksProvider value={value}>
+        <Grab into={grabbed} />
+      </FileLinksProvider>
+    );
+    const { rerender } = render(ui(paneOpener("w1:p1")));
+    const stale = grabbed.current!({ path: "shots/home.png" })!;
+    act(() => stale.onOpen());
+    await waitFor(() => expect(screen.getByRole("img", { name: "home.png" })).toBeInTheDocument());
+
+    // A fresh opener of the same pane keeps the sheet.
+    rerender(ui(paneOpener("w1:p1")));
+    expect(screen.getByRole("dialog")).toBeInTheDocument();
+
+    // Another pane, without going through null, closes it, and it does not return with the first pane.
+    rerender(ui(paneOpener("w1:p2")));
+    expect(screen.queryByRole("dialog")).toBeNull();
+    rerender(ui(paneOpener("w1:p1")));
+    expect(screen.queryByRole("dialog")).toBeNull();
+
+    // A target taken from an earlier opener still opens the sheet on the pane it belongs to.
+    act(() => stale.onOpen());
+    await waitFor(() => expect(screen.getByRole("img", { name: "home.png" })).toBeInTheDocument());
+  });
+
+  it("works end to end with usePaneFileLinks: stale target, pane switch, and null opener", async () => {
+    servePng();
+    server.use(
+      http.get("/api/launchers", () => HttpResponse.json({ launchers: [], home: "/home/you" })),
+      http.post("/api/pane/:id/files/exist", async ({ request }) => {
+        const body = parseJsonObject(await request.text());
+        return HttpResponse.json({ exists: Array.isArray(body?.paths) ? body.paths : [] });
+      }),
+    );
+    const grabbed: Grabbed = { current: null };
+    function Harness({ active, second }: { active: typeof pane | undefined; second: boolean }) {
+      const opener = usePaneFileLinks({
+        paneId: active?.paneId ?? "w1:p1",
+        pane: active,
+        panes: active ? [active] : [],
+        workspaces,
+      });
+      return (
+        <FileLinksProvider value={opener}>
+          <Grab into={grabbed} />
+          <MarkdownText text={second ? "see `shots/first.png` and `shots/second.png`" : "see `shots/first.png`"} />
+        </FileLinksProvider>
+      );
+    }
+    const ui = (active: typeof pane | undefined, second: boolean) => (
+      <MemoryRouter>
+        <Harness active={active} second={second} />
+      </MemoryRouter>
+    );
+    const { rerender } = render(ui(pane, false));
+    await waitFor(() => expect(grabbed.current?.({ path: "shots/first.png" }) ?? null).not.toBeNull());
+    const stale = grabbed.current!({ path: "shots/first.png" })!;
+    // A second existence batch yields a new opener instance; the earlier target still works.
+    rerender(ui(pane, true));
+    await waitFor(() => expect(screen.getByText("shots/second.png").closest("a")).not.toBeNull());
+    act(() => stale.onOpen());
+    await waitFor(() => expect(screen.getByRole("img", { name: "first.png" })).toBeInTheDocument());
+
+    rerender(ui(other, true));
+    expect(screen.queryByRole("img", { name: "first.png" })).toBeNull();
+
+    rerender(ui(pane, true));
+    act(() => stale.onOpen());
+    await waitFor(() => expect(screen.getByRole("img", { name: "first.png" })).toBeInTheDocument());
+    rerender(ui(undefined, true));
+    expect(screen.queryByRole("img", { name: "first.png" })).toBeNull();
+    rerender(ui(pane, true));
+    await settle();
+    expect(screen.queryByRole("img", { name: "first.png" })).toBeNull();
   });
 });

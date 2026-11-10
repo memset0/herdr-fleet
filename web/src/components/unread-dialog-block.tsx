@@ -1,6 +1,8 @@
+import { Icon } from "@/components/icons/icon";
 import { useEffect, useRef, useState } from "react";
 
 import { cn } from "@/lib/utils";
+import { ARM_MS } from "@/lib/arm";
 import { lineText, type StyledLine, type UnreadDialogModel } from "@/lib/blocks";
 import { keyLabel } from "@/lib/key-queue";
 import { OptionGroupCaption, PromptPanel } from "@/components/option-button";
@@ -23,6 +25,19 @@ export interface UnreadDialogBlockProps {
   /** The device's Wrap lines setting, so the whole-pane mirror wraps or pans as the pane mirror
    *  does (#372). Default false: it pans, as RawMirror does. */
   wrap?: boolean;
+  /**
+   * Opens the Report a problem sheet for this screen (ADR 0123, amendment 2026-10-28). Absent, the
+   * card draws no report row (a crew member's pane, which the report route does not read yet). It is
+   * a read, so a read-only device keeps it.
+   */
+  onReport?: () => void;
+  /**
+   * Called once per card instance for each pane and dialog it shows (M86 spec 05): the trouble signal.
+   * A re-render of the same dialog is not a new call. Absent, nothing is called.
+   */
+  onShown?: () => void;
+  /** The pane the card shows, so an instance another pane reuses calls {@link onShown} again. */
+  paneId?: string;
 }
 
 // The UNREAD-DIALOG CARD — one declared key over a screen Collie could not read (.adr/0053).
@@ -50,10 +65,9 @@ export interface UnreadDialogBlockProps {
 // the first tap must not be able to do that. The first tap only arms: the button's words change
 // (never its size), and it disarms by itself after ARM_MS. The wording names "Dismiss" only when
 // the screen's own rows print `esc dismiss`; otherwise it names the key, never a verb.
-export const ARM_MS = 4000;
 const NAMES_A_DISMISS = /\besc\s+dismiss\b/i;
 
-export function UnreadDialogBlock({ cancel, lines, onAction, disabled, wrap }: UnreadDialogBlockProps) {
+export function UnreadDialogBlock({ cancel, lines, onAction, disabled, wrap, onReport, onShown, paneId }: UnreadDialogBlockProps) {
   useLocale();
   const [sending, setSending] = useState(false);
   const locked = disabled || sending;
@@ -67,6 +81,15 @@ export function UnreadDialogBlock({ cancel, lines, onAction, disabled, wrap }: U
   const dismissWording = lines.some((l) => NAMES_A_DISMISS.test(lineText(l)));
 
   useEffect(() => () => clearTimeout(timer.current), []);
+  // The trouble signal (M86 spec 05): once per instance for each pane and dialog identity, the same
+  // identity the arm keys on. A poll that re-renders the same dialog calls nothing.
+  const shownKey = `${paneId ?? ""}\n${identity}`;
+  const shownFor = useRef<string | null>(null);
+  useEffect(() => {
+    if (onShown === undefined || shownFor.current === shownKey) return;
+    shownFor.current = shownKey;
+    onShown();
+  }, [shownKey, onShown]);
   // A card that stops being pressable (read-only device, gone pane) also stops being armed.
   useEffect(() => {
     if (!disabled) return;
@@ -120,8 +143,29 @@ export function UnreadDialogBlock({ cancel, lines, onAction, disabled, wrap }: U
       <span role="status" className="sr-only">
         {armed ? armedLabel : ""}
       </span>
+      {/* Report a problem: a quiet row under the key, always there when offered, so nothing moves.
+          It only opens the sheet; nothing leaves the phone without the person's own taps there. */}
+      {onReport !== undefined && (
+        <button
+          type="button"
+          data-slot="unread-dialog-report"
+          onClick={onReport}
+          className="inline-flex min-h-11 w-full items-center justify-center gap-1.5 text-xs text-muted-foreground underline underline-offset-2"
+        >
+          <Icon name="report-problem" className="size-3.5" />
+          {t("unreadDialog.report")}
+        </button>
+      )}
 
-      <RawMirror lines={lines} wrap={wrap} />
+      {/* The mirror is its own scroller, capped, and opens at its bottom: the dialog is the LAST rows of
+          the pane, and the old rows above it are what a top-anchored box showed (#667). Capped here so
+          the key button above it stays on the screen instead of scrolling away with the dock. */}
+      <RawMirror
+        lines={lines}
+        wrap={wrap}
+        anchor="bottom"
+        className="max-h-[30dvh] overflow-y-auto overscroll-contain"
+      />
     </PromptPanel>
   );
 }

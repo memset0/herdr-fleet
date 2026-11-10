@@ -63,7 +63,7 @@ fi
 # (1) The fixed list.
 triggers=""
 for f in "${WIRE_FILES[@]}"; do
-  if printf '%s\n' "$staged" | grep -qxF "$f"; then
+  if grep -qxF "$f" <<< "$staged"; then
     triggers="${triggers}${f}"$'\n'
   fi
 done
@@ -75,7 +75,7 @@ added="$(git diff --cached --name-only --diff-filter=A \
 if [ -n "$added" ]; then
   while IFS= read -r f; do
     [ -n "$f" ] || continue
-    printf '%s' "$triggers" | grep -qxF "$f" || triggers="${triggers}${f}"$'\n'
+    grep -qxF "$f" <<< "$triggers" || triggers="${triggers}${f}"$'\n'
   done <<<"$added"
 fi
 
@@ -85,7 +85,7 @@ if [ -z "$triggers" ]; then
 fi
 
 # Pass (a): the contract doc is staged in the same commit.
-if printf '%s\n' "$staged" | grep -qxF 'CREW_PROTOCOL.md'; then
+if grep -qxF 'CREW_PROTOCOL.md' <<< "$staged"; then
   echo "✓ crew wire-shape change is accompanied by a staged CREW_PROTOCOL.md"
   exit 0
 fi

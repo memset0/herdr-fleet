@@ -64,6 +64,8 @@ export function kindOfKey(offer: Offer, key: string | undefined): Kind | null {
 export type Unavailable =
   /** An agent the machine knows but whose binary its login PATH does not have. */
   | { kind: "notFound" }
+  /** A lead row whose pinned folder is not on that machine (ADR 0127). */
+  | { kind: "noFolder" }
   /** The operator turned phone-added rows off on that machine (`[phone] adds = false`). */
   | { kind: "addsOff" }
   /** The operator has not turned typed lines on (`[phone] free_text`). */
@@ -74,10 +76,8 @@ export type Unavailable =
   | { kind: "runOff" }
   /** The machine's Collie is older than 1.19.0 and starts no agent by id. */
   | { kind: "olderCollie" }
-  /** The machine's multiplexer has no worktrees (tmux, zellij). */
-  | { kind: "needsHerdr" }
-  /** A crew member was chosen; worktrees are made on the lead only (ADR 0089, rule 6). */
-  | { kind: "onlyOnLead"; lead: string }
+  /** The chosen machine makes no worktree: its multiplexer cannot open a space, or it has no git (ADR 0126). */
+  | { kind: "needsSpaceAndGit" }
   /** The machine is not taking writes: its own sentence (lib/host-health.ts). */
   | { kind: "machine"; sentence: string };
 
@@ -86,6 +86,8 @@ export function unavailableText(reason: Unavailable): string {
   switch (reason.kind) {
     case "notFound":
       return t("newPage.reason.notFound");
+    case "noFolder":
+      return t("newPage.reason.noFolder");
     case "addsOff":
       return t("newPage.reason.addsOff");
     case "freeTextOff":
@@ -96,10 +98,8 @@ export function unavailableText(reason: Unavailable): string {
       return t("newPage.reason.runOff");
     case "olderCollie":
       return t("newPage.reason.olderCollie");
-    case "needsHerdr":
-      return t("newPage.reason.needsHerdr");
-    case "onlyOnLead":
-      return t("newPage.reason.onlyOnLead", { lead: reason.lead });
+    case "needsSpaceAndGit":
+      return t("newPage.reason.needsSpaceAndGit");
     case "machine":
       return reason.sentence;
   }
@@ -165,10 +165,8 @@ export interface OfferInput {
    * starts nothing but its program's starters, even before its list arrives or when the list is empty.
    */
   screenless?: boolean;
-  /** Worktrees: whether the lead's multiplexer can make one. */
+  /** Worktrees: whether the chosen machine can make one (`createWorktree` for that host and session). */
   canWorktree: boolean;
-  /** Worktrees: the chosen machine is a crew member, and this is the lead's name. */
-  memberChosen?: { lead: string };
 }
 
 /** What the page offers. Nothing is ever simply hidden: an item that cannot run is listed with its reason. */
@@ -200,6 +198,8 @@ function reasonOf(reason: NonNullable<LauncherItem["reason"]>): Unavailable {
   switch (reason) {
     case "not_found":
       return { kind: "notFound" };
+    case "no_folder":
+      return { kind: "noFolder" };
     case "adds_off":
       return { kind: "addsOff" };
     case "free_text_off":
@@ -269,7 +269,7 @@ function fromRow(row: Launcher): OfferItem {
 
 /**
  * The page's offer for one machine. An agent that is not found stays in the list, disabled. An older
- * Collie, a multiplexer with no worktrees and a member chosen for a worktree each become one reason.
+ * Collie and a machine that makes no worktree each become one reason.
  * A machine that takes no writes offers nothing, and its sentence is said beside the machine select.
  *
  * With `items` (a 1.19.0 bridge) the two lists are the bridge's, in its order. Without them the page
@@ -291,8 +291,7 @@ export function offerFor(input: OfferInput): Offer {
   }
   const olderCollie = input.loaded && input.harnesses === null;
   let branchBlocked: Unavailable | null = null;
-  if (!input.canWorktree) branchBlocked = { kind: "needsHerdr" };
-  else if (input.memberChosen !== undefined) branchBlocked = { kind: "onlyOnLead", lead: input.memberChosen.lead };
+  if (!input.canWorktree) branchBlocked = { kind: "needsSpaceAndGit" };
   // An older Collie cannot be asked for a worktree from a folder either: the route is 1.19.0's.
   else if (olderCollie) branchBlocked = { kind: "olderCollie" };
   const listed = input.items ?? null;

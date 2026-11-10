@@ -55,6 +55,10 @@ export function resolveHerdrCommand(deps: HerdrCommandDeps = {}): HerdrCommand {
   const which = deps.which ?? whichOnPath;
   const isExecutable = deps.isExecutable ?? executableFile;
 
+  if (env.COLLIE_MUX === "herdr-core") {
+    const core = which("herdr-core", env.PATH ?? "") ?? which("hc", env.PATH ?? "");
+    return core !== null && isAbsolute(core) && isExecutable(core) ? { ok: true, path: core } : { ok: false, diagnostic: "herdr-core executable is unavailable" };
+  }
   const stated = env[HERDR_BIN_PATH_ENV]?.trim() ?? "";
   const statedProblem = stated === "" ? `${HERDR_BIN_PATH_ENV} is not set` : statedBinaryProblem(stated, isExecutable);
   if (statedProblem === null) return { ok: true, path: stated };

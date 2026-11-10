@@ -4,6 +4,7 @@ import { http, HttpResponse } from "msw";
 
 import { server } from "@/test/setup";
 import { clearStatus } from "@/lib/status";
+import { resetPollIntent, topologyBursting } from "@/lib/poll-intent";
 import type { TabView } from "@/lib/types";
 import { TabActionsSheet } from "./tab-actions-sheet";
 
@@ -14,7 +15,10 @@ import { TabActionsSheet } from "./tab-actions-sheet";
 // close confirm names the blast radius (closing a tab kills every pane in it). Wired to the bridge
 // via lib/api (exercised through MSW); the parent gets onRenamed / onClosed side-effect callbacks.
 
-beforeEach(() => clearStatus());
+beforeEach(() => {
+  clearStatus();
+  resetPollIntent();
+});
 
 const tab: TabView = {
   tabId: "w1:t1",
@@ -79,7 +83,7 @@ describe("TabActionsSheet — rename", () => {
     expect(screen.getByRole("button", { name: "Rename" })).toBeInTheDocument();
   });
 
-  it("posts the trimmed label, then calls onRenamed and closes", async () => {
+  it("posts the trimmed label, then calls onRenamed, owes a topology burst and closes", async () => {
     const user = userEvent.setup();
     let body: unknown;
     let url = "";
@@ -100,6 +104,7 @@ describe("TabActionsSheet — rename", () => {
     await waitFor(() => expect(props.onRenamed).toHaveBeenCalledTimes(1));
     expect(body).toEqual({ label: "api" });
     expect(url).toContain("/api/tab/w1%3At1/rename");
+    expect(topologyBursting()).toBe(true);
     expect(props.onClose).toHaveBeenCalledTimes(1);
   });
 
@@ -129,6 +134,7 @@ describe("TabActionsSheet — rename", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Save" })).not.toBeDisabled());
     expect(props.onRenamed).not.toHaveBeenCalled();
     expect(props.onClose).not.toHaveBeenCalled();
+    expect(topologyBursting()).toBe(false);
   });
 
   it("resets back to the action list when the sheet reopens, even mid-rename", async () => {
@@ -223,6 +229,65 @@ describe("TabActionsSheet — close", () => {
     await waitFor(() => expect(screen.getByRole("button", { name: "Close tab" })).toBeInTheDocument());
     expect(props.onClosed).not.toHaveBeenCalled();
     expect(props.onClose).not.toHaveBeenCalled();
+  });
+});
+
+describe("TabActionsSheet — close confirm and separation", () => {
+  it("sends no request on the arming tap, and backing out (sheet closed and reopened) sends none and disarms", async () => {
+    const user = userEvent.setup();
+    const calls: string[] = [];
+    server.use(
+      http.post(/\/api\/tab\/[^/]+\/close$/, ({ request }) => {
+        calls.push(request.url);
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    const onClosed = vi.fn();
+    const mk = (open: boolean) => (
+      <TabActionsSheet open={open} onClose={vi.fn()} tab={tab} onRenamed={vi.fn()} onClosed={onClosed} />
+    );
+    const { rerender } = render(mk(true));
+    await user.click(screen.getByRole("button", { name: "Close tab" }));
+    expect(screen.getByRole("button", { name: "Tap again to close 2 panes" })).toBeInTheDocument();
+    rerender(mk(false));
+    rerender(mk(true));
+    expect(screen.getByRole("button", { name: "Close tab" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Tap again to close 2 panes" })).toBeNull();
+    expect(calls).toEqual([]);
+    expect(onClosed).not.toHaveBeenCalled();
+  });
+
+  it("calls close exactly once after the confirm tap", async () => {
+    const user = userEvent.setup();
+    const calls: string[] = [];
+    server.use(
+      http.post(/\/api\/tab\/[^/]+\/close$/, ({ request }) => {
+        calls.push(request.url);
+        return HttpResponse.json({ ok: true });
+      }),
+    );
+    const props = renderSheet();
+    await user.click(screen.getByRole("button", { name: "Close tab" }));
+    expect(calls).toEqual([]);
+    await user.click(screen.getByRole("button", { name: "Tap again to close 2 panes" }));
+    await waitFor(() => expect(props.onClosed).toHaveBeenCalledTimes(1));
+    expect(calls).toHaveLength(1);
+  });
+
+  it("puts Close tab last, behind a divider, with 44px rows, so it never neighbours Rename", () => {
+    renderSheet();
+    const rename = screen.getByRole("button", { name: "Rename" });
+    const close = screen.getByRole("button", { name: "Close tab" });
+    const divider = document.querySelector('[data-slot="tab-actions-divider"]');
+    expect(divider).not.toBeNull();
+    // Document order: Rename, then the divider, then Close tab.
+    expect(rename.compareDocumentPosition(divider!) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(divider!.compareDocumentPosition(close) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    // Nothing tappable sits between them: the divider is the only sibling in the gap.
+    expect(rename.nextElementSibling).toBe(divider);
+    expect(divider!.nextElementSibling).toBe(close);
+    expect(rename).toHaveClass("min-h-11");
+    expect(close).toHaveClass("min-h-11");
   });
 });
 

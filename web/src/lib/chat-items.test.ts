@@ -66,9 +66,17 @@ describe("itemsOf", () => {
     expect(itemsOf(entry({ parts: [toolPart()] }))[0]!.id).toBe("u1:0");
   });
 
-  it("names an image in a notice rather than dropping the part", () => {
+  it("draws an image part as an image block", () => {
     const [item] = itemsOf(entry({ parts: [{ kind: "image", url: "/api/image/7" }] }));
-    expect(item).toMatchObject({ kind: "notice", text: "Image: /api/image/7" });
+    expect(item).toEqual({ id: "u1:0", ts: "2026-09-30T08:00:00.000Z", kind: "image", url: "/api/image/7" });
+  });
+
+  it("carries a picture a tool returned onto its card, and leaves the key off when there is none", () => {
+    const url = "data:image/png;base64,AAAA";
+    const [withImage] = itemsOf(entry({ parts: [toolPart({ result: { text: "", imageUrl: url } })] }));
+    expect(withImage).toMatchObject({ kind: "tool", status: "done", image: url });
+    const [without] = itemsOf(entry({ parts: [toolPart({ result: { text: "ok" } })] }));
+    expect(without).not.toHaveProperty("image");
   });
 
   it("carries a turn's timestamp onto every block, and drops an empty one", () => {
@@ -128,6 +136,24 @@ describe("toolStatus", () => {
   it("is done for an ordinary result", () => {
     expect(toolStatus(toolPart({ result: { text: "ok" } }))).toBe("done");
   });
+
+  it("is running when the result came back but the call is ongoing (a background job, a subagent)", () => {
+    const call: ToolCall = { kind: "execute", command: "sleep 9", background: true, ongoing: true };
+    expect(toolStatus(toolPart({ call, result: { text: "started" } }))).toBe("running");
+    const agent: ToolCall = { kind: "task", agent: "explore", summary: "look", ongoing: true };
+    expect(toolStatus(toolPart({ call: agent, result: { text: "queued" } }))).toBe("running");
+  });
+
+  it("lets a refusal or a fault win over ongoing", () => {
+    const call: ToolCall = { kind: "execute", command: "x", ongoing: true };
+    expect(toolStatus(toolPart({ call, result: { text: "", denied: true } }))).toBe("denied");
+    expect(toolStatus(toolPart({ call, result: { text: "boom", isError: true } }))).toBe("failed");
+  });
+
+  it("is done once the ongoing flag is gone", () => {
+    const call: ToolCall = { kind: "execute", command: "x", background: true };
+    expect(toolStatus(toolPart({ call, result: { text: "ok" } }))).toBe("done");
+  });
 });
 
 describe("withToolOutput", () => {
@@ -142,8 +168,9 @@ describe("withToolOutput", () => {
     for (const call of calls) expect(withToolOutput(call, "out")).toMatchObject({ output: "out" });
   });
 
-  it("returns the other three unchanged", () => {
+  it("returns the other four unchanged, a plan among them: its result is the list, which the card already draws", () => {
     const calls: ToolCall[] = [
+      { kind: "plan", name: "todo", tasks: [{ title: "a", status: "done" }] },
       { kind: "edit", path: "a.ts", added: 1, removed: 0 },
       { kind: "read", path: "a.ts" },
       { kind: "delete", path: "a.ts" },

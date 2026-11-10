@@ -5,12 +5,14 @@ import { describe, expect, it } from "vitest";
 import { parseAnsi } from "../ansi";
 import { splitLines } from "../blocks";
 import { draftCarriesSend } from "../draft-match";
+import { stripSgr } from "../surface/plain";
 import { codexAdapter } from "./codex";
 import { composerPrompt, extractInputDraft, locateComposer, stripChrome } from "./codex/chrome";
-import { isStatusRow, lineText, PLACEHOLDER } from "./codex/markers";
+import { isStatusRow, lineText, PLACEHOLDER, PROMPT_GLYPHS, promptText } from "./codex/markers";
 import { detectApprovalRegion } from "./codex/approval";
 import { detectAskRegion } from "./codex/ask";
 import { detectTrustRegion } from "./codex/trust";
+import { detectHooksRegion } from "./codex/hooks";
 import { decorateCodexDisplay } from "./codex/display";
 import { describeAdapterConformance } from "./conformance";
 import { buildBlocks } from "./index";
@@ -82,6 +84,45 @@ const PINNED = [
   "codex--v0163-agents-hint-warnings.txt",
   "codex--v0163-working-draft--w120.txt",
   "codex--v0163-working-steered--w120.txt",
+  // 0.164.0 mid-turn: a line typed, then a steer (Enter) or a queue (Tab), and the turn's end (M69 spec 01).
+  "codex--v0164-queue-after--w120.txt",
+  "codex--v0164-queue-after-now--w120.txt",
+  "codex--v0164-queue-done--w120.txt",
+  "codex--v0164-queue-typed--w120.txt",
+  "codex--v0164-steer-after--w120.txt",
+  "codex--v0164-steer-after-now--w120.txt",
+  "codex--v0164-steer-done--w120.txt",
+  "codex--v0164-steer-typed--w120.txt",
+  // Issue 615: two derived (the empty and draft composers with `»` for `›`) and two real captures from the reporter (`--w170`).
+  "codex--v0165-ultra-draft--w170.txt",
+  "codex--v0165-ultra-draft.txt",
+  "codex--v0165-ultra-empty--w120.txt",
+  "codex--v0165-ultra-empty--w170.txt",
+  // 0.166.0, harness lab drift: the braille logo over an empty box on a pane of 32 rows or more, gone at the
+  // first character and back after Backspace; and the footer's `⚠ 1 warning · f2 to view` that any `-c` draws.
+  "codex--v0166-art-backspace--w120.txt",
+  "codex--v0166-art-empty--w120.txt",
+  "codex--v0166-art-typed--w120.txt",
+  // 0.166.0 on herdr-core, whose `terminal.read` carries no styling: a turn running, the box after it, and a
+  // draft (the Codex report of 2026-11-05, the unread-dialog card after every send).
+  "codex--v0166-core-draft--w120.txt",
+  "codex--v0166-core-idle--w120.txt",
+  "codex--v0166-core-working--w120.txt",
+  // 0.166.0 and 0.167.0, the trouble tally of 2026-11-07 (codex@0.167.0 on Herdr, 13 cards in a day): the
+  // folder-trust prompt whose way out is now `Back to Agent Command Center`, the hook-trust prompt that
+  // Herdr's SessionStart hook brings up at every launch, `/resume` on a 61-row pane, a turn running, and
+  // the agent command center itself (no grammar; the card is right there).
+  "codex--v0166-trust--w120.txt",
+  "codex--v0166-warning-art-empty--w120.txt",
+  "codex--v0166-warning-typed--w120.txt",
+  "codex--v0167-command-center--w120.txt",
+  "codex--v0167-hooks-review--w120.txt",
+  "codex--v0167-hooks-review--w80.txt",
+  "codex--v0167-hooks-review-moved--w80.txt",
+  "codex--v0167-resume-tall--w120.txt",
+  "codex--v0167-trust--w120.txt",
+  "codex--v0167-trust--w80.txt",
+  "codex--v0167-working--w120.txt",
   "codex--working.txt",
 ];
 
@@ -103,6 +144,13 @@ const DIALOG = [
   "codex--v0156-approval-exec-wrapped.txt",
   "codex--v0156-approval-patch.txt",
   "codex--v0156-trust.txt",
+  "codex--v0166-trust--w120.txt",
+  "codex--v0167-hooks-review--w120.txt",
+  "codex--v0167-hooks-review--w80.txt",
+  "codex--v0167-hooks-review-moved--w80.txt",
+  "codex--v0167-resume-tall--w120.txt",
+  "codex--v0167-trust--w120.txt",
+  "codex--v0167-trust--w80.txt",
 ];
 
 const ownFixtures = DIALOG;
@@ -147,6 +195,156 @@ describe("composerReady — the gate the reply path pre-flights on", () => {
   });
 });
 
+describe("Codex 0.166.0: the logo over an empty box and the lone warning row (harness lab drift, 2026-10-29)", () => {
+  it.each([
+    ["codex--v0166-art-empty--w120.txt", null],
+    ["codex--v0166-art-typed--w120.txt", "x"],
+    ["codex--v0166-art-backspace--w120.txt", null],
+    ["codex--v0166-warning-art-empty--w120.txt", null],
+    ["codex--v0166-warning-typed--w120.txt", "x"],
+  ] as const)("%s: the box is found on the same row, and its draft reads back", (name, draft) => {
+    const lines = fixtureLines(name);
+    expect(codexAdapter.composerReady!(lines)).toBe(true);
+    expect(codexAdapter.extractInputDraft(lines)).toBe(draft);
+    expect(locateComposer(lines)?.promptRow).toBe(locateComposer(fixtureLines("codex--v0166-art-empty--w120.txt"))?.promptRow);
+  });
+
+  it("the logo lifts no block and no dialog", () => {
+    for (const name of ["codex--v0166-art-empty--w120.txt", "codex--v0166-warning-art-empty--w120.txt"]) {
+      expect(detectApprovalRegion(fixtureLines(name)), name).toBeNull();
+      expect(detectAskRegion(fixtureLines(name)), name).toBeNull();
+      expect(detectTrustRegion(fixtureLines(name)), name).toBeNull();
+    }
+  });
+});
+
+describe("Codex on a read with no styling (herdr-core, Codex 0.166.0, reported 2026-11-05)", () => {
+  // The core's `terminal.read` hands out plain text. The status row had no paint to pass on, so every
+  // Codex pane on the core had no composer, and while a turn ran (`esc to interrupt` in the last rows)
+  // the unread-dialog card stood over the live box after every send.
+  it.each([
+    ["codex--v0166-core-working--w120.txt", null],
+    ["codex--v0166-core-idle--w120.txt", null],
+    ["codex--v0166-core-draft--w120.txt", "collie core draft probe"],
+  ] as const)("%s: the box is found, its draft reads back, and no card covers it", (name, draft) => {
+    const lines = fixtureLines(name);
+    expect(codexAdapter.composerReady!(lines)).toBe(true);
+    expect(codexAdapter.extractInputDraft(lines)).toBe(draft);
+    expect(buildBlocks(lines, { agent: "codex" }).map((b) => b.kind)).not.toContain("unread-dialog");
+    expect(lineText(codexAdapter.extractStatusLines(lines)[0]!)).toBe(
+      "  GPT-6.1-Sol low · /var/home/alice/.cache/collie-lab/codex-lab/project · Run sleep and list files",
+    );
+  });
+
+  it("the running turn still names Esc in its last rows: only the box keeps the card away", () => {
+    expect(codexAdapter.modalOnScreen!(fixtureLines("codex--v0166-core-working--w120.txt"))).toBe(true);
+  });
+
+  // Astra's starfield draws braille sparkles on the prompt row after the placeholder. Only their paint
+  // tells them from typed text, so a plain read takes them for a draft (as before this change).
+  const PLAIN_GAPS = new Set(["codex--v0154-submitted-fill.txt"]);
+
+  it.each(allCodexFixtures.filter((f) => !PLAIN_GAPS.has(f)))(
+    "%s: the same screen with its styling stripped reads the same box, draft and card",
+    (name) => {
+      const raw = readFileSync(join(PANES_DIR, name), "utf8");
+      const styled = splitLines(parseAnsi(raw));
+      const plain = splitLines(parseAnsi(stripSgr(raw)));
+      expect(codexAdapter.composerReady!(plain)).toBe(codexAdapter.composerReady!(styled));
+      expect(codexAdapter.extractInputDraft(plain)).toBe(codexAdapter.extractInputDraft(styled));
+      const card = (lines: typeof styled) => buildBlocks(lines, { agent: "codex" }).some((b) => b.kind === "unread-dialog");
+      expect(card(plain)).toBe(card(styled));
+    },
+  );
+
+  it.each([...DIALOG, "codex--ask-notes-focused.txt"])("%s stripped: a modal still owns the screen", (name) => {
+    const raw = readFileSync(join(PANES_DIR, name), "utf8");
+    expect(codexAdapter.composerReady!(splitLines(parseAnsi(stripSgr(raw))))).toBe(false);
+  });
+
+  it("takes a status row by its text alone, and refuses the rows the paint kept out", () => {
+    const plainRow = (text: string) => isStatusRow(text, undefined, true);
+    expect(plainRow("  GPT-6.1-Sol low · /tmp/project · Run sleep and list files")).toBe(true);
+    expect(plainRow("  gpt-5.6-sol default · /tmp/collie-codex-sandbox")).toBe(true);
+    // A right-aligned notice after a gap of two spaces or more.
+    expect(plainRow(`  GPT-6-Astra high · ~/project${" ".repeat(90)}Pursuing goal (17h 43m)`)).toBe(true);
+    expect(plainRow(`  GPT-6-Astra high · ~/project${" ".repeat(4)}${"x".repeat(200)}`)).toBe(false);
+    // Key-hint rows and dialog footers.
+    expect(plainRow("  ← for agents · ? for shortcuts")).toBe(false);
+    expect(plainRow("  ? for shortcuts · tab to queue")).toBe(false);
+    expect(plainRow("  ⚠ 1 warning · f2 to view")).toBe(false);
+    expect(plainRow("  enter continue · esc quit")).toBe(false);
+    expect(plainRow("  enter select · esc back")).toBe(false);
+    // One field, no indent, and a field over its bound.
+    expect(plainRow("  just one field")).toBe(false);
+    expect(plainRow("model · /tmp/project")).toBe(false);
+    expect(plainRow(`  model · ${"y".repeat(200)}`)).toBe(false);
+  });
+
+  it("refuses a pointed option row, whose footer the paint no longer sets apart", () => {
+    const lines = splitLines(parseAnsi(["", "› 1. Trust and continue", "  2. Quit", "", "  model low · /tmp/project"].join("\n")));
+    expect(locateComposer(lines)).toBeNull();
+    expect(codexAdapter.composerReady!(lines)).toBe(false);
+  });
+});
+
+describe("the Ultra prompt glyph (issue 615)", () => {
+  it("promptText reads every glyph of PROMPT_GLYPHS and nothing else", () => {
+    for (const glyph of PROMPT_GLYPHS) {
+      expect(promptText(`${glyph} hello`), glyph).toBe("hello");
+      expect(promptText(`${glyph} ${PLACEHOLDER}`), glyph).toBe(PLACEHOLDER);
+    }
+    expect([...PROMPT_GLYPHS]).toEqual(["\u203a", "\u00bb"]);
+    expect(promptText("> hello")).toBeNull();
+    expect(promptText("\u00bbhello")).toBeNull();
+  });
+
+  it("finds the composer, and reads the draft or the empty placeholder, under both glyphs", () => {
+    const pairs = [
+      ["codex--v0164-queue-done--w120.txt", "codex--v0165-ultra-empty--w120.txt", null],
+      ["codex--v0156-headless-draft.txt", "codex--v0165-ultra-draft.txt", "hello from the phone probe"],
+    ] as const;
+    // The reporter's real Codex 0.165.0 Ultra captures (issue 615, 170 columns).
+    for (const [name, draft] of [["codex--v0165-ultra-empty--w170.txt", null], ["codex--v0165-ultra-draft--w170.txt", "Hello, test draft"]] as const) {
+      expect(locateComposer(fixtureLines(name)), name).not.toBeNull();
+      expect(codexAdapter.composerReady!(fixtureLines(name)), name).toBe(true);
+      expect(codexAdapter.extractInputDraft(fixtureLines(name)), name).toBe(draft);
+    }
+    for (const [original, ultra, draft] of pairs) {
+      expect(locateComposer(fixtureLines(ultra)), ultra).not.toBeNull();
+      expect(locateComposer(fixtureLines(ultra))?.promptRow, ultra).toBe(locateComposer(fixtureLines(original))?.promptRow);
+      expect(codexAdapter.composerReady!(fixtureLines(ultra)), ultra).toBe(true);
+      expect(codexAdapter.extractInputDraft(fixtureLines(ultra)), ultra).toBe(draft);
+      expect(codexAdapter.extractInputDraft(fixtureLines(original)), original).toBe(draft);
+    }
+  });
+
+  it("an output line starting with `» ` above a `›` composer is not the composer (and the reverse)", () => {
+    const withLines = (name: string, glyphLine: string) => {
+      const lines = fixtureLines(name);
+      const box = locateComposer(lines)!;
+      const extra = splitLines(parseAnsi([glyphLine, "» Bonjour, dit-il.", "› 1. Yes, proceed (y)"].join("\n")));
+      return { box, shifted: locateComposer([...lines.slice(0, box.top), ...extra, ...lines.slice(box.top)]), by: extra.length };
+    };
+    for (const name of ["codex--v0164-queue-done--w120.txt", "codex--v0165-ultra-empty--w120.txt", "codex--v0156-headless-draft.txt", "codex--v0165-ultra-draft.txt", "codex--v0165-ultra-empty--w170.txt", "codex--v0165-ultra-draft--w170.txt"]) {
+      const { box, shifted, by } = withLines(name, "» ~/src/collie main \u2713");
+      expect(shifted, name).not.toBeNull();
+      expect(shifted!.promptRow, name).toBe(box.promptRow + by);
+    }
+  });
+
+  it("a prompt-shaped line with no Codex status row under it is no composer", () => {
+    expect(locateComposer(splitLines(parseAnsi(["• done", "", "» ~/src/collie main", "", "$ "].join("\n"))))).toBeNull();
+    expect(codexAdapter.composerReady!(splitLines(parseAnsi(["• done", "", "» ~/src/collie main", "", "$ "].join("\n"))))).toBe(false);
+  });
+
+  it("a numbered option row is not a prompt under either glyph", () => {
+    for (const glyph of PROMPT_GLYPHS) {
+      expect(locateComposer(splitLines(parseAnsi([`${glyph} 1. Yes, proceed (y)`, "  2. No (esc)", "  Press enter to confirm or esc to cancel"].join("\n"))))).toBeNull();
+    }
+  });
+});
+
 describe("chrome", () => {
   it("strips the prompt row and status row; the transcript stays", () => {
     const lines = fixtureLines("codex--fresh-idle.txt");
@@ -174,7 +372,7 @@ describe("chrome", () => {
     const typed = splitLines(
       parseAnsi(
         [
-          "some output",
+          "\u001b[38;5;245msome output\u001b[0m",
           "",
           `\u203a ${PLACEHOLDER}`,
           "",
@@ -183,6 +381,15 @@ describe("chrome", () => {
       ),
     );
     expect(codexAdapter.extractInputDraft(typed)).toBe(PLACEHOLDER);
+  });
+
+  it("reads the placeholder words as the empty box on a read with no styling anywhere", () => {
+    // herdr-core hands out plain text, so the dim style is gone everywhere on the screen. The words
+    // alone then stand for the empty box, as the Codex profile reads them (idle.placeholders).
+    const plain = splitLines(
+      parseAnsi(["some output", "", `\u203a ${PLACEHOLDER}`, "", "  model-example · demo-project · Context 99% left"].join("\n")),
+    );
+    expect(codexAdapter.extractInputDraft(plain)).toBeNull();
   });
 
   it("joins a wrapped draft back into the typed sentence", () => {
@@ -1105,7 +1312,15 @@ describe("Codex 0.156.1 busy: a spinner ends the status row", () => {
     });
 
     it("refuses the same text with no paint at all", () => {
-      expect(ready("  model · /dir · ⠧")).toBe(false);
+      // The placeholder is dim, as Codex draws it, so the screen is a styled read.
+      const styled = codexAdapter.composerReady!(
+        splitLines(parseAnsi([`› ${DIM}${PLACEHOLDER}${OFF}`, "", "  model · /dir · ⠧"].join("\n"))),
+      );
+      expect(styled).toBe(false);
+    });
+
+    it("takes the same text on a read with no styling anywhere, where every spinner looks like this", () => {
+      expect(ready("  model · /dir · ⠧")).toBe(true);
     });
   });
 });
@@ -1506,5 +1721,111 @@ describe("codex: the /resume session picker lifts as a menu (0.159)", () => {
 
   it("changes its signature when the highlight moves, so a stale tap is refused", () => {
     expect(menuOf("codex--resume-picker-moved.txt")?.signature).not.toBe(menuOf("codex--resume-picker.txt")?.signature);
+  });
+});
+
+// The trouble tally of 2026-11-07: one Collie 1.27.2 on Herdr counted 13 unread-dialog cards on Codex
+// 0.167.0 in a day. Every running turn still reads (the strong lead was a missed composer mid-turn; it
+// is not it). Three dialogs did not: the folder-trust prompt's new way out, the hook-trust prompt that
+// Herdr's SessionStart hook raises at every launch until it is trusted, and `/resume` on a tall pane.
+describe("Codex 0.167.0: the dialogs behind the trouble tally", () => {
+  const promptOf = (name: string) => {
+    const block = codexAdapter.buildBlocks(fixtureLines(name)).find((b) => b.kind === "prompt-select");
+    if (block?.kind !== "prompt-select") throw new Error(`no prompt-select on ${name}`);
+    return block.prompt;
+  };
+
+  it("a running turn has a composer and no card", () => {
+    const lines = fixtureLines("codex--v0167-working--w120.txt");
+    expect(codexAdapter.composerReady!(lines)).toBe(true);
+    expect(buildBlocks(lines, { agent: "codex" }).map((b) => b.kind)).toEqual(["raw"]);
+  });
+
+  it.each(["codex--v0166-trust--w120.txt", "codex--v0167-trust--w120.txt", "codex--v0167-trust--w80.txt"])(
+    "lifts the trust prompt that goes back to the command center, not the card (%s)",
+    (name) => {
+      const prompt = promptOf(name);
+      expect(prompt.family).toBe("trust");
+      expect(prompt.question).toBe("Trust this folder?");
+      expect(prompt.options).toEqual([
+        { label: "Trust and continue", keys: ["Enter"], keyLabel: "›" },
+        { label: "Back to Agent Command Center", keys: ["Down", "Enter"] },
+      ]);
+      expect(buildBlocks(fixtureLines(name), { agent: "codex" }).some((b) => b.kind === "unread-dialog")).toBe(false);
+    },
+  );
+
+  it("refuses a trust prompt whose second label and footer come from different copies", () => {
+    const rows = [
+      "  Trust this folder? Codex can read, edit, and run files here.",
+      "",
+      "› 1. Trust and continue",
+      "  2. Back to Agent Command Center",
+      "",
+      "  enter continue · esc back",
+    ];
+    const read = (r: string[]) => detectTrustRegion(splitLines(parseAnsi(r.join("\n"))));
+    expect(read(rows)).not.toBeNull();
+    expect(read(rows.with(5, "  enter continue · esc quit"))).toBeNull();
+    expect(read(rows.with(3, "  2. Quit"))).toBeNull();
+  });
+
+  it.each(["codex--v0167-hooks-review--w120.txt", "codex--v0167-hooks-review--w80.txt"])(
+    "lifts the hook-trust prompt as a pointer walk plus Enter, never a digit (%s)",
+    (name) => {
+      const prompt = promptOf(name);
+      expect(prompt.family).toBe("trust");
+      expect(prompt.question).toBe("Hooks need review");
+      expect(prompt.options).toEqual([
+        { label: "Review hooks", keys: ["Enter"], keyLabel: "›" },
+        { label: "Trust all and continue", keys: ["Down", "Enter"] },
+        { label: "Continue without trusting (hooks won't run)", keys: ["Down", "Down", "Enter"] },
+      ]);
+      // The warning is the dialog's subject, so the card says what trusting means.
+      expect(prompt.subject?.map((l) => l.segments.map((s) => s.text).join("").trim())).toEqual([
+        "1 hook is new or changed.",
+        "Hooks can run outside the sandbox after you trust them.",
+      ]);
+      expect(buildBlocks(fixtureLines(name), { agent: "codex" }).some((b) => b.kind === "unread-dialog")).toBe(false);
+    },
+  );
+
+  const HOOKS = [
+    "  Hooks need review",
+    "  1 hook is new or changed.",
+    "  Hooks can run outside the sandbox after you trust them.",
+    "",
+    "  1. Review hooks",
+    "› 2. Trust all and continue",
+    "  3. Continue without trusting (hooks won't run)",
+    "",
+    "  enter confirm · esc skip",
+  ];
+  const readHooks = (rows: string[]) => detectHooksRegion(splitLines(parseAnsi(rows.join("\n"))));
+
+  it("walks from wherever the desk left the pointer", () => {
+    expect(readHooks(HOOKS)?.model.options.map((o) => o.keys)).toEqual([["Up", "Enter"], ["Enter"], ["Down", "Enter"]]);
+  });
+
+  it("the hook-trust prompt refuses altered labels, two pointers, no pointer, a wrapped row and a missing title", () => {
+    expect(readHooks(HOOKS.with(5, "› 2. Trust everything forever"))).toBeNull();
+    expect(readHooks(HOOKS.with(4, "› 1. Review hooks"))).toBeNull();
+    expect(readHooks(HOOKS.with(5, "  2. Trust all and continue"))).toBeNull();
+    expect(readHooks(HOOKS.with(6, "  3. Continue without trusting (hooks").toSpliced(7, 0, "     won't run)"))).toBeNull();
+    expect(readHooks(HOOKS.with(0, "  Something else"))).toBeNull();
+    expect(readHooks(HOOKS.with(8, "  enter confirm · esc quit"))).toBeNull();
+  });
+
+  it("reads /resume on a pane taller than 42 rows, where the title sits far above the footer", () => {
+    const blocks = codexAdapter.buildBlocks(fixtureLines("codex--v0167-resume-tall--w120.txt"));
+    const menu = blocks.find((b) => b.kind === "menu");
+    if (menu?.kind !== "menu") throw new Error("no menu");
+    expect(menu.menu.title).toBe("Resume a previous session");
+    expect(menu.menu.actions.map((a) => a.keys)).toEqual([["Enter"], ["Escape"]]);
+  });
+
+  it("leaves the agent command center to the card, its way out being Escape", () => {
+    const blocks = buildBlocks(fixtureLines("codex--v0167-command-center--w120.txt"), { agent: "codex" });
+    expect(blocks.map((b) => b.kind)).toEqual(["unread-dialog"]);
   });
 });

@@ -7,6 +7,7 @@ import {
   projectUpdate,
   renderInputs,
   takePlainFlag,
+  terminalColumns,
   wantsRich,
   type AddEvent,
   type UpdateEvent,
@@ -16,6 +17,15 @@ import {
 // at once. Every suite in `cli/` and both shell suites depend on that: they capture output from a
 // non-TTY, and if the rich branch could ever be chosen there, every golden in the repo would be
 // wrong. So the rule is pinned exhaustively rather than by example.
+
+describe("terminalColumns", () => {
+  test("a terminal's own width, else 80", () => {
+    expect(terminalColumns(true, 132)).toBe(132);
+    expect(terminalColumns(true, undefined)).toBe(80);
+    expect(terminalColumns(true, 0)).toBe(80);
+    expect(terminalColumns(false, 132)).toBe(80);
+  });
+});
 
 describe("wantsRich", () => {
   test("only a terminal that is not CI and was not overridden gets the drawn view", () => {
@@ -163,6 +173,25 @@ describe("projectAdd", () => {
     ]);
     expect(view.legs[0]!.detail).toBe("nas is ready");
     expect(view.legs[1]!.notes).toEqual([{ text: "  pushing abc123…", tone: "info" }]);
+  });
+
+  test("a second title starts the next host's four legs afresh", () => {
+    const view = projectAdd([
+      ...START,
+      { kind: "leg-done", leg: "probe", ok: true, detail: "nas is ready" },
+      { kind: "verdict", ok: true, text: '"nas" is a member' },
+      { kind: "title", host: "vps" },
+      { kind: "leg-start", leg: "probe", text: "probing vps…" },
+    ]);
+    expect(view.host).toBe("vps");
+    expect(view.facts).toEqual([]);
+    expect(view.verdict).toBeNull();
+    expect(view.legs.map((l) => [l.leg, l.status])).toEqual([
+      ["probe", "active"],
+      ["install", "pending"],
+      ["configure", "pending"],
+      ["enroll", "pending"],
+    ]);
   });
 
   test("a restart that worked is one row; the block it printed is not shown at all", () => {

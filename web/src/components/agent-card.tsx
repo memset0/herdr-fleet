@@ -1,5 +1,6 @@
-import { Star, TerminalSquare } from "lucide-react";
+import { Star } from "lucide-react";
 
+import { shownStatus } from "@/lib/triage";
 import { cn } from "@/lib/utils";
 import { LIST_ROW_CORNERS } from "@/components/ui/list-group";
 import { UnseenMark } from "@/components/ui/unseen-mark";
@@ -20,6 +21,7 @@ import type { AgentView } from "@/lib/types";
 import { useLocale } from "@/hooks/use-locale";
 import { useLongPress } from "@/hooks/use-long-press";
 import { ft, useFleetLocale } from "@/lib/fleet-i18n";
+import { Icon } from "@/components/icons/icon";
 
 interface AgentCardProps {
   agent: AgentView;
@@ -310,7 +312,7 @@ export function AgentCard({
           <div data-slot="agent-row-title" className="flex min-w-0 items-center gap-2">
             {cornerDot && (
               <StatusDot
-                status={agent.status}
+                status={shownStatus(agent)}
                 // A hollow resting ring must be filled with the colour it actually sits on — a card
                 // is `--card`, a flat row is the page.
                 surface={flat ? "bg-background" : "bg-card"}
@@ -328,7 +330,7 @@ export function AgentCard({
                 when the row opens it (`data-glide`, lib/glide.ts); they mean nothing otherwise. */}
             {isShell ? (
               <div data-glide="tile" className="flex size-4 shrink-0 items-center justify-center rounded-sm border bg-muted">
-                <TerminalSquare className="size-2.5 text-muted-foreground" />
+                <Icon name="shell-pane" className="size-2.5 text-muted-foreground" />
               </div>
             ) : (
               <AgentIcon agent={agent.agent} className="size-4" glide="tile" />
@@ -352,6 +354,7 @@ export function AgentCard({
               host={agent.host}
               cache={agent.cache}
               session={agent.session}
+              plainHost
               className="ml-auto self-baseline"
             />
           </div>
@@ -441,9 +444,9 @@ export function AgentCard({
           <ShellBadge />
         ) : cornerDot ? (
           /* The mark lives on line 1 and is aria-hidden; give SR users the word. */
-          <span className="sr-only">{stale ? statusLabelPast(agent.status) : statusLabel(agent.status)}</span>
+          <span className="sr-only">{stale ? statusLabelPast(shownStatus(agent)) : statusLabel(shownStatus(agent))}</span>
         ) : (
-          <StatusBadge status={agent.status} past={stale} />
+          <StatusBadge status={shownStatus(agent)} past={stale} />
         )}
         {progress !== null && (
           <Progress

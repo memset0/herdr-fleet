@@ -54,18 +54,30 @@
       }
     },
     "agy": {
-      "version": "1.1.17",
-      "verified": "2026-08-26",
+      "version": "1.4.8",
+      "verified": "2026-10-29",
       "how": "capture",
       "adapter": true,
-      "evidence": "web/src/fixtures/panes/README.md § \"agy corpus (captured 2026-08-26, Antigravity CLI 1.1.17, sandbox panes)\""
+      "evidence": "web/src/lib/harness/agy/fixtures/: 1.4.4–1.4.8 captures for /usage, /context, /effort, /model, /resume, /artifact, and Keyboard: modals, plus web/src/fixtures/panes/agy--ask-multi.txt; one 1.4.12 screen from issue 655 (web/src/fixtures/panes/agy--v1412-subagent-band-idle.txt, an idle box over a sub-agent rail, text only)",
+      "journal": {
+        "version": "1.4.8",
+        "verified": "2026-10-29",
+        "how": "live sweep",
+        "evidence": "A contributor's read-only sweep (PR 619) of ~/.gemini/antigravity-cli/conversations/*.db on Antigravity CLI 1.4.8 (SQLite trajectory databases across 15 CortexStep types, 0 unknown rows or part types) plus bridge/journal/agy.test.ts."
+      }
     },
     "antigravity": {
-      "version": "1.1.17",
-      "verified": "2026-08-26",
+      "version": "1.4.8",
+      "verified": "2026-10-29",
       "how": "capture",
       "adapter": true,
-      "evidence": "Same binary as agy, filed under Herdr's other name for it (agent-commands.ts CATALOG comment) — web/src/fixtures/panes/README.md § \"agy corpus (captured 2026-08-26, Antigravity CLI 1.1.17, sandbox panes)\""
+      "evidence": "Same binary as agy, filed under Herdr's other name for it (agent-commands.ts CATALOG comment) — web/src/lib/harness/agy/fixtures/, plus the 1.4.12 screen of issue 655",
+      "journal": {
+        "version": "1.4.8",
+        "verified": "2026-10-29",
+        "how": "live sweep",
+        "evidence": "Same binary and session store as agy, routed through agyJournal via AGENT_ALIASES; the PR 619 sweep read ~/.gemini/antigravity-cli/conversations/*.db on Antigravity CLI 1.4.8 (SQLite trajectory databases, 0 unknown rows)."
+      }
     },
     "muse": {
       "version": "1.4.7",
@@ -81,11 +93,11 @@
       }
     },
     "opencode": {
-      "version": "1.19.3",
-      "verified": "2026-10-18",
+      "version": "1.19.5",
+      "verified": "2026-10-29",
       "how": "canary",
       "adapter": true,
-      "evidence": "harness lab 2026-10-18 on opencode 1.19.3: walk, Surface on 4 screens, one probed send (sent), one ask answer (sent, declined file made: false); 3 model turns",
+      "evidence": "harness lab 2026-10-29 on opencode 1.19.5: walk, Surface on 4 screens, one probed send (sent), one ask answer (sent, declined file made: false); 3 model turns",
       "journal": {
         "version": "1.18.33",
         "verified": "2026-09-30",
@@ -104,6 +116,19 @@
         "verified": "2026-10-12",
         "how": "canary",
         "evidence": "canary run 20261012T110117Z: journal kinds asserted, nothing unrecognised"
+      }
+    },
+    "kiro": {
+      "version": "2.32.0",
+      "verified": "2026-10-17",
+      "how": "capture",
+      "adapter": true,
+      "evidence": "kiro-cli 2.32.0 V3 on x86_64 Linux. Herdr `pane read` captures from a throwaway Herdr session, and harmless Allow/Deny/Close probes for shell, read_file, fs_write and str_replace at 120/60/40 columns; composer drafts captured; a live Herdr and Chromium run covered native Allow and Deny, read-only History and the V2 fallback. web/src/fixtures/panes/README.md records the captures and substitutions, and web/src/lib/harness/kiro/APPROVAL_NOTES.md the keys and terminal-only limits. Generic MCP requests and incomplete or clipped file subjects deliberately have no approval buttons.",
+      "journal": {
+        "version": "2.32.0",
+        "verified": "2026-10-18",
+        "how": "capture",
+        "evidence": "Two sessions saved by kiro-cli 2.32.0 V3 in a throwaway KIRO_HOME, checked in under bridge/journal/fixtures/kiro (its README.md lists what each holds): replies, a shell call, a denied write, a failed read, an edit, a steered turn, /compact and a sub-agent. bridge/journal/kiro.test.ts reads both with no unknown rows. bridge/journal/kiro-discovery.test.ts covers the lock the running TUI holds, which moves on /clear, /rewind and a /sessions switch. A sub-agent's own history is not expanded."
       }
     },
     "hermes": {
@@ -130,6 +155,19 @@
         "verified": "2026-10-12",
         "how": "capture",
         "evidence": "bridge/journal/fixtures/openclaw/: SQLite rows re-captured on OpenClaw 2026.10.2 and on the reporter's 2026.9.8 (both schema 24) against a scripted local model, plus the 2026-10-12 lab session rebuilt from its chat.history (experiments/openclaw-401). openclaw.test.ts reads all three; no canary runs OpenClaw."
+      }
+    },
+    "dsh-tui": {
+      "version": "0.0.0",
+      "verified": "2026-10-27",
+      "how": "unverified",
+      "adapter": false,
+      "evidence": "No block grammar: a dsh-tui pane keeps the raw mirror. The entry exists for the journal reader beside it, and 0.0.0 is the floor, so the first install reads as NEWER.",
+      "journal": {
+        "version": "0.17.0",
+        "verified": "2026-10-27",
+        "how": "capture",
+        "evidence": "bridge/journal/fixtures/dsh/: a dsh-tui 0.17.0 session (DeepSeek Harness format v4) captured on Linux on 2026-10-27 — slash commands, a shell call, a rejected escalation, a background job, /compact and a Unicode turn — read with 0 unrecognised rows or content kinds. The same day the adapter read a live 1,847-row session (248 turns, 262 of 262 tool calls joined to a result) and found it by its session lock from inside a systemd user service. No canary runs dsh-tui."
       }
     }
   }

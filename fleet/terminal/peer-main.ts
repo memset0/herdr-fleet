@@ -1,3 +1,4 @@
+import { CorePaneFitController } from "../manual-pane-fit/core.ts";
 import { FLEET_TERMINAL_ENV, parseFleetTerminalEnvelope } from "../config.ts";
 import { resolveHerdrCommand } from "../herdr-command.ts";
 import { ManualPaneFitControllerManager } from "../manual-pane-fit/controller.ts";
@@ -46,7 +47,7 @@ async function main(): Promise<void> {
     fit: createLocalPaneFit({
       source: snapshots,
       socketPath,
-      controller: new ManualPaneFitControllerManager({ binary: attach }),
+      controller: process.env.COLLIE_MUX === "herdr-core" ? new CorePaneFitController() : new ManualPaneFitControllerManager({ binary: attach }),
     }),
     standDown: () => void stop(0),
     log: (event, detail) => {

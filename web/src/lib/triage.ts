@@ -48,6 +48,15 @@ export function isUnseen(a: AgentView): boolean {
     (a.lastActiveAt ?? 0) > (a.lastSeenAt ?? 0);
 }
 
+/**
+ * The status a pane's dot draws. The multiplexer's `done` means "finished its turn", and the green
+ * disc means "finished and nobody opened it yet" (issue 665). Once the shared seen mark has caught up
+ * (ADR 0003) a finished pane rests as `idle`, a ring. Shell panes and every other status pass through.
+ */
+export function shownStatus(a: AgentView): AgentStatus {
+  return a.kind !== "shell" && a.status === "done" && !isUnseen(a) ? "idle" : a.status;
+}
+
 /** Which section an agent belongs to. The single classifier — {@link triage} and
  *  {@link worstTriage} both route through it, so a list and a chip can't disagree. */
 export function bucketOf(a: AgentView): TriageKey {
@@ -76,6 +85,20 @@ export function needsYou(a: AgentView): boolean {
 export function countBlocked(agents: readonly AgentView[]): number {
   let n = 0;
   for (const a of agents) if (bucketOf(a) === "needs") n++;
+  return n;
+}
+
+/**
+ * How many panes have an alert out on the bridge (bridge/notifications.ts), for the installed app's
+ * icon (lib/app-badge.ts): the blocked ones, and the finished ones you have not opened, each only
+ * while that kind notifies.
+ */
+export function countAlerting(agents: readonly AgentView[], kinds: { blocked: boolean; done: boolean }): number {
+  let n = 0;
+  for (const a of agents) {
+    const bucket = bucketOf(a);
+    if ((bucket === "needs" && kinds.blocked) || (bucket === "ready" && kinds.done)) n++;
+  }
   return n;
 }
 

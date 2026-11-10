@@ -1,6 +1,3 @@
-import { TODOIST_CALLBACK_SCRIPT, oauthLanding } from "./todoist/callback.ts";
-import { todoistResponse, bindingRedirect } from "./todoist/route.ts";
-import { TODOIST_API, type TodoistService } from "./todoist/service.ts";
 import { fetchBindingInventory, placeEvidence } from "./bindings/inventory.ts";
 import { isIP } from "node:net";
 import { randomBytes } from "node:crypto";
@@ -82,7 +79,6 @@ function isApiPath(pathname: string): boolean {
   if (pathname === VIEW_STREAM_PATH) return true;
   if (pathname === VIEW_PRESENCE_PATH) return true;
   if (pathname === "/api" || pathname.startsWith("/api/")) return true;
-  if (pathname.startsWith(TODOIST_API + "/")) return true;
   if (isPaneFitPath(pathname)) return true;
   return pathname === VIEW_STATE_PATH || pathname === TAGS_PATH || pathname === FLEET_SETTINGS_PATH || pathname === TERMINAL_PATH;
 }
@@ -132,7 +128,6 @@ export interface GatewayOptions {
   readonly settings?: SettingsStore;
   readonly tags?: TagStore;
   readonly viewState?: ViewStateStore;
-  readonly todoist?: TodoistService;
   /** Manual Pane fit. Absent leaves both of its routes 404, as every capability this Gateway lacks. */
   readonly paneFit?: PaneFitRouteDeps;
   readonly limiter?: LoginRateLimiter;
@@ -275,12 +270,6 @@ export function createGatewayHandler(options: GatewayOptions) {
       }
     }
 
-    if (options.todoist && url.pathname === "/fleet/todoist/callback.js" && request.method === "GET") {
-      return withBaseHeaders(new Response(TODOIST_CALLBACK_SCRIPT, { headers: { "content-type": "text/javascript; charset=utf-8" } }));
-    }
-    if (options.todoist && url.pathname === options.todoist.callbackPath && request.method === "GET") {
-      return withBaseHeaders(oauthLanding(url));
-    }
 
     let session: SessionClaims | null;
     try {
@@ -384,16 +373,6 @@ export function createGatewayHandler(options: GatewayOptions) {
         () => fetchBindingInventory(request, config, options.fetcher, collieToken)));
     }
 
-    if (url.pathname.startsWith(TODOIST_API + "/")) {
-      if (!options.todoist) return json({ error: "not found" }, 404);
-      return withBaseHeaders(await todoistResponse(request, options.todoist, session.sessionId,
-        () => fetchBindingInventory(request, config, options.fetcher, collieToken)));
-    }
-    if (url.pathname.startsWith("/fleet/bindings/")) {
-      if (!options.todoist || request.method !== "GET") return json({ error: "not found" }, 404);
-      return withBaseHeaders(await bindingRedirect(url.pathname.slice("/fleet/bindings/".length), options.todoist,
-        () => fetchBindingInventory(request, config, options.fetcher, collieToken)));
-    }
 
     if (url.pathname === TAGS_PATH) {
       if (!options.tags) return json({ error: "not found" }, 404);

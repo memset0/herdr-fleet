@@ -33,6 +33,7 @@
         "column": 0
       },
       "continuationIndent": 2,
+      "draftLines": true,
       "maxDraftRows": 60,
       "maxTailRows": 3
     },
@@ -41,6 +42,9 @@
         "Start a message with ! to run a shell command yourself",
         "/loop 10m <prompt> schedules a recurring prompt",
         "Paste an image with Ctrl+V — file paths and URLs work too"
+      ],
+      "patterns": [
+        "^Press \\? on an empty composer to see keyboard shortcuts$"
       ],
       "sgr": 2,
       "fg": [
@@ -81,6 +85,7 @@
     "interrupt": [
       "Escape"
     ],
+    "interruptClearsDraft": true,
     "clear": {
       "key": "Backspace",
       "slack": 16
@@ -91,6 +96,7 @@
       "confirm": "Enter",
       "cancel": "Escape"
     },
+    "enterWhileRunning": "steers",
     "neverHeld": [
       "/clear",
       "/new",
@@ -101,7 +107,14 @@
       "/fork",
       "/rewind",
       "!"
-    ]
+    ],
+    "queueKey": "Tab",
+    "queuedRow": {
+      "pattern": "^\\s*└ (?<text>\\S.*?)\\s*$",
+      "hint": "^\\s*◆ Queued input · ↑ to edit\\s*$",
+      "hintGap": 0,
+      "hintAbove": true
+    }
   },
   "collapse": {
     "pattern": "\\[(?:Pasted Content \\d+ chars|Image #\\d+)\\]"

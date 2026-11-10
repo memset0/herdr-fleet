@@ -30,10 +30,20 @@
 // frame is never free, so one of these shapes in a transcript costs a counter, never a send; over a
 // found frame the stricter rules above keep a quote free.
 //
+// A profile that draws its dialogs in the box's place has its box rows read as that cluster too. There
+// a prompt glyph over a draft soft-wrapped to the box's width ({@link draftWrap}) is read as blank: the
+// wrapped rows under it line up like a pointed list between two rules, and they are one paragraph.
+// The same rows with a row cut by an ellipsis read as neither: no cue, flagged `cutWrap`, unreadable.
+// A layout that names `frame.draftLines` reads a draft typed with newlines the same way, when its rows
+// hold no option, key hint or named command list: its dialogs never point with the prompt glyph. One that
+// names `frame.draftCaret` does so only while those rows also hold its editor's one reverse-video cursor cell.
+//
 // Pure: the same rows always give the same answer.
 
-import { commandListNear, pointsAt, type CommandListRead } from "./command-list";
-import { rowText, type Frame, type FrameRow, type IdleProfile } from "./frame";
+import { displayWidth } from "../text-width";
+import { commandListNear, openedByText, pointsAt, type CommandListRead } from "./command-list";
+import { popupUnder, type PopupRead } from "./popup";
+import { promptDraft, rowText, type Frame, type FrameRow, type IdleProfile } from "./frame";
 import { isSingleKeyRow } from "./key-row";
 import { readAboveNotice, type AboveNotice } from "./notice";
 import type { CommandListRows } from "./profile";
@@ -70,6 +80,12 @@ export interface CueRead {
   readonly hash: string;
   /** A panel's dismiss hint stands alone over the found box ({@link PANEL_FOOT}): the panel takes the keys, not the box. */
   readonly panelFoot?: true;
+  /**
+   * The box's rows would read as a soft-wrapped draft, but a row ends in an ellipsis ({@link draftWrap}
+   * `cut`): a draft and a menu cut to the box's width look the same there. The screen is unreadable for
+   * this read: no dialog, no draft, nothing free (fold.ts `surfaceOfScreen`).
+   */
+  readonly cutWrap?: true;
 }
 
 /** The most non-blank rows the no-frame cluster reads (a list it would cut is read whole). */
@@ -80,6 +96,8 @@ export const CLUSTER_GAP_ROWS = 3;
 export const FOOTER_MAX_ROWS = 2;
 /** Commands in a list that make it an overlay shape. */
 const COMMAND_LIST_MIN = 3;
+/** Cells a soft-wrapped row may stop short of the box's width before its next word would have fit. */
+const WRAP_SLACK = 8;
 
 /** Glyphs a dialog draws in front of the highlighted row. */
 const POINTERS = "❯›>▶►→➜❱▸➤⟩❭〉";
@@ -120,7 +138,7 @@ const KEY_ATOM =
 const KEY = `${KEY_ATOM}(?:\\s*/\\s*${KEY_ATOM})*`;
 /** What a dialog's footer says a key does. A composer's footer says send, newline, mode or cycle. */
 const VERB =
-  "(?:confirm|select|cancel|submit|continue|choose|proceed|approve|deny|reject|accept|go back|back|exit|close|dismiss|navigate|toggle|answer|adjust|amend|move|pick|view|stop|quit|filter|search|scroll|switch|apply|save|skip|next|previous|prev|open|allow|decline|change|clear|reset|focus|use)";
+  "(?:confirm|select|cancel|submit|continue|choose|proceed|approve|deny|reject|accept|go back|back|exit|close|dismiss|navigate|toggle|answer|adjust|amend|move|pick|view|stop|quit|filter|search|scroll|switch|apply|save|skip|next|previous|prev|open|allow|decline|change|clear|reset|focus|use|details)";
 const KEY_HINT_SOURCE = `(?:^|[^\\w+])(?:press\\s+)?${KEY}\\s*(?:to\\s+|:\\s*|=\\s*|\\s+)${VERB}s?\\b`;
 const KEY_HINT = new RegExp(KEY_HINT_SOURCE, "iu");
 const KEY_HINTS = new RegExp(KEY_HINT_SOURCE, "giu");
@@ -409,6 +427,15 @@ function cuesIn(texts: readonly string[], cluster: readonly number[], readOverla
  * side holds one.
  */
 export function commandListAt(texts: readonly string[], frame: Frame, list: CommandListRows | undefined, rows?: readonly FrameRow[]): CommandListRead | null {
+  return commandListNear(texts, frame.top, frame.bottom, list, rows, frame.interior.prompt, frame.interior.text);
+}
+
+/**
+ * The profile's command list at a frame whatever the box's text is: {@link commandListAt} without the profile's
+ * `notForText`, which keeps a path's popup rows out of the Surface's and the cues' reads. The Send Protocol asks
+ * this one before Enter, so a list drawn under such a text is never pressed over unseen.
+ */
+export function commandListAnyText(texts: readonly string[], frame: Frame, list: CommandListRows | undefined, rows?: readonly FrameRow[]): CommandListRead | null {
   return commandListNear(texts, frame.top, frame.bottom, list, rows, frame.interior.prompt);
 }
 
@@ -416,20 +443,75 @@ export function commandListAt(texts: readonly string[], frame: Frame, list: Comm
  * The typeahead of the command the box holds, or null: the profile's command list on either side of
  * a found frame, its pointer on an entry whose command is the box's text ({@link pointsAt}: `/model` is
  * pointed at by `❯ /model`, never by `❯ /models`). Enter there picks the command that is already typed,
- * so the list is no dialog and its rows are read for no cue. A list that points at another command, or
- * at none, is read as before.
+ * so the list is no dialog and its rows are read for no cue. So is a list the text opened on a profile
+ * that names `leadOpens` ({@link openedByText}), whatever it points at: the harness's fuzzy list for a
+ * half-typed command. Any other list that points at another command, or at none, is read as before.
  */
 export function ownCommandList(texts: readonly string[], frame: Frame | null, idle: IdleProfile | null, styled?: readonly FrameRow[]): CommandListRead | null {
   if (frame === null || idle === null || frame.placeholder) return null;
   const rows = idle.volatile.below.commandList;
   const list = commandListAt(texts, frame, rows, styled);
-  return list !== null && pointsAt(list, frame.interior.text, rows) ? list : null;
+  return list !== null && (pointsAt(list, frame.interior.text, rows) || openedByText(list, frame.interior.text, rows)) ? list : null;
 }
 
 /** The rows with the rows `first` to `last` read as blank. */
 function withoutSpan(rows: readonly FrameRow[], span: { readonly first: number; readonly last: number } | null): readonly FrameRow[] {
   if (span === null) return rows;
   return rows.map((row, i) => (i >= span.first && i <= span.last ? { segments: [] } : row));
+}
+
+/** Whether a row is an option row: a numbered item or a checkbox item, a pointer glyph in front allowed. */
+function isOptionRow(text: string): boolean {
+  const row = unboxed(text);
+  return numberOf(row) !== null || CHECKBOX_ITEM.test(row);
+}
+
+/**
+ * The rows with the transcript's echoes of sent prompts above a found frame read as blank, for a profile
+ * whose transcript echoes each prompt in its prompt row's shape (`idle.promptEchoes`). An echo is a row
+ * the prompt anchor matches with text behind the glyph ({@link promptDraft}), then the rows under it
+ * indented at least `frame.continuationIndent` columns, ended by a blank row or the frame's top edge.
+ * A long prompt wraps into rows that line up like a pointed list under the glyph, and the whole-screen
+ * read took them for one (Claude Code 2.1.309 and 2.1.310, live 2026-10-25). A run whose first row is an
+ * option row ({@link isOptionRow}, `❯ 1. Yes`, `❯ [ ] Cheese`) is left as it is: a list puts its pointer
+ * on an option, whoever drew it. Option rows under the first row do not count: a sent text's own list
+ * (`❯ Please do these:` over `  1. reply D`) stands there, and before 2026-10-26 such a queued message read
+ * as an unreadable modal at S2. Every other row, and every row of any other profile, stays as it is. Both the bridge's frameless read and the
+ * framed read ({@link readCuesFor}) take it: Claude Code's queued message over the box has the same
+ * shape, `❯ ` and its text with its wrapped rows and the `ctrl+enter to send now` hint under it.
+ */
+export function withoutPromptEchoes(rows: readonly FrameRow[], frame: Frame | null, idle: IdleProfile | null): readonly FrameRow[] {
+  if (frame === null || idle?.promptEchoes !== true) return rows;
+  const texts = rows.map(rowText);
+  const echoes: { first: number; last: number }[] = [];
+  for (let i = 0; i < frame.top; i++) {
+    const draft = promptDraft(texts[i]!, idle);
+    if (draft === null || draft.length === 0) continue;
+    let last = i;
+    while (last + 1 < frame.top && !isBlank(texts[last + 1]!) && startCol(texts[last + 1]!) >= idle.frame.continuationIndent) last++;
+    const ended = last + 1 === frame.top || isBlank(texts[last + 1]!);
+    // Only the pointer row decides: a list puts its pointer on an option (`❯ 1. Yes`), while a text's
+    // own numbered or checkbox lines stand under its first line.
+    if (ended && !isOptionRow(texts[i]!)) echoes.push({ first: i, last });
+    i = last;
+  }
+  if (echoes.length === 0) return rows;
+  return rows.map((row, i) => (echoes.some((echo) => i >= echo.first && i <= echo.last) ? { segments: [] } : row));
+}
+
+/**
+ * The typeahead popup under a found frame that the box's text opened (`idle.volatile.below.popups`,
+ * {@link popupUnder}), or null: with no frame, or on a profile that names none. A box showing its
+ * placeholder holds no text.
+ */
+export function popupAt(texts: readonly string[], frame: Frame | null, idle: IdleProfile | null): PopupRead | null {
+  if (frame === null || idle === null) return null;
+  return popupUnder(texts, frame.bottom, frame.placeholder ? "" : frame.interior.text, idle.volatile.below.popups);
+}
+
+/** The rows with a typeahead popup's rows read as blank. */
+export function withoutPopup(rows: readonly FrameRow[], popup: PopupRead | null): readonly FrameRow[] {
+  return withoutSpan(rows, popup);
 }
 
 /** The rows with a command list's rows read as blank. */
@@ -465,21 +547,166 @@ export function noticeOver(texts: readonly string[], frame: Frame | null, idle: 
  * The cues of a screen read under a profile: the frame's own cues, or, when the profile draws its
  * dialogs where the box stands (`idle.dialogsInBox`), the cues of the rows from the box's top edge down,
  * the box rows included. The typed command's own list on either side of the box ({@link ownCommandList})
- * and a notice over the box ({@link noticeOver}) are left out of both, and the box's own prompt glyph
- * ({@link withoutOwnPrompt}) out of the second.
+ * and a notice over the box ({@link noticeOver}) are left out of both, and so are the prompt-shaped runs
+ * over the box of a profile whose transcript echoes prompts ({@link withoutPromptEchoes}): Claude Code
+ * draws a queued message there in that shape, and its wrapped rows and send-now hint under the `❯ ` row
+ * are no pointed list. The second also reads the box's
+ * own prompt glyph ({@link withoutOwnPrompt}) as blank, and the prompt glyph over a soft-wrapped draft
+ * ({@link draftWrap}); a draft-shaped box cut by an ellipsis reads as no cue at all, flagged `cutWrap`.
+ * Both read the box's own key hint row ({@link Frame.hint}) as blank.
  */
 export function readCuesFor(allRows: readonly FrameRow[], frame: Frame | null, idle: IdleProfile | null): CueRead {
   const texts = allRows.map(rowText);
-  const rows = withoutCommandList(allRows, frame === null ? null : ownCommandList(texts, frame, idle, allRows));
+  // The box's own key hint inside it (`frame.hint`, a layout's `trailer.hint`) is no dialog's footer.
+  const unhinted = withoutSpan(allRows, frame?.hint ?? null);
+  const rows = withoutPromptEchoes(withoutPopup(withoutCommandList(unhinted, frame === null ? null : ownCommandList(texts, frame, idle, allRows)), popupAt(texts, frame, idle)), frame, idle);
   const plain = readCues(rows, frame, noticeOver(texts, frame, idle));
   if (idle?.dialogsInBox !== true || frame === null) return plain;
   // From the top edge down: a dialog in the box's place lies there, and the transcript above is no part of it.
   // The box's own prompt glyph, where the layout names one (`frame.ownPrompt`), is no pointer there.
   const at = frame.top;
-  const down = readCues(withoutOwnPrompt(rows, frame).slice(at), null, null);
+  // A draft-shaped box with a row cut by an ellipsis is neither a draft nor a dialog: claim unreadable.
+  if (plain.strength !== "strong" && wrapUnderGlyph(withoutOwnPrompt(rows, frame), frame, idle) === "cut") {
+    return { ...plain, cues: [], strength: "none", cutWrap: true };
+  }
+  const down = readCues(withoutDraftContinuation(withoutPromptGlyph(withoutOwnPrompt(rows, frame), frame, idle), frame, idle).slice(at), null, null);
   // A weak shape inside the box is the box's own hint row (OMP draws "to change thinking effort" there).
   if (down.strength !== "strong" || plain.strength === "strong") return plain;
   return { ...down, cluster: down.cluster.map((i) => i + at), cues: down.cues.map((cue) => ({ kind: cue.kind, row: cue.row + at })) };
+}
+
+/**
+ * The rows with the draft's continuation rows read as blank, for a profile that names `frame.draftIndent`:
+ * the rows under the prompt row inside the box that start with that many spaces. A dialog the person quoted
+ * in a long draft (a permission box in a prompt about permission boxes) draws at that indent and is no
+ * dialog; one the harness draws in the box's place starts at the box's own column and stays.
+ */
+function withoutDraftContinuation(rows: readonly FrameRow[], frame: Frame, idle: IdleProfile): readonly FrameRow[] {
+  const indent = idle.frame.draftIndent;
+  if (indent === undefined) return rows;
+  const lead = " ".repeat(indent);
+  return rows.map((row, i) => (i > frame.interior.prompt && i <= frame.interior.last && rowText(row).startsWith(lead) ? { segments: [] } : row));
+}
+
+/**
+ * The shape of a found box's draft, from the prompt row down to its last non-blank row. `wrapped`: one
+ * paragraph soft-wrapped to the box's width, two rows or more, no blank row between them, and every row
+ * but the last filled to the top edge's width, so the next row's first word would not have fit on it
+ * (within {@link WRAP_SLACK}). A draft typed with newlines has short rows and fails this (`no`), so it
+ * reads as a list still: the conservative side, a send refused, never a dialog typed into.
+ *
+ * `lines`: a layout that names `frame.draftLines` says no dialog in its box points with the prompt glyph.
+ * There a box that fails the wrap test is still the draft's own lines when {@link ownLines} holds: no row
+ * holds an option or a key hint, and no list the profile names stands in the box. Any of those keeps
+ * the box a list. A layout that names `frame.draftCaret` says its editor draws its cursor as one
+ * reverse-video cell: there the same holds only while the box's rows hold that cell ({@link oneCaretCell}).
+ *
+ * `cut`: the rows pass that test, but a row ends in an ellipsis ({@link endsInEllipsis}). pi cuts a menu
+ * or hint row wider than the box with `…` (or `...`), so the row fills the width the way a soft wrap
+ * does, and a wrapped draft and a cut menu cannot be told apart. A row cut so is taken as filled. Neither
+ * reading is safe: as a draft, Enter would answer a menu; as a menu (the older reading, a pointed list),
+ * a tap's Enter would submit the draft. So `cut` makes the read unreadable ({@link CueRead.cutWrap}):
+ * no dialog card, no taps, no free Send. Unreadable is the safe failure; a wrong dialog is not.
+ */
+function draftWrap(rows: readonly FrameRow[], frame: Frame, idle: IdleProfile): DraftRead {
+  const texts = rows.map(rowText);
+  const soft = softWrap(texts, frame);
+  if (soft !== "no") return soft;
+  const lines = idle.frame.draftLines === true || (idle.frame.draftCaret === true && oneCaretCell(rows, frame));
+  return lines && ownLines(texts, frame, idle) ? "lines" : "no";
+}
+
+/**
+ * Whether a found box's rows, from its prompt row down to its last interior row, hold exactly one
+ * reverse-video run with visible text, and that run is one cell wide: an editor's own cursor drawn as a
+ * cell (`frame.draftCaret`). A text field's cursor is one cell; a dialog's highlighted row is wider, and
+ * two cells are no one cursor.
+ */
+function oneCaretCell(rows: readonly FrameRow[], frame: Frame): boolean {
+  let cells = 0;
+  for (let i = frame.interior.prompt; i <= frame.interior.last && i < rows.length; i++) {
+    for (const run of rows[i]!.segments) {
+      if (run.inverse !== true || run.text.length === 0) continue;
+      if (displayWidth(run.text) !== 1) return false;
+      cells++;
+    }
+  }
+  return cells === 1;
+}
+
+/** The {@link draftWrap} test of one paragraph soft-wrapped to the box's width, for every layout. */
+function softWrap(texts: readonly string[], frame: Frame): DraftRead {
+  // The top edge spans the box: an open box's bottom row is its last row (a statusline), not a rule.
+  const width = displayWidth(texts[frame.top]!.trimEnd());
+  // A blank top edge gives no width to fill: read no wrap.
+  if (width <= WRAP_SLACK) return "no";
+  const { prompt } = frame.interior;
+  let last = frame.interior.last;
+  while (last > prompt && isBlank(texts[last]!)) last--;
+  if (last === prompt) return "no";
+  let cut = false;
+  for (let i = prompt; i <= last; i++) if (endsInEllipsis(texts[i]!)) cut = true;
+  for (let i = prompt; i < last; i++) {
+    const row = texts[i]!.trimEnd();
+    const next = texts[i + 1]!.trim().split(/\s/u)[0]!;
+    if (isBlank(row) || next.length === 0) return "no";
+    if (endsInEllipsis(row)) continue;
+    if (displayWidth(row) + 1 + displayWidth(next) <= width - WRAP_SLACK) return "no";
+  }
+  return cut ? "cut" : "wrapped";
+}
+
+/** What a found box's rows under its prompt glyph are ({@link draftWrap}). */
+type DraftRead = "wrapped" | "lines" | "cut" | "no";
+
+/**
+ * Whether the rows of a box, from its prompt row down to its last non-blank row, are a draft typed with
+ * newlines, for a layout whose prompt glyph is never a dialog's pointer (`frame.draftLines`). Two rows or
+ * more; none an option row ({@link isOptionRow}) or a key hint; and no list the profile names for its
+ * typed commands in the box ({@link commandListAt}), the one list such a harness
+ * draws under its prompt glyph.
+ */
+function ownLines(texts: readonly string[], frame: Frame, idle: IdleProfile): boolean {
+  const { prompt } = frame.interior;
+  let last = frame.interior.last;
+  while (last > prompt && isBlank(texts[last]!)) last--;
+  if (last === prompt) return false;
+  for (let i = prompt; i <= last; i++) {
+    const text = texts[i]!;
+    if (isBlank(text)) continue;
+    if (isOptionRow(text) || KEY_HINT.test(unboxed(text))) return false;
+  }
+  return commandListAt(texts, frame, idle.volatile.below.commandList) === null;
+}
+
+/** Whether a row's text ends in an ellipsis: the character `…` or three ASCII dots. */
+function endsInEllipsis(text: string): boolean {
+  const end = text.trimEnd();
+  return end.endsWith("…") || end.endsWith("...");
+}
+
+/** The {@link draftWrap} of a box whose prompt row opens on a pointer glyph the frame took as the prompt
+ *  marker (the draft does not start with it), or `no` for any other box. */
+function wrapUnderGlyph(rows: readonly FrameRow[], frame: Frame, idle: IdleProfile): DraftRead {
+  if (frame.placeholder) return "no";
+  const texts = rows.map(rowText);
+  const glyph = texts[frame.interior.prompt]!.trimStart()[0];
+  if (glyph === undefined || !POINTERS.includes(glyph) || frame.interior.text.startsWith(glyph)) return "no";
+  return draftWrap(rows, frame, idle);
+}
+
+/** The rows with the pointer glyph the box's prompt row opens on read as blank, when the frame took it as
+ *  the prompt marker (the draft does not start with it) and the draft under it is soft-wrapped or the
+ *  layout's own lines ({@link draftWrap}). */
+function withoutPromptGlyph(rows: readonly FrameRow[], frame: Frame, idle: IdleProfile): readonly FrameRow[] {
+  const texts = rows.map(rowText);
+  const draft = wrapUnderGlyph(rows, frame, idle);
+  if (draft !== "wrapped" && draft !== "lines") return rows;
+  const glyph = texts[frame.interior.prompt]!.trimStart()[0]!;
+  const segments = [...rows[frame.interior.prompt]!.segments];
+  const at = segments.findIndex((run) => run.text.includes(glyph));
+  segments[at] = { ...segments[at]!, text: segments[at]!.text.replace(glyph, " ") };
+  return rows.map((row, i) => (i === frame.interior.prompt ? { segments } : row));
 }
 
 /**

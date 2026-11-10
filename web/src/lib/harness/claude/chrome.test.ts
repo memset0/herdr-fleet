@@ -5,7 +5,17 @@ import { describe, expect, it } from "vitest";
 import { parseAnsi } from "../../ansi";
 import { splitLines, type StyledLine } from "../../blocks";
 import { draftCarriesSend } from "../../draft-match";
-import { extractAgentsFooter, extractInputDraft, extractStatusLines, hasInputBox, stripChrome } from "./chrome";
+import { withUnreadDialog } from "../index";
+import {
+  extractAgentsFooter,
+  extractInputDraft,
+  extractStatusLines,
+  hasInputBox,
+  inputBoxTail,
+  namesAModalKey,
+  stripChrome,
+} from "./chrome";
+import { claudeAdapter } from "./index";
 import { lineText } from "./markers";
 
 /** The statusline run as plain text. extractStatusLines returns STYLED lines — a statusline tells
@@ -842,6 +852,9 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     // Before the box was found by its own frame, the clipped row hid the box: draft null, stripped 1.
     { fixture: "autocomplete-slash-clipped", statusRows: 0, draft: "/model", stripped: 32 },
     // A reply's box table cut out of its screen (table-run.test.ts): no box, nothing to strip.
+    { fixture: "background-work-exit-1", statusRows: 0, draft: null, stripped: 14 },
+    { fixture: "background-work-exit-2", statusRows: 0, draft: null, stripped: 14 },
+    { fixture: "background-work-exit-3", statusRows: 0, draft: null, stripped: 14 },
     { fixture: "box-table-vs16-emoji", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "done", statusRows: 2, draft: null, stripped: 28 },
     { fixture: "ghost-suggestion", statusRows: 4, draft: null, stripped: 21 },
@@ -932,6 +945,25 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     { fixture: "v2283-shell-before-first-frame", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "v2283-trust--w50", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "v2283-wizard-two-line-question", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-ask-field-single-focused-empty", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-ask-field-single-focused-three-lines", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-ask-field-single-focused-typed", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-ask-field-single-focused-wrapped", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-ask-field-single-typed-off-row", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-ask-field-wizard-focused-empty", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-ask-field-wizard-focused-typed", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-ask-field-wizard-revisit-typed", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-ask-field-wizard-revisit-focused", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-ask-field-wizard-revisit-cleared", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-ask-field-wizard-review-typed", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-ask-field-multi-ticked-empty", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-ask-field-multi-focused-typed", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-ask-field-multi-focused-unticked", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-ask-field-multi-focused-cleared", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-ask-field-multi-pointer-submit", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-ask-field-wizmulti-focused-empty", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-ask-field-wizmulti-focused-typed", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2299-ask-field-wizmulti-focused-unticked", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "v2283-draft-prompt", statusRows: 2, draft: "my shell said: ❯ ls -la and then nothing", stripped: 7 },
     {
       fixture: "v2283-draft-rule",
@@ -1011,6 +1043,22 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     // statusline plus the mode row; the draft typed during the turn is read as a draft.
     { fixture: "v2301-done-shell-running--w100", statusRows: 3, draft: null, stripped: 23 },
     { fixture: "v2301-idle-after-turn--w100", statusRows: 3, draft: null, stripped: 16 },
+    // Claude Code 2.1.309 after a turn stopped with no Stop hook (live rerun 2026-10-23): Escape after a
+    // Read, and a refused Bash permission. `⎿  Interrupted · What should Claude do instead?` over an
+    // empty box, the operator's two-row statusline plus the mode row.
+    { fixture: "v2-1-309-interrupted--w120", statusRows: 3, draft: null, stripped: 22 },
+    { fixture: "v2-1-309-permission-denied--w120", statusRows: 3, draft: null, stripped: 27 },
+    // The same two in a fresh session under the fullscreen TUI (second live pass): the short transcript
+    // stands at the top, blank rows down to the box.
+    { fixture: "v2-1-309-interrupted-fresh-session--w120", statusRows: 3, draft: null, stripped: 27 },
+    { fixture: "v2-1-309-permission-denied-fresh-session--w120", statusRows: 3, draft: null, stripped: 7 },
+    // Escape before the first token in that session: the prompt goes back into the box, no Interrupted row.
+    { fixture: "v2-1-309-stopped-prompt-restored--w120", statusRows: 3, draft: "Write 700 numbered lines, one short fact about apples per line. No tools, no preamble, do not stop early.", stripped: 33 },
+    // Claude Code 2.1.310 turns under the transcript's echo of a sent prompt (live 2026-10-25): the
+    // operator's two-row statusline plus the mode row under an empty box.
+    { fixture: "v2-1-310-working-echo-bullets--w120", statusRows: 3, draft: null, stripped: 7 },
+    { fixture: "v2-1-310-working-echo-numbered--w120", statusRows: 3, draft: null, stripped: 7 },
+    { fixture: "v2-1-310-working-echo-one-line--w120", statusRows: 3, draft: null, stripped: 7 },
     { fixture: "v2301-queued-taken--w100", statusRows: 3, draft: null, stripped: 7 },
     { fixture: "v2301-spinner-no-timer--w100", statusRows: 2, draft: null, stripped: 6 },
     // The /cost and /usage panel drawn over a live box (M56 spec 15 review): the box and its footer stay.
@@ -1061,8 +1109,37 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     { fixture: "v2303-titled-edge-survey--w160", statusRows: 3, draft: null, stripped: 11 },
     { fixture: "v2303-titled-edge-working--w160", statusRows: 3, draft: null, stripped: 11 },
     { fixture: "v2306-transcript-survey--w153", statusRows: 5, draft: null, stripped: 9 },
+    { fixture: "v2307-auth-refresh-before-output--w61", statusRows: 3, draft: null, stripped: 8 },
+    { fixture: "v2307-auth-refresh-output--w61", statusRows: 2, draft: null, stripped: 7 },
+    { fixture: "v2309-auth-refresh-locked--w120", statusRows: 3, draft: null, stripped: 8 },
+    { fixture: "v2309-auth-refresh-locked--w52", statusRows: 3, draft: null, stripped: 8 },
+    { fixture: "v2309-auth-refresh-locked--w80", statusRows: 3, draft: null, stripped: 8 },
+    { fixture: "v2309-auth-refresh-output--w40", statusRows: 3, draft: null, stripped: 8 },
+    { fixture: "v2309-auth-refresh-output--w52", statusRows: 3, draft: null, stripped: 8 },
+    { fixture: "v2309-auth-refresh-output--w64", statusRows: 3, draft: null, stripped: 8 },
+    { fixture: "v2309-auth-refresh-output--w120", statusRows: 3, draft: null, stripped: 8 },
+    { fixture: "v2310-auth-refresh-before-output-spinner--w52", statusRows: 3, draft: null, stripped: 8 },
+    { fixture: "v2310-auth-refresh-output-spinner--w52", statusRows: 2, draft: null, stripped: 7 },
+    { fixture: "v2310-auth-refresh-output-spinner-timer--w52", statusRows: 2, draft: null, stripped: 7 },
     { fixture: "v2304-ask-no-question-mark--w135", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "v2304-ask-no-question-mark-plain--w135", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2304-ask-chip-question-mark", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2304-ask-two-paragraph--w80", statusRows: 0, draft: null, stripped: 0 },
+    // Claude Code 2.1.312: a two-paragraph paste with an upload path kept as text on its own row (M62 field case, 2026-10-29).
+    { fixture: "v2312-draft-upload-path--w100", statusRows: 2, draft: "also mobile looks off /home/ope", stripped: 10 },
+    // Claude Code 2.1.312: a fresh pane's usage row under the footer (`You've used 75% of your weekly limit`, live check 2026-10-30).
+    { fixture: "v2312-weekly-limit-row--w120", statusRows: 2, draft: null, stripped: 6 },
+    // Claude Code 2.1.317 with verbose on: the token-count row under a Heads up notice (PR 668, 2026-11-03).
+    { fixture: "v2317-verbose-tokens-notice-idle--w154", statusRows: 2, draft: null, stripped: 6 },
+    // Claude Code 2.1.317: the rating survey over the right-aligned `N% until auto-compact` row (issue 705), styled and plain.
+    { fixture: "v2317-survey-context-row--w160", statusRows: 1, draft: null, stripped: 4 },
+    { fixture: "v2317-survey-context-row-plain--w160", statusRows: 1, draft: null, stripped: 4 },
+    // Claude Code 2.1.317 with the next-steps plugin: a dim ghost suggestion in the box under the `next:` rows, the cursor on its first letter (discussion 659, 2026-11-03).
+    { fixture: "v2317-next-steps-suggestions-empty-box--w100", statusRows: 1, draft: null, stripped: 5 },
+    { fixture: "v2317-next-steps-suggestions-one-line-draft--w100", statusRows: 1, draft: "also add a docstring", stripped: 5 },
+    { fixture: "v2317-next-steps-suggestions-dismissed--w100", statusRows: 1, draft: null, stripped: 5 },
+    { fixture: "v2304-select-preview-cjk", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v2304-select-preview-cjk-moved", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "wizard-multiselect-checked", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "wizard-multiselect-final", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "wizard-multiselect-pointer-next", statusRows: 0, draft: null, stripped: 0 },
@@ -1081,6 +1158,20 @@ describe("real corpus — pinned so any change to the walk shows up as a diff", 
     { fixture: "workflow-view", statusRows: 0, draft: null, stripped: 0 },
     { fixture: "working", statusRows: 2, draft: null, stripped: 6 },
     { fixture: "working-esc-to-interrupt", statusRows: 1, draft: null, stripped: 5 },
+    // herdr-core captures (M78 spec 04): plain text, no SGR. The same walk, with no styling to lean on.
+    { fixture: "v21314-core-ask--w120", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v21314-core-draft--w120", statusRows: 1, draft: "collie core draft probe", stripped: 5 },
+    { fixture: "v21314-core-draft--w60", statusRows: 1, draft: "collie core draft probe", stripped: 5 },
+    { fixture: "v21314-core-draft-two-paragraphs--w120", statusRows: 1, draft: "First paragraph of a core draft", stripped: 7 },
+    { fixture: "v21314-core-idle--w120", statusRows: 1, draft: null, stripped: 5 },
+    { fixture: "v21314-core-idle--w60", statusRows: 1, draft: null, stripped: 5 },
+    { fixture: "v21314-core-menu-model--w120", statusRows: 0, draft: null, stripped: 0 },
+    // Claude Code 2.1.318: the weekly-limit notice fills the /model picker's top edge, one trailing `▔` (2026-11-06).
+    { fixture: "v2318-model-picker-usage-notice-edge--w120", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v21314-core-permission--w120", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v21314-core-permission--w60", statusRows: 0, draft: null, stripped: 0 },
+    { fixture: "v21314-core-slash-list--w120", statusRows: 0, draft: "/", stripped: 24 },
+    { fixture: "v21314-core-working--w120", statusRows: 1, draft: null, stripped: 5 },
   ];
 
   it("pins every claude fixture on disk, so a new capture can't slip past this table", () => {
@@ -1121,5 +1212,73 @@ describe("a session name in the box's top edge (2.1.303, 160 columns)", () => {
   it("reads the draft under the titled edge, without the name", () => {
     expect(extractInputDraft(fixtureLines("claude--v2303-titled-edge-draft--w160.txt"))).toBe("ok merge the five, running the crew update now");
     expect(extractInputDraft(fixtureLines("claude--v2303-titled-edge-idle--w160.txt"))).toBeNull();
+  });
+});
+
+// The shapes below are hand-built from the field report in PR 616 (@GGGODLIN), the case the
+// RIGHT_FIELD_PADDING comment in chrome.ts dates 2026-10-06: a 59-column footer the terminal clipped
+// right after a whole hint or its separator, and a wide footer whose last hint is padded out to a
+// field Claude right-aligns ("0% until auto-compact", "/rc", an update notice). No capture of either
+// is in the corpus yet; replace these with captures when the lab draws one.
+describe("status hints clipped at 59 columns or followed by a right-aligned field", () => {
+  const CLIPPED_W59 = [
+    "\u001b[38;5;244m───────────────────────────────────────────────────────────",
+    "\u001b[38;5;246m❯ \u001b[39m",
+    "\u001b[38;5;244m───────────────────────────────────────────────────────────",
+    "\u001b[39m  \u001b[38;5;211m⏵⏵ bypass permissions on\u001b[38;5;246m · \u001b[38;5;44m2 shells\u001b[38;5;246m · esc to interrupt…\u001b[39m",
+    "",
+    "\u001b[1m \u001b[0m \u001b[1m●\u001b[0m \u001b[1mmain\u001b[0m",
+    "\u001b[38;5;246m \u001b[39m \u001b[38;5;246m◯\u001b[39m \u001b[38;5;246mgeneral-purpose\u001b[39m  \u001b[38;5;246mBackground\u001b[39m \u001b[38;5;246mslee…\u001b[39m \u001b[38;5;246m9s\u001b[39m \u001b[38;5;246m·\u001b[39m \u001b[38;5;246m↓\u001b[39m \u001b[38;5;246m22.9k\u001b[39m \u001b[38;5;246mtokens\u001b[39m",
+  ].join("\n");
+
+  const RIGHT_FIELD_W256 = [
+    "─".repeat(255),
+    "❯",
+    "─".repeat(255),
+    `  ⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ← for agents · ↓ to manage${" ".repeat(147)}0% until auto-compact`,
+    "  ● main",
+    `  ◯ general-purpose  Reading the logs for the failing check${" ".repeat(148)}5m 30s · ↓ 139.8k tokens`,
+  ].join("\n");
+
+  it.each([
+    ["59-column clipped footer", CLIPPED_W59],
+    ["256-column right-aligned field", RIGHT_FIELD_W256],
+  ])("%s keeps its input box and draws no unread-dialog card", (_label, raw) => {
+    const lines = splitLines(parseAnsi(raw));
+    expect(hasInputBox(lines)).toBe(true);
+    expect(inputBoxTail(lines)).toBe("statusline");
+    expect(withUnreadDialog(claudeAdapter, lines, claudeAdapter.buildBlocks(lines)).map((b) => b.kind)).not.toContain(
+      "unread-dialog",
+    );
+  });
+
+  it.each([
+    "⏵⏵ bypass permissions on · 1 shell · esc to interrupt…",
+    "⏵⏵ bypass permissions on · 1 shell · esc to interrupt ·…",
+    "⏵⏵ bypass permissions on · 2 shells · ← for agents · ↓ to manage…",
+    "⏵⏵ bypass permissions on · 2 shells · ← for agents · ↓ to manage ·…",
+    `⏵⏵ bypass permissions on · 1 monitor · esc to interrupt · ← for agents · ↓ to manage${" ".repeat(60)}0% until auto-compact`,
+    `⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt · ← for agents${" ".repeat(40)}/rc`,
+    "⏵⏵ bypass permissions on · 1 shell · esc to interrupt ·…  /rc",
+    "⏵⏵ bypass permissions on · 1 shell · esc to i…   /rc",
+    "⏵⏵ bypass permissions on · ↓ to man…  0% until auto-compact",
+    `⏵⏵ bypass permissions on (shift+tab to cycle) · ← 2 agents · ↓ to manage${" ".repeat(27)}✔ Update installed · Restart to update`,
+    "⏵⏵ bypass permissions on · ↓ to view  0% until auto-compact",
+    "⏵⏵ bypass permissions on · Enter to view tasks  0% until auto-compact",
+  ])("does not take %j for a modal footer", (row) => {
+    expect(namesAModalKey(row)).toBe(false);
+  });
+
+  it.each([
+    "Esc to cancel…",
+    "Enter to select · Esc to cancel ·…",
+    "↓ to manage      Esc to cancel",
+    "esc to interrupt ·…   Esc to cancel",
+    // A real modal footer padded out to a right-aligned field: the split on two spaces must not
+    // turn its key into a status hint.
+    "Esc to cancel  0% until auto-compact",
+    "Enter to select · Esc to cancel  /rc",
+  ])("still takes %j for a modal footer", (row) => {
+    expect(namesAModalKey(row)).toBe(true);
   });
 });

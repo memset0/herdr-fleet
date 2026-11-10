@@ -18,6 +18,7 @@ import { PreviewSelectBlock, type PreviewBlockAction } from "@/components/previe
 import { MultiSelectBlock } from "@/components/multi-select-block";
 import { MenuBlock, type MenuBlockAction } from "@/components/menu-block";
 import { AutocompleteBlock } from "@/components/autocomplete-block";
+import { BoxTextBlock } from "@/components/box-text-block";
 import { UnreadDialogBlock } from "@/components/unread-dialog-block";
 
 // ── THE CARD DOCKS IN ONE SLOT (.adr/0059) ─────────────────────────────────────────────────────
@@ -48,9 +49,11 @@ type PrevBlock = Extract<Block, { kind: "preview-select" }>;
 type MultiBlock = Extract<Block, { kind: "multi-select" }>;
 /** The (at most one) generic-menu block, lifted only when all four above declined. */
 type GenericMenuBlock = Extract<Block, { kind: "menu" }>;
-/** The (at most one) completion-popup block: the only non-raw kind that is NOT a modal. The agent's
- *  input box is live under it, so it renders with no controls and locks nothing. */
+/** The (at most one) completion-popup block: NOT a modal, like `box-text`. The agent's input box is
+ *  live under it, so it renders with no controls and locks nothing. */
 type AutoBlock = Extract<Block, { kind: "autocomplete" }>;
+/** The (at most one) text card of a titled box over the live input box. Keyless, like the popup. */
+type BoxBlock = Extract<Block, { kind: "box-text" }>;
 /** The (at most one) unread-dialog card. The post-pass emits it only when NOTHING else lifted, so it
  *  is mutually exclusive with every kind above by construction (harness/index.ts). */
 type UnreadBlock = Extract<Block, { kind: "unread-dialog" }>;
@@ -69,14 +72,26 @@ export interface CardDockProps {
   ) => boolean | void | Promise<boolean | void>;
   /** Injected handler for a wizard tap, one race-guarded keystroke per control (lib/wizard-action.ts). */
   onWizardAction?: (keys: string[], wizard: WizardModel) => void | Promise<void>;
+  /** Injected handler for an answer typed into a wizard step's field (lib/wizard-action.ts); resolves
+   *  whether it was sent, so the card keeps a refused draft. */
+  onWizardAnswer?: (text: string, wizard: WizardModel) => Promise<boolean>;
   /** Injected handler for a preview-dialog tap (lib/preview-action.ts). */
   onPreviewAction?: (action: PreviewBlockAction, preview: PreviewSelectModel) => void | Promise<void>;
   /** Injected handler for a multi-select tap (lib/multi-select-action.ts). */
   onMultiSelectAction?: (action: MultiSelectIntent, multi: MultiSelectModel) => void | Promise<void>;
+  /** Injected handler for an answer typed into a multi-select question's field
+   *  (lib/multi-select-action.ts `type`); resolves whether it was sent, so the card keeps a refused draft. */
+  onMultiSelectAnswer?: (text: string, multi: MultiSelectModel) => Promise<boolean>;
   /** Injected handler for a generic-menu tap (lib/menu-action.ts). */
   onMenuAction?: (action: MenuBlockAction, menu: MenuModel) => void | Promise<void>;
   /** Injected handler for the unread-dialog card's one declared key (.adr/0053). */
   onUnreadDialogAction?: (key: string, cancel: UnreadDialogModel) => void | Promise<void>;
+  /** Opens Report a problem from the unread-dialog card (ADR 0123, amendment 2026-10-28). Absent, the
+   *  card offers no report. */
+  onUnreadDialogReport?: (cancel: UnreadDialogModel) => void;
+  /** The unread-dialog card showed (M86 spec 05): called once per card instance for each pane and
+   *  dialog. Absent, nothing is called. */
+  onUnreadDialogShown?: (cancel: UnreadDialogModel) => void;
   /** Disable every card's controls (read-only device, gone pane). */
   promptDisabled?: boolean;
   /** The pane the card answers for, and its scope. The prompt card enables only while the bridge has
@@ -114,10 +129,14 @@ function liftedCard({
   blocks,
   onPromptAction,
   onWizardAction,
+  onWizardAnswer,
   onPreviewAction,
   onMultiSelectAction,
+  onMultiSelectAnswer,
   onMenuAction,
   onUnreadDialogAction,
+  onUnreadDialogReport,
+  onUnreadDialogShown,
   promptDisabled,
   paneId,
   scope,
@@ -145,7 +164,11 @@ function liftedCard({
         wizard={wizardBlock.wizard}
         lines={wizardBlock.lines}
         disabled={promptDisabled || !onWizardAction}
+        paneId={paneId}
+        scope={scope}
+        stale={stale}
         onAction={(keys) => onWizardAction?.(keys, wizardBlock.wizard)}
+        onAnswer={onWizardAnswer ? (text) => onWizardAnswer(text, wizardBlock.wizard) : undefined}
       />
     );
   }
@@ -167,7 +190,11 @@ function liftedCard({
         multi={multiBlock.multi}
         lines={multiBlock.lines}
         disabled={promptDisabled || !onMultiSelectAction}
+        paneId={paneId}
+        scope={scope}
+        stale={stale}
         onAction={(action) => onMultiSelectAction?.(action, multiBlock.multi)}
+        onAnswer={onMultiSelectAnswer ? (text) => onMultiSelectAnswer(text, multiBlock.multi) : undefined}
       />
     );
   }
@@ -194,6 +221,9 @@ function liftedCard({
         disabled={promptDisabled || !onUnreadDialogAction}
         wrap={wrap}
         onAction={(key) => onUnreadDialogAction?.(key, unreadBlock.cancel)}
+        onReport={onUnreadDialogReport === undefined ? undefined : () => onUnreadDialogReport(unreadBlock.cancel)}
+        onShown={onUnreadDialogShown === undefined ? undefined : () => onUnreadDialogShown(unreadBlock.cancel)}
+        paneId={paneId}
       />
     );
   }
@@ -202,6 +232,9 @@ function liftedCard({
   // dialog above means there is no input box, and a popup means there is one.
   const autoBlock = blocks.find((b): b is AutoBlock => b.kind === "autocomplete");
   if (autoBlock) return <AutocompleteBlock autocomplete={autoBlock.autocomplete} />;
+  // Keyless like the popup, and for the same reason: the input box is live under the box it shows.
+  const boxTextBlock = blocks.find((b): b is BoxBlock => b.kind === "box-text");
+  if (boxTextBlock) return <BoxTextBlock boxText={boxTextBlock.boxText} />;
   return null;
 }
 
@@ -212,7 +245,8 @@ function liftedCard({
  * HEIGHT. Capped at 55dvh, 40dvh with the soft keyboard up, and scrolled inside, so a tall card (the
  * /model mirror, a long /resume list, an unread-dialog card carrying the whole pane) never pushes the
  * composer off the screen. `dvh` already tracks the keyboard (hooks/use-keyboard.ts), so the cap is
- * a share of what is really visible.
+ * a share of what is really visible. It also SHRINKS (`min-h-0 shrink`): the reading box above it
+ * holds a floor (agent-chat.tsx, #667), so on a short phone the dock gives up room before the chat does.
  *
  * LOOK. The page background and one uniform 1px top rule: a docked sheet standing on the column, not
  * a second card around the card. `px-3` is the mirror list's own gutter, so the card's edges line up
@@ -229,7 +263,7 @@ export function CardDock(props: CardDockProps) {
       role="presentation"
       data-slot="card-dock"
       className={cn(
-        "shrink-0 overflow-y-auto overscroll-contain border-t border-border bg-background px-3 pt-2 pb-2",
+        "min-h-0 shrink overflow-y-auto overscroll-contain border-t border-border bg-background px-3 pt-2 pb-2",
         props.composing ? "max-h-[40dvh]" : "max-h-[55dvh]",
         props.faceClassName,
       )}

@@ -83,6 +83,8 @@ const SESSION_SUMMARY_KEYS = {
   experimental: true,
   // Rides only on a program card refused for its wire version (M55 spec 14), so no solo byte moved.
   notice: true,
+  // The operator's display label from spaces.toml: absent without the file, so no solo byte moved.
+  label: true,
 } satisfies Record<keyof SessionSummary, true>;
 
 const AGENT_VIEW_KEYS = {
@@ -127,6 +129,9 @@ const AGENT_VIEW_KEYS = {
   // Not a crew dimension: the pane's running subagents (bridge/subagents.ts), absent when none is
   // running or on an older bridge.
   subagents: true,
+  // Not a crew dimension: the pane's background jobs (bridge/jobs-journal.ts), absent when there are
+  // none or on an older bridge.
+  jobs: true,
   // Not a crew dimension: the model the pane's agent is on, from the same probe as `cache`, and
   // absent until that agent has taken one turn. An older bridge or peer omits it.
   model: true,
@@ -163,10 +168,21 @@ const AGENT_VIEW_KEYS = {
   // Not a crew dimension: the Send Protocol's mark (M56 spec 05). Only COLLIE_SEND_PROTOCOL=1 fills it,
   // and it is off by default, so it is absent on every pane here and no golden byte moved.
   sendProtocol: true,
+  // Not a crew dimension: whether a send may steer the pane's turn (M69). Rides with `sendProtocol` only.
+  canSteer: true,
   // Not a crew dimension: the pane's held sends (M56 spec 15), present only while a send waits for the turn to end.
   held: true,
+  // Not a crew dimension: whether a Stop (M68) has a key to press on this pane. It rides with `surface` only,
+  // and only when the pane's profile names an interrupt key; this harness builds no Surface, so no golden byte moved.
+  canStop: true,
   // Not a crew dimension: the pane's session instance (walky talky), four characters naming the session that holds the pane id now. Absent on a machine that predates it.
   instance: true,
+  // Not a crew dimension: the pane's usage dots (bridge/usage.ts), present only while the statusLine wrapper reports them.
+  usage: true,
+  // A session turned its walky talky off (M89). Present only while it is off, so a solo golden body carries no such key.
+  walkyOff: true,
+  // How many pins the pane's session holds (M90). Present only above zero, so a solo golden body carries no such key.
+  pins: true,
 } satisfies Record<keyof AgentView, true>;
 
 const DEVICE_AUTH_KEYS = {
@@ -271,6 +287,8 @@ describe("solo zero-tax — the client's mirror types carry no crew dimension", 
       "bindingId",
       "bindingSession",
       "cache",
+      "canSteer",
+      "canStop",
       "cwd",
       "effort",
       "focused",
@@ -282,12 +300,14 @@ describe("solo zero-tax — the client's mirror types carry no crew dimension", 
       "hooks",
       "host",
       "instance",
+      "jobs",
       "kind",
       "lastActiveAt",
       "lastSeenAt",
       "model",
       "paneId",
       "paneLabel",
+      "pins",
       "progress",
       "readableLines",
       "sendProtocol",
@@ -305,6 +325,8 @@ describe("solo zero-tax — the client's mirror types carry no crew dimension", 
       "terminalTitleStale",
       "todos",
       "turnId",
+      "usage",
+      "walkyOff",
       "workspaceId",
       "workspaceLabel",
       "workspaceNumber",

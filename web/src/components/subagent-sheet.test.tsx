@@ -2,7 +2,8 @@ import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-li
 import { http, HttpResponse } from "msw";
 import { afterEach, describe, expect, it, vi } from "vitest";
 
-import { ToolCard } from "@/components/chat-cards";
+import { ItemView, ToolCard } from "@/components/chat-cards";
+import type { ChatItem } from "@/lib/chat-items";
 import { SubagentSheet } from "@/components/subagent-sheet";
 import { server } from "@/test/setup";
 import type { TranscriptEntry } from "@/lib/types";
@@ -56,6 +57,7 @@ describe("SubagentSheet", () => {
     render(
       <SubagentSheet paneId="w1:p1">
         <ToolCard
+          callId="call-1"
           tool={{
             kind: "task",
             agent: "Explore",
@@ -100,6 +102,7 @@ describe("SubagentSheet", () => {
     render(
       <SubagentSheet paneId="w1:p1">
         <ToolCard
+          callId="call-1"
           tool={{
             kind: "task",
             agent: "Plan",
@@ -145,6 +148,7 @@ describe("SubagentSheet", () => {
     render(
       <SubagentSheet paneId="w1:p1">
         <ToolCard
+          callId="call-1"
           tool={{
             kind: "task",
             agent: "general-purpose",
@@ -181,6 +185,7 @@ describe("SubagentSheet", () => {
     const { rerender } = render(
       <SubagentSheet paneId="w1:p1">
         <ToolCard
+          callId="call-1"
           tool={{
             kind: "task",
             agent: "general-purpose",
@@ -198,6 +203,7 @@ describe("SubagentSheet", () => {
     rerender(
       <SubagentSheet paneId="w1:p1">
         <ToolCard
+          callId="call-1"
           tool={{
             kind: "task",
             agent: "general-purpose",
@@ -218,6 +224,7 @@ describe("SubagentSheet", () => {
     rerender(
       <SubagentSheet paneId="w1:p2">
         <ToolCard
+          callId="call-1"
           tool={{
             kind: "task",
             agent: "general-purpose",
@@ -247,6 +254,7 @@ describe("SubagentSheet", () => {
       render(
         <SubagentSheet paneId="w1:p1" scope={{ host: "laptop" }}>
           <ToolCard
+            callId="call-1"
             tool={{ kind: "task", agent: "Explore", summary: "Remote subagent", agentId: "af52a45b4a25847ac" }}
             status="running"
           />
@@ -268,5 +276,42 @@ describe("SubagentSheet", () => {
     } finally {
       vi.useRealTimers();
     }
+  });
+  // Issue 643: two task calls with the same agent and summary used to share one sheet slot, so the
+  // later card's output overwrote the earlier one's in the open sheet.
+  it("keeps two task cards with the same agent and summary apart by their item ids", async () => {
+    const task = (id: string, output: string): ChatItem => ({
+      id,
+      kind: "tool",
+      status: "done",
+      tool: { kind: "task", agent: "Explore", summary: "Inspect the routes", output },
+    });
+    const view = (second: string) => (
+      <SubagentSheet paneId="w1:p1">
+        <ItemView item={task("call-a", "First report: three routes.")} />
+        <ItemView item={task("call-b", second)} />
+      </SubagentSheet>
+    );
+    const { rerender } = render(view("Second report: nine routes."));
+
+    const cards = screen.getAllByRole("button", { name: /Explore/i });
+    expect(cards).toHaveLength(2);
+
+    fireEvent.click(cards[0]!);
+    const dialog = await screen.findByRole("dialog");
+    await waitFor(() => expect(within(dialog).getByText(/First report: three routes/)).toBeTruthy());
+
+    // The second card changes under the open sheet. It is not the sheet's card, so the sheet must not follow it.
+    rerender(view("Second report: twelve routes, rewritten."));
+    expect(within(screen.getByRole("dialog")).getByText(/First report: three routes/)).toBeTruthy();
+    expect(within(screen.getByRole("dialog")).queryByText(/Second report/)).toBeNull();
+
+    // Closed and opened on the second card: that card shows its own output, not the first one's.
+    fireEvent.keyDown(document, { key: "Escape" });
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    fireEvent.click(screen.getAllByRole("button", { name: /Explore/i })[1]!);
+    const second = await screen.findByRole("dialog");
+    await waitFor(() => expect(within(second).getByText(/twelve routes, rewritten/)).toBeTruthy());
+    expect(within(second).queryByText(/First report/)).toBeNull();
   });
 });

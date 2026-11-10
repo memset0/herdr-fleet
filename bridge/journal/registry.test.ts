@@ -16,23 +16,29 @@ import {
 // agent name can't resolve to something that isn't an adapter.
 
 const roots = {
+  agy: ["/a"],
   claude: ["/c"],
   codex: ["/x"],
   pi: ["/p"],
   opencode: ["/o"],
   grok: ["/g"],
   hermes: ["/h"],
+  kiro: ["/k"],
+  "dsh-tui": ["/d"],
   muse: ["/m"],
   openclaw: ["/oc"],
 };
 
 describe("buildJournalRegistry", () => {
-  test("serves the eight verified harnesses", () => {
+  test("serves the registered harnesses", () => {
     expect(journalAgents(buildJournalRegistry(roots))).toEqual([
+      "agy",
       "claude",
       "codex",
+      "dsh-tui",
       "grok",
       "hermes",
+      "kiro",
       "muse",
       "openclaw",
       "opencode",
@@ -62,7 +68,7 @@ describe("sendQueuedNow", () => {
 describe("adapterFor", () => {
   const registry = buildJournalRegistry(roots);
 
-  test.each(["claude", "codex", "pi", "opencode", "grok", "hermes", "muse"])("resolves %s", (agent) => {
+  test.each(["agy", "claude", "codex", "pi", "opencode", "grok", "hermes", "kiro", "muse", "openclaw", "dsh-tui"])("resolves %s", (agent) => {
     expect(adapterFor(registry, agent)?.agent).toBe(agent);
   });
 

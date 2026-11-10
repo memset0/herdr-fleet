@@ -1,0 +1,61 @@
+# Opened from the app's "Report a problem" sheet (ADR 0123), which fills in every field below through
+# the new-issue URL: `?template=from-app.yml&title=…&what-happened=…&sends=…&setup=…&screen=…`.
+# The ids are the URL's parameter names, so renaming one breaks the prefill: web/src/lib/report/body.ts
+# (`FIELD_IDS`) names the same four, and web/src/lib/report/template.test.ts pins them together.
+# The label rides here, because a `labels=` URL parameter needs triage rights on the repository.
+name: Report from the app
+description: Opened by Collie's Report a problem sheet after sends kept failing or a dialog could not be read
+labels:
+  - from-app
+body:
+  - type: markdown
+    attributes:
+      value: >
+        The app filled in this form. Read every field before you submit: the issue is public. It holds
+        no text you typed, and a screen only when "Include the screen" was on. The rest is the Collie
+        version, the agent and its version, the multiplexer and the codes of what went wrong.
+
+
+        If the fields below are empty, the report is still on your clipboard: paste it into "What
+        happened". The GitHub app does not fill in this form; a browser does.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: The app's summary and your own line, if you wrote one. Add anything you saw.
+    validations:
+      required: true
+
+  - type: textarea
+    id: sends
+    attributes:
+      label: What went wrong
+      description: >
+        After failed sends, one entry per send: the time, how it ended, its request id, the keys
+        Collie pressed and the gaps between them in milliseconds. After a dialog Collie could not
+        read, the card's reason and what each dialog detector answered. The last line is a signature
+        that finds reports of the same problem.
+      render: text
+    validations:
+      required: false
+
+  - type: textarea
+    id: setup
+    attributes:
+      label: Setup
+      description: The Collie version and release line, the operating system, the multiplexer, the agent and its version, and the reader profile. A dialog report adds the app and bridge builds, the browser, the viewport and whether the app runs installed.
+      render: json
+    validations:
+      required: false
+
+  - type: textarea
+    id: screen
+    attributes:
+      label: The screen
+      description: >
+        Present only when "Include the screen" was on. The pane's last rows, with known secret shapes
+        masked by the bridge. Read them before you submit.
+      render: text
+    validations:
+      required: false

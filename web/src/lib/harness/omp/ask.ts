@@ -62,13 +62,13 @@
 // FAIL CLOSED. Every piece below is required, and any one missing returns null:
 //   * the bottom border is the last non-blank row, the footer is the row above it, a divider above that;
 //   * the footer's four segments are exactly one preset's;
-//   * the body is option rows, each followed by its description rows, then blank rows, nothing else:
-//     no wrapped label, no preview, no scrollbar cell (omp can print all three; none is captured, so
-//     none is guessed);
+//   * the body is option rows, each followed by its description rows and then its preview rows (omp
+//     18.12.6, below), then blank rows, nothing else: no wrapped label, no scrollbar cell (omp can print
+//     both; neither is captured, so neither is guessed);
 //   * a description row is exactly six columns in, under an option or that option's previous
 //     description row, never under `Other` (omp prints an answer typed earlier there, at the same
-//     indent), never behind a `│` (an option's preview, at the same indent), and never opening with
-//     the preset's radio or pointer, the glyphs of an option row;
+//     indent), never behind a `│` (an option's preview, below), and never opening with the preset's
+//     radio or pointer, the glyphs of an option row;
 //   * every option row carries that preset's unselected radio, the last one reads exactly
 //     `Other (type your own)`, and no other row does;
 //   * exactly one pointer, in that preset's glyph;
@@ -76,6 +76,22 @@
 //     The question rows are free text and are checked only for the box's left side, as resume.ts checks
 //     a session's first-prompt row: their bytes ride in the signature, and nothing reads a key off them;
 //   * a region short enough for the bridge to bind (32000 characters, as resume.ts).
+//
+// OPTION PREVIEWS (omp 18.12.6, `omp--v18-12-6-ask-previews--w120.txt`). An option the agent gave a
+// `preview` carries it under its description, each row behind a rail at the description's indent
+// (`      │ ` in ask-dialog.ts `renderCachedPreview`), markdown or code rendered to the box:
+//
+//     │ ❯ ○ Code refactoring                                │
+//     │       Improving structure and maintainability       │     the description
+//     │       │ Clean up technical debt                     │     the preview, one row per rendered line
+//     │   ○ Bug investigation                               │
+//
+// The rows join, with ` ↵ ` for a break, after `Preview:` in that option's `description` on the card, so
+// the person sees what omp shows. A preview row may be empty. Declined: a preview under no option or
+// under `Other`, a description row after a preview, a preview of blank rows only, and a hidden or bidi
+// character in a row. The echo block omp draws above the panel (`╭─── Ask 1 questions`) is no part of the
+// panel, and the grammar reads up from the footer to the `╭─ Ask ─╮` title and stops there. Tapping an
+// option is the same walk and Enter as before: a preview does not change a key.
 //
 // THE MULTI-SELECT DIALOG IS NOT LIFTED, on purpose (.adr/0077): its toggle is an arrow walk then Space,
 // a recipe no shared model carries, and its Enter changed meaning between omp versions. It keeps the
@@ -85,11 +101,11 @@
 // text above, they are current: the footer may now end `Alt+H hide` and `Ctrl+O expand`/`collapse`.
 //
 // BATCHED QUESTIONS. A call with several single-select questions adds the `⇥/←/→ question` footer
-// segment and a tab strip whose active tab is marked by background and bold ONLY. The grammar reads
-// the strip, binds the active tab's index into `coreSignature` and binds the styled region, so two
-// steps with identical words are not mistaken for one another. Enter saves the answer and advances; a
-// revisited step may show one saved `◉` answer. Unknown controls, scroll indicators and anything the
-// strip cannot place still decline.
+// segment (the tab keycap is the preset's) and a tab strip whose active tab is marked by background
+// and bold ONLY. The grammar reads the strip, binds the active tab's index into `coreSignature` and
+// binds the styled region, so two steps with identical words are not mistaken for one another. Enter
+// saves the answer and advances; a revisited step may show one saved `◉` answer (the preset's).
+// Unknown controls, scroll indicators and anything the strip cannot place still decline.
 //
 // THE REVIEW SCREEN. After the last question omp draws a review: one numbered answer per tab, the
 // Submit tab active and a static `❯ Submit` row, under the footer `⏎ submit · ↑/↓ scroll · ⎋ cancel`.
@@ -105,6 +121,8 @@
 
 import type { StyledLine } from "../../blocks";
 import { canonicalStyledLines, encodeStyledRegion } from "../../styled-region";
+import { hasHiddenCharacter, MAX_REGION_CHARS } from "../bound-region";
+import { OMP_NERD, OMP_UNICODE, type OmpGlyphPreset } from "./keycaps";
 import { pointerWalk } from "../menu-hints";
 import type { PromptModel, PromptOption } from "../prompt-model";
 import { isBlank, lineText, rstrip } from "./markers";
@@ -116,34 +134,36 @@ export interface AskSelectRegion {
   startLine: number;
 }
 
-/** One keycap dialect: the footer's two keycaps and the glyphs the same symbol preset draws in the
- *  body. A screen must match ONE preset in all four places, so a footer from one preset over rows from
- *  another is not a screen this grammar knows. */
-interface Preset {
-  enter: string;
-  escape: string;
-  /** `theme.nav.cursor`, the pointer in front of the pointed row. */
-  pointer: string;
-  /** `theme.radio.unselected`, the marker in front of every option of a single-select question. */
-  radio: string;
-}
+/** One keycap dialect: the footer's keycaps and the glyphs the same symbol preset draws in the body.
+ *  A screen must match ONE preset in every place, so a footer from one preset over rows from another
+ *  is not a screen this grammar knows. `tab` is null for a dialect no batch was captured in. */
+type Preset = Omit<OmpGlyphPreset, "name" | "tab"> & { readonly tab: string | null };
 
 const PRESETS: readonly Preset[] = [
   // omp 18.4 `unicode` preset, the default (`omp--v18-4-ask-single.txt`).
-  { enter: "⏎", escape: "⎋", pointer: "❯", radio: "○" },
+  OMP_UNICODE,
   // omp 17.x text keycaps over the same glyphs (`omp--select-menu.txt`, v17.2.12).
-  { enter: "Enter", escape: "Esc", pointer: "❯", radio: "○" },
-  // omp's `nerd` preset, private-use glyphs (`omp--select-menu-other.txt`, v18.4.4): U+F0311 for Enter,
-  // U+F12B7 for Escape, U+F054 (nf-fa-chevron_right) as the pointer, U+F10C (nf-fa-circle_o) as the radio.
-  { enter: "\u{F0311}", escape: "\u{F12B7}", pointer: "\u{F054}", radio: "\u{F10C}" },
+  { ...OMP_UNICODE, enter: "Enter", escape: "Esc", tab: null },
+  // omp's `nerd` preset, private-use glyphs (`omp--select-menu-other.txt`, v18.4.4; a batch and its
+  // review in `omp--v18-18-0-nerd-ask-*`, 18.18.0). The glyphs are listed in omp/keycaps.ts.
+  OMP_NERD,
 ];
 
 /** The footer, segment by segment, for a preset. Compared exactly: see the header. */
 function footerOf(preset: Preset, tabbed: boolean): string[] {
   const segments = [`${preset.enter} select`, "n note", "↑/↓ move"];
-  if (tabbed) segments.push("⇥/←/→ question");
+  if (tabbed) segments.push(`${preset.tab}/←/→ question`);
   segments.push(`${preset.escape} cancel`);
   return segments;
+}
+
+/** The preset whose question footer this is, and whether it carries the batch's tab segment. */
+function matchQuestionFooter(segments: string[]): { preset: Preset; tabbed: boolean } | null {
+  for (const preset of PRESETS) {
+    if (matchesAskFooter(segments, footerOf(preset, false), true)) return { preset, tabbed: false };
+    if (preset.tab !== null && matchesAskFooter(segments, footerOf(preset, true), true)) return { preset, tabbed: true };
+  }
+  return null;
 }
 
 /** omp's own label for the free-text row (`OTHER_OPTION` in ask-dialog.ts). omp renames any option
@@ -152,9 +172,6 @@ const OTHER_LABEL = "Other (type your own)";
 
 /** The mark a saved note leaves after its row's label (`noteMarker` in ask-dialog.ts). */
 const NOTE_MARK = /^(.*\S) {2}✎ note$/;
-
-/** The bridge's cap on a bound region less a margin, as resume.ts. */
-const MAX_REGION_CHARS = 32_000;
 
 /** omp caps the question at four rows before it offers `ctrl+o expand` (`MAX_HEADER_ROWS`). */
 const MAX_QUESTION_ROWS = 4;
@@ -179,6 +196,9 @@ const BLANK_ROW = /^│\s*│$/;
  *  same indent (`omp--v18-8-ask-single-described.txt`). The text never opens with `│`: that is the
  *  rail of an option's `preview`, which omp draws at the same indent and this grammar does not read. */
 const DESCRIPTION_ROW = /^│ {7}([^\s│][\s\S]*?)\s*│$/;
+/** An option's preview row (omp 18.12.6, `renderRowLabel` in ask-dialog.ts): the same six columns, then the
+ *  rail `│`, a space and one row of the preview rendered as markdown or code, which may be empty. */
+const PREVIEW_ROW = /^│ {7}│(?: ([\s\S]*?))?\s*│$/;
 
 interface Option {
   label: string;
@@ -189,6 +209,8 @@ interface Option {
   bodyRow: number;
   /** The option's description rows, joined with a space; absent when omp printed none. */
   description?: string;
+  /** The option's preview rows (omp 18.12.6), rail off, in screen order; absent when omp printed none. */
+  preview?: string[];
 }
 
 /**
@@ -206,9 +228,9 @@ export function detectAskSelectRegion(lines: StyledLine[]): AskSelectRegion | nu
   if (footerRow === null) return null;
   const footer = readOmpHintList(footerRow[1]!);
   if (footer === null) return null;
-  const tabbed = footer.segments.includes("⇥/←/→ question");
-  const preset = PRESETS.find((p) => (!tabbed || p.enter === "⏎") && matchesAskFooter(footer.segments, footerOf(p, tabbed), true));
-  if (preset === undefined) return readReview(lines, texts, end, footer.segments);
+  const matched = matchQuestionFooter(footer.segments);
+  if (matched === null) return readReview(lines, texts, end, footer.segments);
+  const { preset, tabbed } = matched;
   const truncated = footer.segments.at(-1) === "Ctrl+O expand";
   const maxQuestionRows = footer.segments.at(-1) === "Ctrl+O collapse" ? MAX_BODY_ROWS : MAX_QUESTION_ROWS;
   const lowerDivider = end - 2;
@@ -266,9 +288,8 @@ export function detectAskSelectRegion(lines: StyledLine[]): AskSelectRegion | nu
     };
     if (option.note) row.description = "✎ note";
     // A description omp printed under the row follows the note's mark, in screen order.
-    if (option.description !== undefined) {
-      row.description = option.note ? `✎ note · ${option.description}` : option.description;
-    }
+    const shown = describe(option);
+    if (shown !== undefined) row.description = option.note ? `✎ note · ${shown}` : shown;
     return row;
   });
   // The footer's own way out, in its own words, as the last row (ADR 0058 point 5).
@@ -295,7 +316,10 @@ export function detectAskSelect(lines: StyledLine[]): PromptModel | null {
 
 /** Review Enter submits once; Up/Down scroll here and must never be a pointer walk. */
 function readReview(lines: StyledLine[], texts: string[], end: number, footer: string[]): AskSelectRegion | null {
-  if (!matchesAskFooter(footer, ["⏎ submit", "↑/↓ scroll", "⎋ cancel"])) return null;
+  const preset = PRESETS.find(
+    (p) => p.tab !== null && matchesAskFooter(footer, [`${p.enter} submit`, "↑/↓ scroll", `${p.escape} cancel`]),
+  );
+  if (preset === undefined) return null;
   const lowerDivider = end - 2;
   if (!DIVIDER.test(texts[lowerDivider]!)) return null;
   let upperDivider = lowerDivider - 1;
@@ -310,7 +334,7 @@ function readReview(lines: StyledLine[], texts: string[], end: number, footer: s
   if (tabs === null || tabs.labels.length < 3 || tabs.current !== tabs.labels.length - 1) return null;
   const rows = texts.slice(upperDivider + 1, lowerDivider)
     .map((row) => BOX_ROW.exec(row)![1]!.trim()).filter((row) => row !== "");
-  if (rows.length !== tabs.labels.length || rows.at(-1) !== "❯ Submit") return null;
+  if (rows.length !== tabs.labels.length || rows.at(-1) !== `${preset.pointer} Submit`) return null;
   for (let i = 0; i < tabs.labels.length - 1; i++) {
     const prefix = `${i + 1}. ${tabs.labels[i]}: `;
     if (!rows[i]!.startsWith(prefix) || rows[i]!.length === prefix.length) return null;
@@ -383,6 +407,16 @@ function readBody(rows: string[], preset: Preset, allowSelected: boolean): Optio
     }
     // A row of text below a blank one is not this layout: omp pads only after the last option.
     if (padding) return null;
+    // A preview row: behind the rail, under the option's label or its description, never under `Other`.
+    const preview = PREVIEW_ROW.exec(row);
+    if (preview !== null) {
+      const owner = options.at(-1);
+      if (owner === undefined || owner.label === OTHER_LABEL) return null;
+      const text = preview[1] ?? "";
+      if (hasHiddenCharacter(text)) return null;
+      owner.preview = [...(owner.preview ?? []), text];
+      continue;
+    }
     const description = DESCRIPTION_ROW.exec(row)?.[1];
     if (description !== undefined) {
       // Directly under its option, or under that option's previous description row. Never under
@@ -390,7 +424,9 @@ function readBody(rows: string[], preset: Preset, allowSelected: boolean): Optio
       // Never opening with the radio or the pointer either: those glyphs open an option row.
       const owner = options.at(-1);
       if (owner === undefined || owner.label === OTHER_LABEL) return null;
-      if (description.startsWith(preset.radio) || description.startsWith(preset.pointer) || description.startsWith("◉")) return null;
+      // omp draws the description before the preview, never after it.
+      if (owner.preview !== undefined) return null;
+      if ([preset.radio, preset.pointer, preset.radioSelected].some((glyph) => description.startsWith(glyph))) return null;
       owner.description = owner.description === undefined ? description : `${owner.description} ${description}`;
       continue;
     }
@@ -398,8 +434,11 @@ function readBody(rows: string[], preset: Preset, allowSelected: boolean): Optio
     if (option === null) return null;
     options.push(option);
   }
-  // At least one real option above the `Other` row, which must be last and must be the only one.
-  if (options.length < 2) return null;
+  // `Other` is last and the only one. A question the agent gave no option (omp 18.12.6, a free-text
+  // question, `omp--v18-12-6-ask-freetext--w120.txt`) shows `Other` alone, and Enter on it opens the editor.
+  if (options.length < 1) return null;
+  // A preview of blank rows only shows the person nothing, so it is no preview this card can claim.
+  if (options.some((o) => o.preview !== undefined && o.preview.every((row) => row.trim() === ""))) return null;
   if (options.at(-1)!.label !== OTHER_LABEL) return null;
   if (options.slice(0, -1).some((o) => o.label === OTHER_LABEL)) return null;
   if (options.filter((o) => o.pointed).length !== 1) return null;
@@ -410,8 +449,9 @@ function readBody(rows: string[], preset: Preset, allowSelected: boolean): Optio
 function readOption(row: string, preset: Preset, bodyRow: number, allowSelected: boolean): Option | null {
   const inner = BOX_ROW.exec(row)?.[1]?.replace(/\s+$/, "");
   if (inner === undefined) return null;
-  const selected = allowSelected && (inner.startsWith(`${preset.pointer} ◉ `) || inner.startsWith("  ◉ "));
-  const radio = selected ? "◉" : preset.radio;
+  const selected =
+    allowSelected && (inner.startsWith(`${preset.pointer} ${preset.radioSelected} `) || inner.startsWith(`  ${preset.radioSelected} `));
+  const radio = selected ? preset.radioSelected : preset.radio;
   const pointed = inner.startsWith(`${preset.pointer} ${radio} `);
   if (!pointed && !inner.startsWith(`  ${radio} `)) return null;
   const rest = inner.slice((pointed ? preset.pointer.length : 1) + 1 + radio.length + 1);
@@ -420,11 +460,25 @@ function readOption(row: string, preset: Preset, bodyRow: number, allowSelected:
   return { label: noted === null ? rest : noted[1]!, note: noted !== null, pointed, selected, bodyRow };
 }
 
+// omp 18.16 renders Alt as a glyph keycap (`⌥H hide`, omp--v18-16-0-ask-single-glyph-hide--w200.txt),
+// so that hint is accepted in both forms. `Ctrl+O` stays text-only: a glyph `⌃O expand` has not been
+// captured, and the truncated state must decline rather than offer answers on a cut screen.
 function matchesAskFooter(segments: string[], expected: string[], allowExpansion = false): boolean {
   let length = segments.length;
   if (allowExpansion && /^Ctrl\+O (?:expand|collapse)$/.test(segments[length - 1]!)) length--;
-  if (segments[length - 1] === "Alt+H hide") length--;
+  if (/^(?:Alt\+|⌥)H hide$/.test(segments[length - 1]!)) length--;
   return length === expected.length && expected.every((segment, i) => segment === segments[i]);
+}
+
+/** What the card shows under an option: its description, then its preview rows after `Preview:`, rows joined
+ *  by ` ↵ ` (a break is never read as a space), the blank rows at the preview's ends left off. */
+function describe(option: Option): string | undefined {
+  if (option.preview === undefined) return option.description;
+  const rows = option.preview.map((row) => row.trim());
+  while (rows.length > 0 && rows[0] === "") rows.shift();
+  while (rows.length > 0 && rows.at(-1) === "") rows.pop();
+  const preview = `Preview: ${rows.join(" ↵ ")}`;
+  return option.description === undefined ? preview : `${option.description} · ${preview}`;
 }
 
 function capitalise(word: string): string {

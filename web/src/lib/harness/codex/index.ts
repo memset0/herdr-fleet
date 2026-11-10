@@ -1,10 +1,11 @@
 // The Codex adapter. Chrome/status/draft are Tier 1: the boxless `› ` composer plus its
 // dot-separated status row are stripped from the mirror and re-surfaced natively. Interactive
 // kinds with dated captures and notes (all under this directory): the folder-trust prompt
-// (`prompt-select`, family trust), exec approvals (`prompt-select`, family permission —
-// classified by row: the one-shot Yes and the reject become buttons, persistent rows never do),
-// and `request_user_input` question cards (`prompt-select`, family select — a digit answers the
-// current question and submits on the last). Digits confirm directly on all three (probed;
+// (`prompt-select`, family trust), the hook-trust prompt (the same, a pointer walk plus Enter),
+// exec approvals (`prompt-select`, family permission — classified by row: the one-shot Yes and
+// the reject become buttons, persistent rows never do), and `request_user_input` question cards
+// (`prompt-select`, family select — a digit answers the current question and submits on the
+// last). Digits confirm directly on the old trust copy, approvals and question cards (probed;
 // notes files). The notes flow of a question card stays in the terminal: the focused-notes
 // state refuses to raw, because a digit would type into the box.
 //
@@ -17,7 +18,7 @@
 // pickers are deliberately left to the unread-dialog card.
 
 import { lineText, trimTrailingBlank, type Block, type StyledLine } from "../../blocks";
-import type { HarnessAdapter } from "../types";
+import type { DialogDetector, HarnessAdapter } from "../types";
 import {
   composerPrompt,
   composerReady,
@@ -28,6 +29,7 @@ import {
 import { detectApprovalRegion } from "./approval";
 import { detectAskRegion } from "./ask";
 import { detectTrustRegion } from "./trust";
+import { detectHooksRegion } from "./hooks";
 import { decorateCodexDisplay } from "./display";
 import { regionSignature, rstrip } from "./markers";
 import { detectSessionPicker } from "../session-picker";
@@ -37,6 +39,21 @@ function raw(lines: StyledLine[]): Block {
   return { kind: "raw", lines: decorateCodexDisplay(lines) };
 }
 
+/** The resume session picker. The highlighted session row is indented two columns: `  › 2d ago      Reply with OK`. */
+function sessionPickerRegion(lines: StyledLine[]) {
+  const texts = lines.map((l) => rstrip(lineText(l)));
+  return detectSessionPicker(texts, /^\s*› \S/, (from, to) => regionSignature(lines, from, to + 1));
+}
+
+/** The detectors `codexBuildBlocks` runs, in its order, for the unread-dialog card's report (ADR 0123). */
+const CODEX_DIALOG_DETECTORS: readonly DialogDetector[] = [
+  { name: "trust", detect: detectTrustRegion },
+  { name: "hooks", detect: detectHooksRegion },
+  { name: "approval", detect: detectApprovalRegion },
+  { name: "ask", detect: detectAskRegion },
+  { name: "session-picker", detect: sessionPickerRegion },
+];
+
 export function codexBuildBlocks(lines: StyledLine[]): Block[] {
   const trust = detectTrustRegion(lines);
   if (trust) {
@@ -44,6 +61,15 @@ export function codexBuildBlocks(lines: StyledLine[]): Block[] {
     const blocks: Block[] = [];
     if (before.length > 0) blocks.push(raw(before));
     blocks.push({ kind: "prompt-select", prompt: trust.model, lines: lines.slice(trust.startLine) });
+    return blocks;
+  }
+
+  const hooks = detectHooksRegion(lines);
+  if (hooks) {
+    const before = trimTrailingBlank(lines.slice(0, hooks.startLine));
+    const blocks: Block[] = [];
+    if (before.length > 0) blocks.push(raw(before));
+    blocks.push({ kind: "prompt-select", prompt: hooks.model, lines: lines.slice(hooks.startLine) });
     return blocks;
   }
 
@@ -69,9 +95,7 @@ export function codexBuildBlocks(lines: StyledLine[]): Block[] {
     return blocks;
   }
 
-  // The highlighted session row is indented two columns: `  › 2d ago      Reply with OK`.
-  const texts = lines.map((l) => rstrip(lineText(l)));
-  const picker = detectSessionPicker(texts, /^\s*› \S/, (from, to) => regionSignature(lines, from, to + 1));
+  const picker = sessionPickerRegion(lines);
   if (picker) {
     const before = trimTrailingBlank(lines.slice(0, picker.startLine));
     const blocks: Block[] = [];
@@ -118,6 +142,7 @@ export const codexAdapter: HarnessAdapter = {
   // `Press enter to confirm or esc to cancel`.
   cancelKey: "Escape",
   modalOnScreen: codexModalOnScreen,
+  dialogDetectors: CODEX_DIALOG_DETECTORS,
   composerPrompt,
   draftCarriesSend: codexDraftCarriesSend,
 };

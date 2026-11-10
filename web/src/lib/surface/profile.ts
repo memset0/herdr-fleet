@@ -15,7 +15,7 @@ import { compareSemver } from "../semver";
 import { EDGE_KINDS, type EdgeProfile } from "./edges";
 import { HOLD_DECISIONS, HOLD_GRACE_MS, type HoldProfile } from "./hold";
 import { PROFILE_FILES } from "./profiles/index";
-import { fleetProfile } from "../../../../fleet/profile-tunes.ts";
+import { fleetProfile, profilePolicyEnabled } from "../../../../fleet/profile-tunes.ts";
 
 export type ProfileStatus = "verified" | "provisional" | "revoked";
 export type HookKind = "edge" | "ask";
@@ -40,10 +40,64 @@ export type CommandWhileRunning = "queues" | "runs" | "drops" | "steers";
 export interface QueuedRow {
   /** A regular expression source for the row that starts the text, with the named group `text`. */
   readonly pattern: string;
-  /** A regular expression source for the hint row under the queued texts. */
+  /** A regular expression source for the hint row by the queued texts. */
   readonly hint: string;
-  /** How many blank rows may stand between the last queued text and the hint. */
+  /** How many blank rows may stand between the queued texts and the hint. */
   readonly hintGap: number;
+  /**
+   * The hint row stands over the queued texts, not under them: the witness reads downward from it.
+   * Muse draws its queue that way (lab, Muse Code 1.4.10, 2026-10-18). Absent: under, as Claude
+   * Code and Codex draw it.
+   */
+  readonly hintAbove?: boolean;
+  /**
+   * A regular expression source for the rows of another kind of entry the harness draws in the same
+   * block, between the texts and the hint: they are passed over, with the indented rows they wrapped
+   * onto. pi 1.3.0 draws its `Follow-up: <line>` rows between its `Steering: <line>` rows and the
+   * `↳ Alt+Up` hint (live rerun 2026-10-23). Optional: without it the texts stand right by the hint.
+   * With a `header`, it names the header of another block stacked over the same hint: the texts under
+   * it are that block's. OMP 18.6.1 draws `Steering · 1` / `1. say banana` / `After yield · 1` /
+   * `1. ok` / `└ Alt+↑ to edit`, one hint under both blocks (live rerun 2026-10-23, second pass).
+   */
+  readonly between?: string;
+  /**
+   * A regular expression source for the header row over the first text, when the hint stands under
+   * the texts: the block counts only under such a row. OMP 18.6.1 draws one block shape for two
+   * things, `After yield · N` over its queued texts and `Steering · N` over a steer that waits for
+   * the turn's next step (live rerun 2026-10-23), the same `N. <line>` rows and `└ Alt+↑ to edit`
+   * hint under both. Optional; never with `hintAbove`, where the hint is the header.
+   */
+  readonly header?: string;
+}
+
+/**
+ * One way the harness shows that a steer reached the running turn (see `keys.steerWitness`, M69). Each
+ * read after the steer key asks every witness; one that holds says `steered`. Three shapes, by field:
+ *
+ * - `hint` set: a block drawn like a queued row (see {@link QueuedRow}): a hint row and, by it, the rows
+ *   that hold the texts, each starting on a row `pattern` matches (with the named group `text`).
+ * - `transcript: true`: the text itself as a row above the box, a row `pattern` matches whose group
+ *   `text` (with the rows it wrapped onto) is the whole text. It counts only when there are more such
+ *   rows than on the read the steer key was bound to, no queued row of the profile holds the text, and
+ *   the box let the text go (it reads empty or holds other text).
+ * - neither: a marker row `pattern` matches (no group `text`) above the box, more of them than on the
+ *   read the steer key was bound to, and the box let the text go.
+ */
+export interface SteerWitness {
+  /** A regular expression source for the row. */
+  readonly pattern: string;
+  /** With a hint: the hint row of the block, as in {@link QueuedRow.hint}. */
+  readonly hint?: string;
+  /** With a hint: how many blank rows may stand between the texts and the hint. */
+  readonly hintGap?: number;
+  /** With a hint: the hint stands over the texts, as in {@link QueuedRow.hintAbove}. */
+  readonly hintAbove?: boolean;
+  /** With a hint: the rows of another entry that may stand in the block, as in {@link QueuedRow.between}. */
+  readonly between?: string;
+  /** With a hint under the texts: the header row over them, as in {@link QueuedRow.header}. */
+  readonly header?: string;
+  /** The text itself as a transcript row above the box (see above). */
+  readonly transcript?: true;
 }
 
 export interface VersionRange {
@@ -175,6 +229,82 @@ export interface CommandListRows {
    * typed in the draft's own colour stays. Optional.
    */
   readonly argumentHint?: boolean;
+  /**
+   * Once a space follows the command word the list under the box is that command's list of
+   * arguments (OMP's `/goal` lists `pause`, `resume`, ...). A pointer on exactly the argument
+   * already typed is then the typed command's own typeahead, as a pointer on the typed command
+   * is for a bare command: Enter runs what is typed. A list that holds the command word itself
+   * is the list of commands and never reads this way. A profile names it only where a lab run
+   * showed Enter run the typed text with that list open. Optional.
+   */
+  readonly argumentList?: boolean;
+  /**
+   * The harness draws a fuzzy list under the box for any text that starts with the lead (OMP's
+   * `/help` lists ten commands that match it in part, the pointer on the first), so the list is the
+   * text's own popup whatever it points at. The Surface leaves its rows out of the cue read, and a
+   * box under a list as tall as the harness draws it is still found. Whether Enter would run what is
+   * typed stays the pointer's question ({@link pointsAt}). Needs `lead`. A profile names it only
+   * where a lab run showed that list under every text that starts with the lead. Optional.
+   */
+  readonly leadOpens?: boolean;
+  /**
+   * A list left on screen under an EMPTY box is stale: the harness did not redraw the rows after the
+   * text that opened the list was cleared (OMP 18.12.6 keeps `❯ ↻ loop` under the box after a cancelled
+   * `//comment`), and the rows go with the next key typed. The rows under the box count none of its
+   * rows, so the probe character that closes the list does not read as a screen that moved. A profile
+   * names it only where a lab run showed the row go at the next key. Optional.
+   */
+  readonly staleWhenEmpty?: boolean;
+  /**
+   * A regular expression source for a box text that opens no command list. The harness draws a popup of
+   * another kind under such a text, and its rows can look like a list's entries: OMP completes a file
+   * path at the start of the box (`/home/me/pic.png`, `~/pic.png`, `./pic.png`, `@/tmp/pic.png`) with a
+   * popup of file names, one `❯ pic.png` row for the path of one file, and a file name has the shape of a
+   * command. A box whose text matches reads no command list, so the row under it is no list pointing at
+   * another command and Enter there is not refused for it. Matched on the box's text, the rows of a
+   * wrapped draft joined. A profile names it only where a lab run showed that popup under the text. Optional.
+   */
+  readonly notForText?: string;
+}
+
+/**
+ * One typeahead popup the harness draws under the box for the text's last word (OMP's `@` file popup, the
+ * `#` issue and pull request popup, the `:` emoji popup). It is the text's own popup, not a dialog.
+ */
+export interface PopupRule {
+  /** A word for the rule, unique in the profile. */
+  readonly name: string;
+  /** A regular expression source for the box text that opens the popup. It cannot match an empty text. */
+  readonly text: string;
+  /**
+   * A regular expression source for each row of the popup, with the named group `pointer` set on the
+   * pointed row (and only there). It cannot match a blank row.
+   */
+  readonly rows: string;
+  /**
+   * The rows stay on screen under an EMPTY box after the text that opened them is gone (OMP 18.6.1 keeps
+   * `PR #1` and `Issue #1` under a box cleared with Ctrl+C), and go with the next key. Optional.
+   */
+  readonly staleWhenEmpty?: true;
+  /**
+   * The popup completes the last word of the text, and it is closed once that word is already the pointed entry: the
+   * text ends with the pointed row's `entry` group after a `/` (OMP 18.12.6 closes its path popup and Enter submits
+   * the text when the typed path equals the one entry). Needs the group `entry` in `rows`. Optional.
+   */
+  readonly closedWhenTyped?: true;
+}
+
+/** `idle.volatile.below.popups`: the popups a box's last word opens ({@link PopupRule}). */
+export interface PopupRows {
+  /**
+   * True: the harness's `keys.submit` ignores an open popup (OMP's Ctrl+Q runs before the autocomplete
+   * handler), so a send committed with that key goes out with the popup open. A send committed with
+   * `keys.commandSubmit` does not: Enter acts on the popup, and that send keeps its refusal.
+   */
+  readonly submitIgnores: true;
+  /** The popup's most rows. */
+  readonly maxRows: number;
+  readonly rules: readonly PopupRule[];
 }
 
 /** A side of the box a command list stands on. */
@@ -200,6 +330,14 @@ export interface FrameTrailer {
   readonly pad?: string;
   /** How many padding rows at most. */
   readonly maxPad: number;
+  /**
+   * True when the trailer row is the box's own key hint: the keys that submit and cancel this box,
+   * drawn inside it (OMP's answer editor prints `⏎ or Ctrl+Q submit  ⎋ cancel` there). No modal cue
+   * reads that row or its padding ({@link Frame.hint}), so the box's own hint never reads as a dialog's
+   * footer. The row pattern is what makes it safe: name it only for a pattern that matches the hint
+   * the harness draws for this box and no other row. Optional.
+   */
+  readonly hint?: true;
 }
 
 /** One shape of the input box: its anchors, bounds and the fields of its walk (`idle.frame`). */
@@ -211,10 +349,54 @@ export interface FrameLayout {
   readonly bottom: FrameAnchor;
   /** Spaces in front of a wrapped draft row inside the box. */
   readonly continuationIndent: number;
+  /**
+   * For a profile that draws its dialogs in the box's place (`dialogsInBox`): the columns in front of the
+   * rows under the prompt row that hold the draft (OMP's `╰─ ` is three wide, so its draft continues at
+   * three spaces). A row inside the box that starts with that many spaces is the draft's, and a dialog
+   * the person quoted in it is no dialog: the modal cues leave those rows out. A dialog drawn in the box's
+   * place starts at the box's own column. Optional, 1 or more.
+   */
+  readonly draftIndent?: number;
+  /**
+   * For a profile that draws its dialogs in the box's place (`dialogsInBox`): true when no dialog the
+   * harness draws there points with the prompt glyph, so the glyph on the prompt row is always the box's
+   * own and the only list under it is the profile's command list (`volatile.below.commandList`). A draft
+   * typed with newlines then reads as the box's own lines, not as a pointed list between two rules, when
+   * no row of it is an option row or a key hint and no named command list stands in
+   * the box (cues.ts `draftWrap`). Muse points with `›` and `⟩` in its dialogs and keeps `❯` for its
+   * prompt (#552). pi draws its menus with the same `❯` as its prompt, so it must not name this; it names
+   * `draftCaret`. Optional.
+   */
+  readonly draftLines?: boolean;
+  /**
+   * The narrower form of `draftLines`, for a profile whose dialogs may point with the prompt glyph: true
+   * when the box's editor draws its own cursor as one reverse-video cell in the draft. A draft typed with
+   * newlines then reads as the box's own lines only while its rows hold exactly one such cell, one cell
+   * wide, and no option row, key hint or named command list (cues.ts `draftWrap`). A list a dialog draws
+   * holds no text cursor among its rows, and a highlighted row is wider than one cell. A read with no
+   * styling has no cell, so it stays a list: the safe side. pi's editor draws the cell (pi-tui
+   * `renderFakeCursor`) and an extension may put `❯` in front of it (#722). Optional.
+   */
+  readonly draftCaret?: boolean;
+  /**
+   * More placeholder shapes (`idle.placeholders.patterns`, the same plain-read-only fallback) that hold
+   * for THIS layout alone. A profile with several layouts (`idle.frameAlternates`) whose hints differ
+   * names them here, so a hint of one box never reads a draft typed in another as empty. Optional.
+   */
+  readonly placeholderPatterns?: readonly string[];
   readonly maxDraftRows: number;
   /** How many rows above the last non-blank row the bottom edge may sit (the frame module's
    *  search bound, M56 spec 03): the tallest thing the harness draws under a live box. */
   readonly maxTailRows: number;
+  /**
+   * An open box only: how many rows an extension's widget may take in one unbroken run right under
+   * the box. Past `maxTailRows`, a box is still found while every row under it up to the screen's last
+   * row is painted (no blank row) and none of them is a row of the profile's command list, and the run
+   * is at most this tall. The list rows keep the tail bound, because a list under the box is read as
+   * the typed command's own or not at all ({@link CommandListRows}). Optional: with none, the tail
+   * bound is the only bound.
+   */
+  readonly maxWidgetRows?: number;
   /**
    * How the walk finds the box. `edges` (the default) walks up from the bottom edge: rows that are
    * no edge are the wrapped draft, the first edge row is the prompt row, the top edge is over it.
@@ -264,6 +446,47 @@ export interface FrameLayout {
    * must name every row the box may hold, so a box with any other row inside is no box. Optional.
    */
   readonly ownPrompt?: boolean;
+  /**
+   * How the harness's editor shows a draft taller than the box (omp gang, 2026-10-25). Optional: a
+   * layout without it grows with its draft, so the box always shows the whole text.
+   */
+  readonly scroll?: FrameScroll;
+  /**
+   * This shape of the box answers a question the agent asked: it opens in the composer's place while a
+   * question waits (OMP's answer editor for `Other (type your own)` and `n note`), and what is sent there
+   * is the answer. A person's send from the phone may type into it, with the usual probe, check and
+   * submit; a held send, a walky talky message and every other caller wait for the question to close
+   * (the Send Protocol's `ANSWER_BOX`), and so does a command, which the box would take as the answer.
+   * The frame carries it ({@link Frame.answers}). Optional.
+   */
+  readonly answers?: true;
+  /**
+   * The keys that send a text from this shape of the box, when they are not `keys.submit`: the key its
+   * own hint names. Pressed on every path a send into this box takes, since a box that answers a
+   * question has no turn to queue behind. Never Escape. Optional: without it the box takes the
+   * profile's keys.
+   */
+  readonly submit?: readonly string[];
+  /**
+   * A line break typed into this shape of the box submits it (OMP's answer editor takes a raw line feed
+   * as Enter): a text of more than one line is refused `multiline` before any key, never split into
+   * an answer and a stray message. Optional.
+   */
+  readonly newlineSubmits?: true;
+}
+
+/**
+ * A box that stops growing at a height and scrolls its draft inside ({@link FrameLayout.scroll}).
+ * OMP 18.6.1 and 18.12.6 cap their editor at 17 draft rows on a pane of 30 rows or more and keep the
+ * cursor's rows in view: after typing, the LAST rows. A box read at that height may hold more text
+ * above its first row, so the Send Protocol compares only the visible rows, against the end of the text
+ * it typed, and empties such a box only when it knows how long the draft is.
+ */
+export interface FrameScroll {
+  /** Which rows stay in view: `tail`, the last ones (the cursor's, at the end of a typed text). */
+  readonly keeps: "tail";
+  /** The box's height in draft rows once it scrolls. A box that shows fewer rows shows the whole draft. */
+  readonly rows: number;
 }
 
 /** The ghost text after the cursor ({@link Profile.idle.inlineHint}). */
@@ -299,6 +522,16 @@ export interface Profile {
        * which stalls a send and never sends one into a dialog.
        */
       readonly prefixes?: readonly string[];
+      /**
+       * Regular expressions (sources); a draft text that one matches whole, blanks at its ends cut,
+       * is a placeholder too. For a harness whose placeholder rotates through hints of one shape and
+       * whose screen may come as plain text, with no faint attribute or colour to mark it (Claude
+       * Code's `Try "…"` hints on herdr-core, 2026-10-30). Optional. A fallback: it counts only on a
+       * read with no styling anywhere (no colour, no attribute), so on a coloured multiplexer the
+       * faint and colour tests decide and a typed draft of that shape stays a draft. On a plain read
+       * a typed draft of that exact shape still reads as a placeholder.
+       */
+      readonly patterns?: readonly string[];
       /** The SGR attribute the placeholder renders with (2 is faint). */
       readonly sgr: number;
       /**
@@ -308,6 +541,22 @@ export interface Profile {
        * too; one run in any other colour is typed text. Optional.
        */
       readonly fg?: readonly string[];
+      /**
+       * The empty box may show any text as its placeholder: a suggestion the harness writes itself
+       * (Claude Code's prompt suggestion, `cat hello.txt to verify`), which no text, prefix or pattern
+       * can name, marked only by the SGR attribute or the colours above. On a read with no styling
+       * (herdr-core) such a box reads as a draft, so the Send Protocol proves it by where its probe
+       * character lands: after the text, a typed draft; at the start of the box, the placeholder, and
+       * the box is empty. Optional; a styled read never takes that path.
+       */
+      readonly anyText?: true;
+      /**
+       * False when a reverse-video cell on the first glyph of the hole is typed text, not a caret on a
+       * ghost suggestion. Absent means the caret is skipped (a hole is still a placeholder when one
+       * leading reverse-video cell is followed by faint or ghost-coloured cells). For a box whose hint
+       * under a caret must read as a draft, such as a shell prompt a send would run as a command.
+       */
+      readonly caretOnGhost?: false;
     };
     readonly volatile: {
       readonly above: {
@@ -317,6 +566,13 @@ export interface Profile {
          * that hides). The Send Protocol then accepts rows above that only lost text. Optional.
          */
         readonly losesText?: true;
+        /**
+         * Rows above the box may repaint by themselves in place: a counter, a clock or a spinner that
+         * an extension's widget draws over the editor. The Send Protocol then reads every digit run
+         * and braille glyph above the box as a fixed mark; a row that changes any other character,
+         * or a new row, still moves the screen. Optional.
+         */
+        readonly ticks?: true;
       };
       readonly below: {
         readonly maxRows: number;
@@ -351,6 +607,12 @@ export interface Profile {
          * only when the list is its own. Never Escape. Optional.
          */
         readonly commandList?: CommandListRows;
+        /**
+         * The typeahead popups under the box that the text's last word opens ({@link PopupRows}). The
+         * Surface leaves their rows out of every cue read and the Send Protocol out of its row count, so
+         * a draft with a popup open reads as a draft. Optional.
+         */
+        readonly popups?: PopupRows;
       };
     };
     /**
@@ -362,6 +624,16 @@ export interface Profile {
      */
     readonly runningRows?: readonly string[];
     /**
+     * Rows that mean a turn ended without the harness's stop hook, as regular expression sources, read
+     * on the volatile band above the box. Claude Code fires no Stop hook when a person interrupts a
+     * turn (Escape) or refuses a permission; it draws `⎿  Interrupted · What should Claude do instead?`
+     * over an idle box (lab 2.1.309, 2026-10-23). A read that shows one, whose screen reads the turn
+     * idle with no dialog, ends the hook's running and dialog blocks (fold.ts) once they are older than
+     * the settle time, as a stop edge would. Never a running sign. Optional: without it such a block
+     * ends only on a closing edge or the lost-Stop reads.
+     */
+    readonly stoppedRows?: readonly string[];
+    /**
      * The prompt row of a box that answers a question the agent asked, as a regular expression source
      * read on the frame's prompt row. A send typed there answers that question, so a person may send
      * into it, but a held send never goes there: it waits for an ordinary box. Optional.
@@ -371,7 +643,8 @@ export interface Profile {
      * Rows that mean a dialog is drawn over the screen above a live box, as regular expression
      * sources, read on every row above the box. A harness that draws its pickers and notices over
      * the transcript and leaves the box on screen needs them: the box looks free under a dialog.
-     * A match makes the modal `unreadable`. Optional.
+     * A match makes the modal `unreadable`. On a screen with no frame at all (a full-screen picker),
+     * a match in the rows the modal cues read does the same when those rows hold any cue. Optional.
      */
     readonly overlayRows?: readonly string[];
     /**
@@ -381,6 +654,22 @@ export interface Profile {
      * as a modal then, and a modal is never free. Optional.
      */
     readonly dialogsInBox?: boolean;
+    /**
+     * True for a harness whose transcript echoes each sent prompt in its prompt row's shape: the prompt
+     * glyph and the text, then the wrapped or later lines at `frame.continuationIndent`, a blank row
+     * after it (Claude Code's `❯ ` echo, 2.1.309 and 2.1.310, 2026-10-25). The bridge's whole-screen cue
+     * read over a found box then reads such a run above the box as blank: a long prompt wraps into rows
+     * that line up like a pointed list, and a numbered list in the answer under it made the read strong,
+     * so a send into a running turn was held instead of queued. The framed cue read (cues.ts
+     * `readCuesFor`, the Surface's modal claim) reads such a run as blank too: Claude Code draws a queued
+     * message over the box in the same shape, `❯ ` and its text, its wrapped or later lines and the
+     * `ctrl+enter to send now` hint indented under it. A queued message of two rows or more (every walky
+     * talky message) read as a pointed list of three rows, so the Surface claimed a modal at S2 and the
+     * send ended `unknown(dialog_after_enter)` (browser leg case 16, 2.1.310, 2026-10-26). A run whose
+     * first row is an option row (a number or a checkbox behind the glyph) stays in the read; the option
+     * rows of a text's own list under its first row do not count (2.1.310, 2026-10-26). Optional.
+     */
+    readonly promptEchoes?: boolean;
     /**
      * Notices the harness draws above its live box while the box keeps the keys, each named by its
      * head row. A notice is that head, up to three continuation rows indented by two spaces, and one
@@ -429,8 +718,24 @@ export interface Profile {
     readonly commandSubmit?: readonly string[];
     readonly newline: readonly string[];
     readonly interrupt: readonly string[];
+    /**
+     * True when the interrupt key clears a draft in the box before it stops the turn (Ctrl+C in Grok,
+     * Muse, Hermes and Cursor). A Stop on such a pane with a draft in the box is refused `draft_present`.
+     * Optional: absent means the key leaves a draft alone.
+     */
+    readonly interruptClearsDraft?: boolean;
     /** One `key` press per typed character, plus `slack` more. Never Escape. */
     readonly clear: { readonly key: string; readonly slack: number };
+    /**
+     * The one key that empties the box at a stroke where `clear` cannot (OMP 18.6.1 and 18.12.6: a
+     * draft that starts with `->` or `=>` grows its queue label back after every Backspace; only
+     * Ctrl+C empties it). Optional: without it a box `clear` leaves unchanged stays, as before.
+     * SAFETY: such a key may quit the program when the box is already empty (OMP quits on a second
+     * Ctrl+C within 500 ms of the first), so Collie presses it at most once per request, only after a
+     * fresh read showed a draft in the box and the `clear` batches left it unchanged, and reads again
+     * at once. Never on an empty box. Never Escape.
+     */
+    readonly clearAll?: { readonly key: string };
     readonly navigation: {
       readonly up: string;
       readonly down: string;
@@ -451,7 +756,8 @@ export interface Profile {
     /**
      * How the harness draws a message it queued during a turn, when that is known: a row whose
      * `pattern` holds the text in the named group `text` (later rows of a wrapped text are indented),
-     * and a `hint` row at most `hintGap` blank rows under the last of them. Optional.
+     * and a `hint` row at most `hintGap` blank rows from the texts — under the last of them, or over
+     * the first when `hintAbove` is set. Optional.
      */
     readonly queuedRow?: QueuedRow;
     /**
@@ -468,12 +774,64 @@ export interface Profile {
      * line that starts with it; a longer one names the command word. Optional.
      */
     readonly neverHeld?: readonly string[];
+    /**
+     * The command words the harness runs at once while a turn runs, as the lab measured them: the
+     * harness takes the command before its turn and acts on it, never as text that steers the turn
+     * or waits for its end (OMP's `/goal`). Such a command in a turn goes in with the command keys
+     * (`commandSubmit`, else `submit`) instead of being held, and is probed like every send into a
+     * turn. Each entry is one command word that starts with a reserved lead (`/goal`), matched alone
+     * or followed by a space (`/goal pause`, never `/goals`). Never a word in `neverHeld`. Optional:
+     * without it every command in a turn takes `commandWhileRunning` or Collie's hold.
+     */
+    readonly commandsRunInTurn?: readonly string[];
+    /** Where `commandsRunInTurn` was measured: the versions and commands the lab ran. Optional, prose only. */
+    readonly commandsRunInTurnNote?: string;
+    /**
+     * The keys that steer a running turn: the text goes into the turn the agent runs now, read after
+     * its current tool call (M69, lab 2026-10-23). Only on a harness whose Enter steers
+     * (`enterWhileRunning: "steers"`), never Escape, never the queue key, and never without
+     * `steerWitness`. Collie presses them only on a send the person marked as a steer
+     * (`when: "steer"`); a plain send keeps the queue key. Optional: without it no send steers.
+     */
+    readonly steer?: readonly string[];
+    /**
+     * How the harness shows that a steer reached the turn, one or more ways ({@link SteerWitness}).
+     * Required with `steer`, allowed only with it.
+     */
+    readonly steerWitness?: readonly SteerWitness[];
+    /**
+     * The pause between the text and the steer key, in ms (0 to 3000). Codex 0.164.0 reads a text
+     * followed at once by Enter as a paste burst and takes the Enter as a line break (lab, 2026-10-23).
+     * Allowed only with `steer`. Optional: no pause.
+     */
+    readonly steerDelayMs?: number;
   };
   readonly collapse: {
     /** The long-paste form as a regular expression source. Group `lines` is optional. */
     readonly pattern: string;
+    /**
+     * True when the harness keeps a pasted body registered under its chip after the chip is deleted,
+     * and expands a later typed chip token into that body (OMP 18.6.1 and 18.12.6: a cleared `📄 #1`
+     * leaks into `see 📄 #1 here`). A plain send, command, Add or Replace whose text holds a token
+     * that matches `pattern` is then refused `reserved_lead` before any key. Optional: absent allows
+     * the token as plain text. Collie's own pastes never carry the token in their text, so they pass.
+     */
+    readonly refuseLiteral?: boolean;
   };
+  /**
+   * The leads the harness reads as something other than text: a command (`/`), a shell line (`!`), or
+   * a rewrite of the box (OMP re-inserts a newline after a bare `->` or `=>`, its yield-queue prefix,
+   * so such a box can never be sent as typed or emptied by Backspace). A plain send of a text that
+   * starts with one is refused `reserved_lead` before any key.
+   */
   readonly reservedLeads: readonly string[];
+  /**
+   * For a lead in `reservedLeads` that has no command route either (a text that starts with it cannot
+   * be typed at all): the sentence the refusal carries, which is true for this harness. Optional. A
+   * lead with a note is refused in every writing mode, a Replace and a command included; a lead
+   * without one keeps the generic line and its command route. Every key must be in `reservedLeads`.
+   */
+  readonly reservedLeadNotes?: Readonly<Record<string, string>>;
   readonly probe: {
     readonly char: string;
     readonly status: "verified" | "provisional";
@@ -488,6 +846,21 @@ export interface Profile {
      * in ms, a send waits after the write before the reads that can send it. Optional.
      */
     readonly settleMs?: number;
+    /**
+     * The harness takes ONE bracketed paste of a whole multi-line text and folds a long one into its
+     * collapse form, whose `lines` group counts the paste's line breaks. Measured per harness in the
+     * lab: where it is true and the multiplexer frames a paste itself (`pasteBlock`), a send is one
+     * paste instead of a write per line, so a long dictation never grows the box past the screen.
+     */
+    readonly block?: boolean;
+    /**
+     * The token the harness draws for an image file it takes off a whole-text paste, as a regular
+     * expression source (Claude Code: `[Image #N]`). Optional, and only with `block`: without it, a
+     * send that names an image file is not modelled, so such a box stays unproven. With `block`, this
+     * token and the collapse pattern are read on the box with its white space taken out, so each
+     * writes a space as a literal space, never `\s` or `[ ]`.
+     */
+    readonly image?: string;
   };
   /** How the bridge keeps an ask (M56 spec 08). Optional: a profile without it uses the default lifetime. */
   readonly ask?: {
@@ -525,6 +898,7 @@ const STATUSES = ["verified", "provisional", "revoked"] as const;
 const PROBE_STATUSES = ["verified", "provisional"] as const;
 const HOOK_KINDS = ["edge", "ask"] as const;
 const FRAME_WALKS = ["edges", "interior"] as const;
+const SCROLL_KEEPS = ["tail"] as const satisfies readonly FrameScroll["keeps"][];
 const ENTER_MODES = ["queues", "steers", "submits", "ignored"] as const;
 const COMMAND_MODES = ["queues", "runs", "drops", "steers"] as const;
 const SEMVER = /^\d+\.\d+\.\d+$/;
@@ -571,7 +945,8 @@ function textList(value: JsonValue | undefined, path: string, minLength: number)
   return items.map((item, i) => text(item, `${path}[${String(i)}]`));
 }
 
-const PLATFORMS = ["win32", "darwin", "linux"] as const;
+// `wsl` is Linux under Windows Subsystem for Linux, where an agent program may take the Windows keys.
+const PLATFORMS = ["win32", "darwin", "linux", "wsl"] as const;
 
 /** A key list as the file wrote it: the default, and the lists of the platforms that differ. */
 interface PlatformLists {
@@ -607,6 +982,104 @@ function nullableMatch(value: JsonValue | undefined, path: string, form: RegExp,
   if (value === null) return null;
   const word = text(value, path);
   return form.test(word) ? word : fail(path, `must be ${what} or null`);
+}
+
+/** The largest pause a profile may name between the text and the steer key. */
+const STEER_DELAY_MAX_MS = 3000;
+
+/** Whether two key names are the same key, case aside. */
+function sameKey(a: string, b: string): boolean {
+  return a.toLowerCase() === b.toLowerCase();
+}
+
+/**
+ * `keys.steer`, `keys.steerWitness` and `keys.steerDelayMs` (M69): read after `enterWhileRunning` and
+ * `queueKey`, which they are checked against. A steer key exists only where Enter steers; no key of it
+ * holds Escape (alone or in a chord), is the queue key (on any platform) or an interrupt key, and it
+ * never comes without a witness.
+ */
+function parseSteer(keysNode: JsonObject, keys: Profile["keys"]): Profile["keys"] {
+  if (keysNode.steer === undefined) {
+    if (keysNode.steerWitness !== undefined) fail("keys.steerWitness", "is only allowed with keys.steer");
+    if (keysNode.steerDelayMs !== undefined) fail("keys.steerDelayMs", "is only allowed with keys.steer");
+    return keys;
+  }
+  const steer = textList(keysNode.steer, "keys.steer", 1);
+  // A chord counts too: `alt+Escape` holds Escape.
+  if (steer.some((key) => key.toLowerCase().split("+").some((token) => token === "escape" || token === "esc"))) fail("keys.steer", "must not hold Escape");
+  if (keys.enterWhileRunning !== "steers") fail("keys.steer", "is for a harness whose Enter steers a turn (keys.enterWhileRunning: steers)");
+  const queueKeys = [keys.queueKey, ...Object.values(keys.queueKeyByPlatform ?? {})].filter((key): key is string => key !== undefined);
+  if (steer.some((key) => queueKeys.some((queue) => sameKey(key, queue)))) fail("keys.steer", "must not hold the queue key");
+  if (steer.some((key) => keys.interrupt.some((interrupt) => sameKey(key, interrupt)))) fail("keys.steer", "must not hold an interrupt key");
+  if (keysNode.steerWitness === undefined) fail("keys.steerWitness", "is required with keys.steer");
+  const witnessNode = keysNode.steerWitness;
+  const entries = Array.isArray(witnessNode) ? witnessNode : [witnessNode];
+  if (entries.length === 0) fail("keys.steerWitness", "must name at least one witness");
+  const steerWitness = entries.map((entry, i) => parseSteerWitness(entry, Array.isArray(witnessNode) ? `keys.steerWitness[${String(i)}]` : "keys.steerWitness"));
+  let out: Profile["keys"] = { ...keys, steer, steerWitness };
+  if (keysNode.steerDelayMs !== undefined) {
+    const delay = asJsonNumber(keysNode.steerDelayMs);
+    if (delay === undefined || !Number.isInteger(delay) || delay < 0 || delay > STEER_DELAY_MAX_MS) fail("keys.steerDelayMs", `must be a whole number of ms from 0 to ${String(STEER_DELAY_MAX_MS)}`);
+    out = { ...out, steerDelayMs: delay };
+  }
+  return out;
+}
+
+/** One {@link SteerWitness}: a block with a hint, a transcript row, or a marker row. */
+function parseSteerWitness(value: JsonValue, path: string): SteerWitness {
+  const node = object(value, path);
+  const rowPattern = pattern(field(node, "pattern", path), `${path}.pattern`);
+  const holdsText = rowPattern.source.includes("(?<text>");
+  if (node.transcript !== undefined && node.transcript !== true) fail(`${path}.transcript`, "must be true when set");
+  if (node.hintAbove !== undefined && node.hintAbove !== true && node.hintAbove !== false) fail(`${path}.hintAbove`, "must be true or false");
+  if (node.hint !== undefined) {
+    if (node.transcript !== undefined) fail(`${path}.transcript`, "is not allowed with a hint");
+    if (!holdsText) fail(`${path}.pattern`, "must hold the named group text");
+    const base: SteerWitness = {
+      pattern: rowPattern.source,
+      hint: pattern(node.hint, `${path}.hint`).source,
+      hintGap: whole(field(node, "hintGap", path), `${path}.hintGap`, 0),
+    };
+    const between = betweenRows(node, path);
+    const header = headerRow(node, path);
+    const withBetween: SteerWitness = between === undefined ? base : { ...base, between };
+    const withHeader: SteerWitness = header === undefined ? withBetween : { ...withBetween, header };
+    return node.hintAbove === true ? { ...withHeader, hintAbove: true } : withHeader;
+  }
+  if (node.hintGap !== undefined) fail(`${path}.hintGap`, "is only allowed with a hint");
+  if (node.hintAbove !== undefined) fail(`${path}.hintAbove`, "is only allowed with a hint");
+  if (node.between !== undefined) fail(`${path}.between`, "is only allowed with a hint");
+  if (node.header !== undefined) fail(`${path}.header`, "is only allowed with a hint");
+  if (node.transcript === true) {
+    if (!holdsText) fail(`${path}.pattern`, "must hold the named group text");
+    return { pattern: rowPattern.source, transcript: true };
+  }
+  if (holdsText) fail(`${path}.pattern`, "a marker row holds no group text; set transcript or a hint");
+  if (rowPattern.test("")) fail(`${path}.pattern`, "must not match a blank row");
+  return { pattern: rowPattern.source };
+}
+
+/**
+ * The `between` rows of a block ({@link QueuedRow.between}), or undefined. A pattern that matches a
+ * blank row is refused: it would pass over the gap the block is bounded by.
+ */
+function betweenRows(node: JsonObject, path: string): string | undefined {
+  if (node.between === undefined) return undefined;
+  const rows = pattern(node.between, `${path}.between`);
+  if (rows.test("")) fail(`${path}.between`, "must not match a blank row");
+  return rows.source;
+}
+
+/**
+ * The `header` row of a block ({@link QueuedRow.header}), or undefined. Refused with `hintAbove` (the
+ * hint is the header there) and when it matches a blank row.
+ */
+function headerRow(node: JsonObject, path: string): string | undefined {
+  if (node.header === undefined) return undefined;
+  if (node.hintAbove === true) fail(`${path}.header`, "is not allowed with hintAbove: the hint is the header");
+  const row = pattern(node.header, `${path}.header`);
+  if (row.test("")) fail(`${path}.header`, "must not match a blank row");
+  return row.source;
 }
 
 /** A regular expression source, compiled once to prove it is one. Returns the compiled form. */
@@ -670,12 +1143,15 @@ function parseVersions(value: JsonValue | undefined, path: string): [VersionRang
  * problem throws a {@link ProfileError} that names the field path.
  */
 
-/** `idle.volatile.above`: its row count, and `losesText` only when the profile sets it (it may only be true). */
+/** `idle.volatile.above`: its row count, and `losesText` and `ticks` only when the profile sets them (each may only be true). */
 function volatileAbove(node: JsonObject): Profile["idle"]["volatile"]["above"] {
   const maxRows = whole(field(node, "maxRows", "idle.volatile.above"), "idle.volatile.above.maxRows", 0);
-  if (node.losesText === undefined) return { maxRows };
-  if (node.losesText !== true) fail("idle.volatile.above.losesText", "must be true when present");
-  return { maxRows, losesText: true };
+  if (node.losesText !== undefined && node.losesText !== true) fail("idle.volatile.above.losesText", "must be true when present");
+  if (node.ticks !== undefined && node.ticks !== true) fail("idle.volatile.above.ticks", "must be true when present");
+  if (node.losesText === true && node.ticks === true) return { maxRows, losesText: true, ticks: true };
+  if (node.losesText === true) return { maxRows, losesText: true };
+  if (node.ticks === true) return { maxRows, ticks: true };
+  return { maxRows };
 }
 
 /** `idle.volatile.below.footerRows`: each row a unique name and a pattern that cannot match a blank row. */
@@ -732,8 +1208,19 @@ function commandList(value: JsonValue | undefined): CommandListRows {
   const withNamespaces = node.namespaces === undefined ? withFooter : { ...withFooter, namespaces: commandListNamespaces(node.namespaces, `${path}.namespaces`) };
   if (node.pointerBold !== undefined && node.pointerBold !== true && node.pointerBold !== false) fail(`${path}.pointerBold`, "must be true or false");
   if (node.argumentHint !== undefined && node.argumentHint !== true && node.argumentHint !== false) fail(`${path}.argumentHint`, "must be true or false");
+  if (node.argumentList !== undefined && node.argumentList !== true && node.argumentList !== false) fail(`${path}.argumentList`, "must be true or false");
+  if (node.leadOpens !== undefined && node.leadOpens !== true && node.leadOpens !== false) fail(`${path}.leadOpens`, "must be true or false");
+  if (node.leadOpens === true && (node.lead === undefined || node.lead === "")) fail(`${path}.leadOpens`, "needs a lead");
+  if (node.staleWhenEmpty !== undefined && node.staleWhenEmpty !== true && node.staleWhenEmpty !== false) fail(`${path}.staleWhenEmpty`, "must be true or false");
   const withPointerBold = node.pointerBold === true ? { ...withNamespaces, pointerBold: true } : withNamespaces;
-  return node.argumentHint === true ? { ...withPointerBold, argumentHint: true } : withPointerBold;
+  const withArgumentHint = node.argumentHint === true ? { ...withPointerBold, argumentHint: true } : withPointerBold;
+  const withArgumentList = node.argumentList === true ? { ...withArgumentHint, argumentList: true } : withArgumentHint;
+  const withLeadOpens = node.leadOpens === true ? { ...withArgumentList, leadOpens: true } : withArgumentList;
+  const withStale = node.staleWhenEmpty === true ? { ...withLeadOpens, staleWhenEmpty: true } : withLeadOpens;
+  if (node.notForText === undefined) return withStale;
+  const notFor = pattern(node.notForText, `${path}.notForText`);
+  if (notFor.test("")) fail(`${path}.notForText`, "must not match an empty text");
+  return { ...withStale, notForText: notFor.source };
 }
 
 /** `commandList.namespaces`: unique words with no space in them. */
@@ -780,7 +1267,43 @@ function volatileBelow(node: JsonObject): Profile["idle"]["volatile"]["below"] {
       : { ...base, hints: list(node.hints, "idle.volatile.below.hints").map((item, i) => pattern(item, `idle.volatile.below.hints[${String(i)}]`).source) };
   const withFooter = node.footerRows === undefined ? withHints : { ...withHints, footerRows: footerRows(node.footerRows) };
   const withScreens = node.otherScreens === undefined ? withFooter : { ...withFooter, otherScreens: otherScreens(node.otherScreens) };
-  return node.commandList === undefined ? withScreens : { ...withScreens, commandList: commandList(node.commandList) };
+  const withList = node.commandList === undefined ? withScreens : { ...withScreens, commandList: commandList(node.commandList) };
+  return node.popups === undefined ? withList : { ...withList, popups: popupRows(node.popups) };
+}
+
+/**
+ * `idle.volatile.below.popups`: `submitIgnores` true, the most rows, and at least one rule with a unique
+ * name, a text pattern that cannot match an empty text and a row pattern that holds the group `pointer`
+ * and cannot match a blank row.
+ */
+function popupRows(value: JsonValue): PopupRows {
+  const path = "idle.volatile.below.popups";
+  const node = object(value, path);
+  if (node.submitIgnores !== true) fail(`${path}.submitIgnores`, "must be true");
+  const maxRows = whole(field(node, "maxRows", path), `${path}.maxRows`, 1);
+  const names = new Set<string>();
+  const rules = list(field(node, "rules", path), `${path}.rules`).map((item, i): PopupRule => {
+    const at = `${path}.rules[${String(i)}]`;
+    const rule = object(item, at);
+    const name = text(field(rule, "name", at), `${at}.name`);
+    if (names.has(name)) fail(`${at}.name`, "is used twice");
+    names.add(name);
+    const opens = pattern(field(rule, "text", at), `${at}.text`);
+    if (opens.test("") || opens.test(" ")) fail(`${at}.text`, "must not match an empty text");
+    const rowPattern = pattern(field(rule, "rows", at), `${at}.rows`);
+    if (rowPattern.test("") || rowPattern.test(" ")) fail(`${at}.rows`, "must not match a blank row");
+    if (!rowPattern.source.includes("(?<pointer>")) fail(`${at}.rows`, "must hold the named group pointer");
+    if (rule.staleWhenEmpty !== undefined && rule.staleWhenEmpty !== true) fail(`${at}.staleWhenEmpty`, "must be true when named");
+    if (rule.closedWhenTyped !== undefined && rule.closedWhenTyped !== true) fail(`${at}.closedWhenTyped`, "must be true when named");
+    if (rule.closedWhenTyped === true && !rowPattern.source.includes("(?<entry>")) fail(`${at}.closedWhenTyped`, "needs the named group entry in rows");
+    return Object.assign(
+      { name, text: opens.source, rows: rowPattern.source },
+      rule.staleWhenEmpty === true ? { staleWhenEmpty: true as const } : {},
+      rule.closedWhenTyped === true ? { closedWhenTyped: true as const } : {},
+    );
+  });
+  if (rules.length === 0) fail(`${path}.rules`, "must name at least one rule");
+  return { submitIgnores: true, maxRows, rules };
 }
 /** `idle.notices`: each an object whose head pattern compiles and cannot match a blank row, and whose `body` and `letters`, when named, are true. */
 function parseNotices(value: JsonValue | undefined): NoticeHead[] {
@@ -829,15 +1352,23 @@ function parseInlineHint(value: JsonValue): InlineHint {
   return { fg: colourList(field(node, "fg", path), `${path}.fg`) };
 }
 
-/** `idle.placeholders`: the texts and the SGR attribute, and the prefixes and colours only when the profile names them. */
+/** `idle.placeholders`: the texts and the SGR attribute, and the prefixes, patterns and colours only when the profile names them. */
 function parsePlaceholders(node: JsonObject): Profile["idle"]["placeholders"] {
   const base = {
     texts: textList(field(node, "texts", "idle.placeholders"), "idle.placeholders.texts", 0),
     sgr: whole(field(node, "sgr", "idle.placeholders"), "idle.placeholders.sgr", 0),
   };
   const withPrefixes = node.prefixes === undefined ? base : { ...base, prefixes: textList(node.prefixes, "idle.placeholders.prefixes", 1) };
-  if (node.fg === undefined) return withPrefixes;
-  return { ...withPrefixes, fg: colourList(node.fg, "idle.placeholders.fg") };
+  const withPatterns =
+    node.patterns === undefined
+      ? withPrefixes
+      : { ...withPrefixes, patterns: textList(node.patterns, "idle.placeholders.patterns", 1).map((item, i) => pattern(item, `idle.placeholders.patterns[${String(i)}]`).source) };
+  if (node.anyText !== undefined && node.anyText !== true && node.anyText !== false) fail("idle.placeholders.anyText", "must be true or false");
+  const withAnyText = node.anyText === true ? { ...withPatterns, anyText: true as const } : withPatterns;
+  if (node.caretOnGhost !== undefined && node.caretOnGhost !== true && node.caretOnGhost !== false) fail("idle.placeholders.caretOnGhost", "must be true or false");
+  const withCaret = node.caretOnGhost === false ? { ...withAnyText, caretOnGhost: false as const } : withAnyText;
+  if (node.fg === undefined) return withCaret;
+  return { ...withCaret, fg: colourList(node.fg, "idle.placeholders.fg") };
 }
 
 /** `idle.frame.trailer`: the last row inside the box, and the padding rows under it. */
@@ -845,25 +1376,67 @@ function parseTrailer(value: JsonValue): FrameTrailer {
   const node = object(value, "idle.frame.trailer");
   const row = pattern(field(node, "row", "idle.frame.trailer"), "idle.frame.trailer.row").source;
   const maxPad = node.maxPad === undefined ? 0 : whole(node.maxPad, "idle.frame.trailer.maxPad", 0);
+  if (node.hint !== undefined && node.hint !== true) fail("idle.frame.trailer.hint", "must be true when named");
+  const hint = node.hint === true ? { hint: true as const } : {};
   if (node.pad === undefined) {
     if (maxPad > 0) fail("idle.frame.trailer.maxPad", "needs a pad pattern");
-    return { row, maxPad };
+    return { row, maxPad, ...hint };
   }
-  return { row, pad: pattern(node.pad, "idle.frame.trailer.pad").source, maxPad };
+  return { row, pad: pattern(node.pad, "idle.frame.trailer.pad").source, maxPad, ...hint };
+}
+
+/** The fields of a box that answers a question, as {@link parseAnswerBox} gathers them. */
+type AnswerBoxFields = { answers?: true; submit?: readonly string[]; newlineSubmits?: true };
+
+/** `idle.frame.answers`, `submit` and `newlineSubmits`: what a box that answers a question takes ({@link FrameLayout.answers}). */
+function parseAnswerBox(frameNode: JsonObject): AnswerBoxFields {
+  for (const key of ["answers", "newlineSubmits"] as const) {
+    if (frameNode[key] !== undefined && frameNode[key] !== true) fail(`idle.frame.${key}`, "must be true when named");
+  }
+  const submit = frameNode.submit === undefined ? undefined : textList(frameNode.submit, "idle.frame.submit", 1);
+  if (submit?.some((key) => /^(?:esc|escape)$/iu.test(key)) === true) fail("idle.frame.submit", "must not name Escape");
+  const box: AnswerBoxFields = {};
+  if (frameNode.answers === true) box.answers = true;
+  if (submit !== undefined) box.submit = submit;
+  if (frameNode.newlineSubmits === true) box.newlineSubmits = true;
+  return box;
+}
+
+/** `idle.frame.scroll`: which rows a scrolled box keeps in view, and its height then. */
+function parseScroll(value: JsonValue, maxDraftRows: number): FrameScroll {
+  const node = object(value, "idle.frame.scroll");
+  const keeps = oneOf(field(node, "keeps", "idle.frame.scroll"), "idle.frame.scroll.keeps", SCROLL_KEEPS);
+  const rows = whole(field(node, "rows", "idle.frame.scroll"), "idle.frame.scroll.rows", 1);
+  if (rows > maxDraftRows) fail("idle.frame.scroll.rows", "must not pass maxDraftRows: the walk would never read a box that tall");
+  return { keeps, rows };
 }
 
 /** `idle.frame`: the three anchors, the bounds, and the interior walk's own fields when the profile names that walk. */
 function parseFrame(frameNode: JsonObject): FrameLayout {
   const walk = frameNode.walk === undefined ? "edges" : oneOf(frameNode.walk, "idle.frame.walk", FRAME_WALKS);
-  const base = {
+  const maxDraftRows = whole(field(frameNode, "maxDraftRows", "idle.frame"), "idle.frame.maxDraftRows", 1);
+  const anchors = {
     top: anchor(field(frameNode, "top", "idle.frame"), "idle.frame.top", null, true),
     prompt: anchor(field(frameNode, "prompt", "idle.frame"), "idle.frame.prompt", "draft", false),
     continuationIndent: whole(field(frameNode, "continuationIndent", "idle.frame"), "idle.frame.continuationIndent", 0),
-    maxDraftRows: whole(field(frameNode, "maxDraftRows", "idle.frame"), "idle.frame.maxDraftRows", 1),
+    maxDraftRows,
     maxTailRows: whole(field(frameNode, "maxTailRows", "idle.frame"), "idle.frame.maxTailRows", 0),
   };
+  const maxWidgetRows = frameNode.maxWidgetRows === undefined ? undefined : whole(frameNode.maxWidgetRows, "idle.frame.maxWidgetRows", 1);
+  const withWidgets = maxWidgetRows === undefined ? anchors : { ...anchors, maxWidgetRows };
+  const withIndent = frameNode.draftIndent === undefined ? withWidgets : { ...withWidgets, draftIndent: whole(frameNode.draftIndent, "idle.frame.draftIndent", 1) };
+  if (frameNode.draftLines !== undefined && frameNode.draftLines !== true && frameNode.draftLines !== false) fail("idle.frame.draftLines", "must be true or false");
+  const withLines = frameNode.draftLines === true ? { ...withIndent, draftLines: true } : withIndent;
+  if (frameNode.draftCaret !== undefined && frameNode.draftCaret !== true && frameNode.draftCaret !== false) fail("idle.frame.draftCaret", "must be true or false");
+  const withCaretCell = frameNode.draftCaret === true ? { ...withLines, draftCaret: true } : withLines;
+  const withHints =
+    frameNode.placeholderPatterns === undefined
+      ? withCaretCell
+      : { ...withCaretCell, placeholderPatterns: textList(frameNode.placeholderPatterns, "idle.frame.placeholderPatterns", 1).map((item, i) => pattern(item, `idle.frame.placeholderPatterns[${String(i)}]`).source) };
+  const scrolled = frameNode.scroll === undefined ? withHints : { ...withHints, scroll: parseScroll(frameNode.scroll, maxDraftRows) };
+  const base = { ...scrolled, ...parseAnswerBox(frameNode) };
   if (walk === "edges") {
-    for (const key of ["rows", "trailer", "continuation", "ownPrompt"] as const) {
+    for (const key of ["rows", "trailer", "continuation", "ownPrompt", "maxWidgetRows"] as const) {
       if (frameNode[key] !== undefined) fail(`idle.frame.${key}`, "belongs to the interior walk");
     }
     const edgeBottom = anchor(field(frameNode, "bottom", "idle.frame"), "idle.frame.bottom", null, true);
@@ -871,6 +1444,10 @@ function parseFrame(frameNode: JsonObject): FrameLayout {
     return { ...base, bottom: edgeBottom };
   }
   const interior = { ...base, bottom: anchor(field(frameNode, "bottom", "idle.frame"), "idle.frame.bottom", null, true), walk };
+  if (maxWidgetRows !== undefined) {
+    if (interior.bottom.open !== true) fail("idle.frame.maxWidgetRows", "belongs to an open box");
+    if (maxWidgetRows <= anchors.maxTailRows) fail("idle.frame.maxWidgetRows", "must be more than maxTailRows");
+  }
   const withRows = frameNode.rows === undefined ? interior : { ...interior, rows: pattern(frameNode.rows, "idle.frame.rows").source };
   const withTrailer = frameNode.trailer === undefined ? withRows : { ...withRows, trailer: parseTrailer(frameNode.trailer) };
   const withUnder = frameNode.under === undefined ? withTrailer : { ...withTrailer, under: pattern(frameNode.under, "idle.frame.under").source };
@@ -926,7 +1503,16 @@ export function parseProfile(raw: JsonValue): Profile {
     idleNode.runningRows === undefined
       ? undefined
       : list(idleNode.runningRows, "idle.runningRows").map((item, i) => pattern(item, `idle.runningRows[${String(i)}]`).source);
-  const withRunning: Profile["idle"] = runningRows === undefined ? idle : { ...idle, runningRows };
+  const withRunningRows: Profile["idle"] = runningRows === undefined ? idle : { ...idle, runningRows };
+  const stoppedRows =
+    idleNode.stoppedRows === undefined
+      ? undefined
+      : list(idleNode.stoppedRows, "idle.stoppedRows").map((item, i) => {
+          const row = pattern(item, `idle.stoppedRows[${String(i)}]`);
+          if (row.test("")) fail(`idle.stoppedRows[${String(i)}]`, "must not match a blank row");
+          return row.source;
+        });
+  const withRunning: Profile["idle"] = stoppedRows === undefined ? withRunningRows : { ...withRunningRows, stoppedRows };
   const overlayRows =
     idleNode.overlayRows === undefined
       ? undefined
@@ -952,7 +1538,11 @@ export function parseProfile(raw: JsonValue): Profile {
   if (idleNode.dialogsInBox !== undefined && idleNode.dialogsInBox !== true && idleNode.dialogsInBox !== false) {
     fail("idle.dialogsInBox", "must be true or false");
   }
-  const withDialogs: Profile["idle"] = idleNode.dialogsInBox === true ? { ...withOverlay, dialogsInBox: true } : withOverlay;
+  const withDialogs0: Profile["idle"] = idleNode.dialogsInBox === true ? { ...withOverlay, dialogsInBox: true } : withOverlay;
+  if (idleNode.promptEchoes !== undefined && idleNode.promptEchoes !== true && idleNode.promptEchoes !== false) {
+    fail("idle.promptEchoes", "must be true or false");
+  }
+  const withDialogs: Profile["idle"] = idleNode.promptEchoes === true ? { ...withDialogs0, promptEchoes: true } : withDialogs0;
   const withNotices: Profile["idle"] = idleNode.notices === undefined ? withDialogs : { ...withDialogs, notices: parseNotices(idleNode.notices) };
   const withGaps: Profile["idle"] = idleNode.noticeGaps === undefined ? withNotices : { ...withNotices, noticeGaps: parseNoticeGaps(idleNode.noticeGaps) };
   const withHint: Profile["idle"] = idleNode.inlineHint === undefined ? withGaps : { ...withGaps, inlineHint: parseInlineHint(idleNode.inlineHint) };
@@ -979,6 +1569,10 @@ export function parseProfile(raw: JsonValue): Profile {
     },
   };
   let keys: Profile["keys"] = Object.keys(platformSubmit.byPlatform).length === 0 ? baseKeys : { ...baseKeys, submitByPlatform: platformSubmit.byPlatform };
+  if (keysNode.interruptClearsDraft !== undefined) {
+    if (keysNode.interruptClearsDraft !== true && keysNode.interruptClearsDraft !== false) fail("keys.interruptClearsDraft", "must be true or false");
+    keys = { ...keys, interruptClearsDraft: keysNode.interruptClearsDraft };
+  }
   if (keysNode.enterWhileRunning !== undefined) {
     keys = { ...keys, enterWhileRunning: oneOf(keysNode.enterWhileRunning, "keys.enterWhileRunning", ENTER_MODES) };
   }
@@ -986,11 +1580,19 @@ export function parseProfile(raw: JsonValue): Profile {
     const queuedNode = object(keysNode.queuedRow, "keys.queuedRow");
     const rowPattern = pattern(field(queuedNode, "pattern", "keys.queuedRow"), "keys.queuedRow.pattern");
     if (!rowPattern.source.includes("(?<text>")) fail("keys.queuedRow.pattern", "must hold the named group text");
-    const queuedRow: QueuedRow = {
+    if (queuedNode.hintAbove !== undefined && queuedNode.hintAbove !== true && queuedNode.hintAbove !== false) {
+      fail("keys.queuedRow.hintAbove", "must be true or false");
+    }
+    const queuedBase: QueuedRow = {
       pattern: rowPattern.source,
       hint: pattern(field(queuedNode, "hint", "keys.queuedRow"), "keys.queuedRow.hint").source,
       hintGap: whole(field(queuedNode, "hintGap", "keys.queuedRow"), "keys.queuedRow.hintGap", 0),
     };
+    const queuedBetween = betweenRows(queuedNode, "keys.queuedRow");
+    const queuedHeader = headerRow(queuedNode, "keys.queuedRow");
+    const queuedBetweenWith: QueuedRow = queuedBetween === undefined ? queuedBase : { ...queuedBase, between: queuedBetween };
+    const queuedWith: QueuedRow = queuedHeader === undefined ? queuedBetweenWith : { ...queuedBetweenWith, header: queuedHeader };
+    const queuedRow: QueuedRow = queuedNode.hintAbove === true ? { ...queuedWith, hintAbove: true } : queuedWith;
     keys = { ...keys, queuedRow };
   }
   if (keysNode.queueKey !== undefined) {
@@ -1030,11 +1632,45 @@ export function parseProfile(raw: JsonValue): Profile {
   }
   // Escape is never cleanup (ARCHITECTURE.md, Send Protocol): a profile cannot name it as the clear key.
   if (/^(?:escape|esc)$/i.test(keys.clear.key)) fail("keys.clear.key", "must not be Escape");
+  if (keysNode.clearAll !== undefined) {
+    const clearAllNode = object(keysNode.clearAll, "keys.clearAll");
+    const clearAll = { key: text(field(clearAllNode, "key", "keys.clearAll"), "keys.clearAll.key") };
+    if (/^(?:escape|esc)$/i.test(clearAll.key)) fail("keys.clearAll.key", "must not be Escape");
+    keys = { ...keys, clearAll };
+  }
 
   const collapseNode = object(field(root, "collapse", ""), "collapse");
-  const collapse = { pattern: pattern(field(collapseNode, "pattern", "collapse"), "collapse.pattern").source };
+  const collapseBase = { pattern: pattern(field(collapseNode, "pattern", "collapse"), "collapse.pattern").source };
+  if (collapseNode.refuseLiteral !== undefined && collapseNode.refuseLiteral !== true && collapseNode.refuseLiteral !== false) fail("collapse.refuseLiteral", "must be true or false");
+  const collapse = collapseNode.refuseLiteral === true ? { ...collapseBase, refuseLiteral: true } : collapseBase;
 
   const reservedLeads = textList(field(root, "reservedLeads", ""), "reservedLeads", 1);
+  let reservedLeadNotes: Readonly<Record<string, string>> | undefined;
+  if (root.reservedLeadNotes !== undefined) {
+    const notesNode = object(root.reservedLeadNotes, "reservedLeadNotes");
+    const notes: Record<string, string> = {};
+    for (const lead of Object.keys(notesNode)) {
+      if (!reservedLeads.includes(lead)) fail("reservedLeadNotes", `${lead} is not in reservedLeads`);
+      const leadNote = text(notesNode[lead], `reservedLeadNotes.${lead}`);
+      if (leadNote.trim().length === 0) fail(`reservedLeadNotes.${lead}`, "must not be empty");
+      notes[lead] = leadNote;
+    }
+    reservedLeadNotes = notes;
+  }
+  // Read after the leads: each entry is one command word that starts with one of them.
+  if (keysNode.commandsRunInTurn !== undefined) {
+    const commandsRunInTurn = textList(keysNode.commandsRunInTurn, "keys.commandsRunInTurn", 1);
+    for (const entry of commandsRunInTurn) {
+      if (/\s/u.test(entry) || [...entry].length < 2) fail("keys.commandsRunInTurn", `${entry} must be one command word, with no space`);
+      if (!reservedLeads.some((lead) => entry.startsWith(lead))) fail("keys.commandsRunInTurn", `${entry} must start with a reserved lead`);
+      if (keys.neverHeld?.includes(entry) === true) fail("keys.commandsRunInTurn", `${entry} is in keys.neverHeld`);
+    }
+    keys = { ...keys, commandsRunInTurn };
+  }
+  if (keysNode.commandsRunInTurnNote !== undefined) {
+    keys = { ...keys, commandsRunInTurnNote: text(keysNode.commandsRunInTurnNote, "keys.commandsRunInTurnNote") };
+  }
+  keys = parseSteer(keysNode, keys);
 
   const probeNode = object(field(root, "probe", ""), "probe");
   const probe = {
@@ -1053,7 +1689,15 @@ export function parseProfile(raw: JsonValue): Profile {
     if (pasteNode.settleMs !== undefined && (settleMs === undefined || !Number.isInteger(settleMs) || settleMs < 1 || settleMs > 5000)) {
       fail("paste.settleMs", "must be a whole number of ms from 1 to 5000");
     }
+    const block = pasteNode.block;
+    if (block !== undefined && block !== true && block !== false) fail("paste.block", "must be true or false");
+    if (block === true && bracketed !== true) fail("paste.block", "needs paste.bracketed");
     paste = settleMs === undefined ? { bracketed: bracketed === true } : { bracketed: bracketed === true, settleMs };
+    if (block === true) paste = { ...paste, block: true };
+    if (pasteNode.image !== undefined) {
+      if (block !== true) fail("paste.image", "needs paste.block");
+      paste = { ...paste, image: pattern(pasteNode.image, "paste.image").source };
+    }
   }
 
   let ask: Profile["ask"];
@@ -1076,7 +1720,8 @@ export function parseProfile(raw: JsonValue): Profile {
   const hold = root.hold === undefined ? undefined : parseHold(root.hold, hooks);
 
   const parsedProfile: Profile = { id, identity: agentNames === undefined ? identity : { ...identity, agentNames }, versions, idle: idleBlock, keys, collapse, reservedLeads, probe, hooks };
-  const withPaste = paste === undefined ? parsedProfile : { ...parsedProfile, paste };
+  const withNotes = reservedLeadNotes === undefined ? parsedProfile : { ...parsedProfile, reservedLeadNotes };
+  const withPaste = paste === undefined ? withNotes : { ...withNotes, paste };
   const withAsk = ask === undefined ? withPaste : { ...withPaste, ask };
   const withEdges = edges === undefined ? withAsk : { ...withAsk, edges };
   return hold === undefined ? withEdges : { ...withEdges, hold };
@@ -1191,8 +1836,11 @@ export interface ProfileForOptions {
 let parsed: ReadonlyMap<string, Profile> | null = null;
 
 /** Every profile in `profiles/`, parsed and checked once. A bad file throws on first use. */
+let parsedFleetPolicy: boolean | null = null;
+
 export function loadProfiles(): ReadonlyMap<string, Profile> {
-  if (parsed !== null) return parsed;
+  const policy = profilePolicyEnabled();
+  if (parsed !== null && parsedFleetPolicy === policy) return parsed;
   const out = new Map<string, Profile>();
   for (const [stem, raw] of Object.entries(PROFILE_FILES)) {
     const profile = parseProfile(raw);
@@ -1207,6 +1855,7 @@ export function loadProfiles(): ReadonlyMap<string, Profile> {
     }
   }
   parsed = out;
+  parsedFleetPolicy = policy;
   return out;
 }
 

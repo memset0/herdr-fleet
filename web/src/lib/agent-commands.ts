@@ -5,9 +5,9 @@
 // the UI sends `/command` (+ submit key) for no-arg commands, or inserts `/command ` into the
 // composer for the user to complete when the command takes an argument.
 //
-// `omp` is the one catalog sourced from CAPTURES rather than docs — see its section for the two rules
-// that follow from that, both of which apply to any future palette-sourced agent: only what a capture
-// actually shows, and nothing the capturing user's own machine contributed.
+// `omp` and `kiro` are the catalogs sourced from CAPTURES rather than docs — see omp's section for
+// the two rules that follow from that, both of which apply to any palette-sourced agent: only what a
+// capture actually shows, and nothing the capturing user's own machine contributed.
 //
 // A row marked `// harness-bar` has a BUTTON on the harness bar above the key rail
 // (`web/src/lib/harness-bar.ts`). Renaming or removing one of those commands changes a surface the
@@ -125,6 +125,14 @@ const CODEX: readonly AgentCommand[] = [
   { command: "/archive", description: "Archive the current session and exit Codex", takesArg: false, argHint: "", common: false, dangerous: true },
   { command: "/delete", description: "Permanently delete the current session", takesArg: false, argHint: "", common: false, dangerous: true },
   { command: "/quit", description: "Exit the Codex CLI immediately (alias: /exit)", takesArg: false, argHint: "", common: false, dangerous: true },
+  // Built-in skills: the five Codex writes to $CODEX_HOME/skills/.system (0.159.3), named with the `$`
+  // mention sigil Codex uses for a skill; each was in Codex's own `$` popup on 2026-10-15. The request
+  // follows the mention in the same message.
+  { command: "$imagegen", description: "Generate or edit images for websites, games, and more", takesArg: true, argHint: "[request]", common: false, dangerous: false },
+  { command: "$openai-docs", description: "OpenAI and Codex docs for models, skills, tasks, and setup", takesArg: true, argHint: "[question]", common: false, dangerous: false },
+  { command: "$review-agent", description: "Find actionable bugs in code changes", takesArg: true, argHint: "[change]", common: false, dangerous: false },
+  { command: "$skill-creator", description: "Create or update a Codex skill", takesArg: true, argHint: "[request]", common: false, dangerous: false },
+  { command: "$skill-installer", description: "Install curated skills from openai/skills or other repos", takesArg: true, argHint: "[skill or repo]", common: false, dangerous: false },
 ];
 
 // ── Pi (pi.dev) ──────────────────────────────────────────────────────────────
@@ -155,10 +163,10 @@ const PI: readonly AgentCommand[] = [
 
 // ── opencode (opencode.ai) ───────────────────────────────────────────────────
 const OPENCODE: readonly AgentCommand[] = [
-  { command: "/compact", description: "Compact (summarize) the current session", takesArg: false, argHint: "", common: true, dangerous: false },
+  { command: "/compact", description: "Compact (summarize) the current session", takesArg: false, argHint: "", common: true, dangerous: false }, // harness-bar
   { command: "/new", description: "Start a new session (alias /clear)", takesArg: false, argHint: "", common: true, dangerous: true },
-  { command: "/models", description: "List and switch between available models", takesArg: false, argHint: "", common: true, dangerous: false },
-  { command: "/sessions", description: "List and switch sessions (alias /resume)", takesArg: false, argHint: "", common: true, dangerous: false },
+  { command: "/models", description: "List and switch between available models", takesArg: false, argHint: "", common: true, dangerous: false }, // harness-bar
+  { command: "/sessions", description: "List and switch sessions (alias /resume)", takesArg: false, argHint: "", common: true, dangerous: false }, // harness-bar
   { command: "/init", description: "Guided setup to create or update AGENTS.md", takesArg: false, argHint: "", common: true, dangerous: false },
   { command: "/share", description: "Share the current session via a link", takesArg: false, argHint: "", common: true, dangerous: false },
   { command: "/undo", description: "Undo the last turn and revert file changes (Git-backed)", takesArg: false, argHint: "", common: true, dangerous: true },
@@ -172,6 +180,9 @@ const OPENCODE: readonly AgentCommand[] = [
   { command: "/themes", description: "Browse and switch the UI theme", takesArg: false, argHint: "", common: false, dangerous: false },
   { command: "/connect", description: "Add a provider and configure its API key", takesArg: false, argHint: "", common: false, dangerous: false },
   { command: "/exit", description: "Quit opencode (alias /quit, /q)", takesArg: false, argHint: "", common: false, dangerous: true },
+  // Built-in skill, in opencode's own `/skills` picker on 2026-10-15 (1.18.34). Its `/` menu hides
+  // skills, so the palette is the only list a phone has.
+  { command: "/customize-opencode", description: "Help edit or create opencode's own configuration", takesArg: true, argHint: "[request]", common: false, dangerous: false },
 ];
 
 // ── omp (oh-my-pi) ───────────────────────────────────────────────────────────
@@ -237,9 +248,11 @@ const AGY: readonly AgentCommand[] = [
   { command: "/plan", description: "Switch into plan mode to outline steps before execution", takesArg: true, argHint: "[goal]", common: true, dangerous: false },
   { command: "/grill-me", description: "Interactive interview to resolve ambiguity and align on design", takesArg: false, argHint: "", common: true, dangerous: false },
   { command: "/learn", description: "Persist lessons, corrections, and project workflows", takesArg: true, argHint: "[lesson]", common: true, dangerous: false },
-  { command: "/compact", description: "Summarize conversation history to free up context", takesArg: false, argHint: "", common: true, dangerous: false },
+  { command: "/compact", description: "Summarize conversation history to free up context", takesArg: false, argHint: "", common: true, dangerous: false }, // harness-bar
+  // From agy 1.3.5's own `/` completion (2026-10-15), which opened its conversation picker on Enter.
+  { command: "/resume", description: "Browse and resume past conversations", takesArg: false, argHint: "", common: true, dangerous: false }, // harness-bar
   { command: "/clear", description: "Clear conversation history and start fresh", takesArg: false, argHint: "", common: true, dangerous: true },
-  { command: "/model", description: "Switch active model or reasoning effort", takesArg: true, argHint: "[model]", common: true, dangerous: false },
+  { command: "/model", description: "Switch active model or reasoning effort", takesArg: true, argHint: "[model]", common: true, dangerous: false }, // harness-bar
   { command: "/status", description: "Show session stats, model, and connectivity status", takesArg: false, argHint: "", common: true, dangerous: false },
   { command: "/subagents", description: "View and manage active background subagents", takesArg: false, argHint: "", common: true, dangerous: false },
   { command: "/skills", description: "List and manage available skills", takesArg: false, argHint: "", common: false, dangerous: false },
@@ -252,15 +265,20 @@ const AGY: readonly AgentCommand[] = [
   { command: "/theme", description: "Change syntax and terminal theme", takesArg: false, argHint: "", common: false, dangerous: false },
   { command: "/help", description: "Show help and list available commands", takesArg: false, argHint: "", common: false, dangerous: false },
   { command: "/exit", description: "Exit the AGY CLI (alias: /quit)", takesArg: false, argHint: "", common: false, dangerous: true },
+  // Built-in skills: the three in agy 1.3.5's own `/` completion on 2026-10-15. agy mounts more
+  // (automation, generative_ui, run-workflow, …), but its default agent does not offer them there.
+  { command: "/agy-customizations", description: "Guide to Antigravity's customization system", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/antigravity-guide", description: "Guide, quick reference and sitemap for Antigravity", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/plugin", description: "Manage, discover, install, enable and disable plugins", takesArg: false, argHint: "", common: false, dangerous: true },
 ];
 
 // ── Grok ─────────────────────────────────────────────────────────────────────
 // Sourced from Grok's published slash-command reference, not from pane captures.
 const GROK: readonly AgentCommand[] = [
   { command: "/new", description: "Start a fresh session and clear the conversation", takesArg: false, argHint: "", common: true, dangerous: true },
-  { command: "/compact", description: "Compress history to reclaim context; optional focus note", takesArg: true, argHint: "[context]", common: true, dangerous: false },
-  { command: "/resume", description: "Open the session picker to reload a previous session", takesArg: false, argHint: "", common: true, dangerous: false },
-  { command: "/model", description: "Switch model; optional effort as a second argument", takesArg: true, argHint: "[name] [effort]", common: true, dangerous: false },
+  { command: "/compact", description: "Compress history to reclaim context; optional focus note", takesArg: true, argHint: "[context]", common: true, dangerous: false }, // harness-bar
+  { command: "/resume", description: "Open the session picker to reload a previous session", takesArg: false, argHint: "", common: true, dangerous: false }, // harness-bar
+  { command: "/model", description: "Switch model; optional effort as a second argument", takesArg: true, argHint: "[name] [effort]", common: true, dangerous: false }, // harness-bar
   { command: "/copy", description: "Copy the most recent response, or the Nth, or write a file", takesArg: true, argHint: "[N|file]", common: true, dangerous: false },
   { command: "/context", description: "Show how the context window is being used", takesArg: false, argHint: "", common: true, dangerous: false },
   { command: "/rewind", description: "Roll the conversation back to an earlier turn", takesArg: false, argHint: "", common: true, dangerous: true },
@@ -274,6 +292,108 @@ const GROK: readonly AgentCommand[] = [
   { command: "/export", description: "Export the conversation to a file or the clipboard", takesArg: false, argHint: "", common: false, dangerous: false },
   { command: "/delete", description: "Delete this session's history after confirm", takesArg: false, argHint: "", common: false, dangerous: true },
   { command: "/quit", description: "Quit the application", takesArg: false, argHint: "", common: false, dangerous: true },
+  // Bundled skills (~/.grok/bundled/skills, bundle public-2026-10-09-r1), each in Grok Build 1.0.52's
+  // own `/` completion on 2026-10-15. Left out: docx, pdf and pptx, which their files mark not
+  // user-invocable; imagine, which the built-in /imagine command shadows; and review, which that
+  // completion showed only as `/bundled:review`.
+  { command: "/build-with-ai", description: "Build AI apps on SpaceXAI", takesArg: true, argHint: "<what you're building>", common: false, dangerous: false },
+  { command: "/code-review", description: "Run an extremely strict maintainability review", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/create-skill", description: "Create a new Grok skill", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/create-workflow", description: "Author a new multi-agent workflow", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/design", description: "Write and review a design doc until both agree", takesArg: true, argHint: "<what to design>", common: false, dangerous: false },
+  { command: "/execute-plan", description: "Execute the PR plan of a design document", takesArg: true, argHint: "<design-doc-path>", common: false, dangerous: false },
+  { command: "/game-assets", description: "Engine-ready game art, 2D sprites to 3D models", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/implement", description: "Run the implement, review and fix loop", takesArg: true, argHint: "<what to implement>", common: false, dangerous: false },
+  { command: "/learn", description: "Learn from your own sessions and tune your setup", takesArg: true, argHint: "[--mode step|auto|report]", common: false, dangerous: false },
+  { command: "/long-running-background-tasks", description: "Start, watch or wait on work that keeps running", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/pr-babysit", description: "Monitor PRs: fix CI, answer reviews, resolve conflicts", takesArg: true, argHint: "<add|remove|list|check> [number]", common: false, dangerous: false },
+  { command: "/resume-claude", description: "Continue from a recent Claude Code session", takesArg: true, argHint: "[words or session id]", common: false, dangerous: false },
+  { command: "/resume-codex", description: "Continue from a recent Codex session", takesArg: true, argHint: "[words or session id]", common: false, dangerous: false },
+  { command: "/resume-cursor", description: "Continue from a recent Cursor session", takesArg: true, argHint: "[words or session id]", common: false, dangerous: false },
+  { command: "/skill-design-principles", description: "Principles for writing and editing skills", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/statusline", description: "Configure the Grok Build status line", takesArg: false, argHint: "", common: false, dangerous: true },
+  { command: "/threejs-frame-conventions", description: "One frame for Three.js controls, camera and movement", takesArg: false, argHint: "", common: false, dangerous: false },
+];
+
+// ── Kiro ─────────────────────────────────────────────────────────────────────
+// Sourced from CAPTURES of kiro-cli 2.32.0's own `/` menu (V3), under omp's two rules above: only
+// what a capture shows, and nothing the capturing machine added. The menu ran with an empty
+// KIRO_HOME, so it lists built-in commands only. Each description is the menu's own, without its
+// "(tab for sub-commands)" note. `/model` and `/agent` open pickers the Kiro adapter does not lift:
+// the phone shows them on the raw mirror, to be driven with the keys pad and closed with Escape. So,
+// as for omp, `common: false`.
+const KIRO: readonly AgentCommand[] = [
+  // kiro--v3-slash-help-w120.txt
+  { command: "/help", description: "Show available commands", takesArg: false, argHint: "", common: false, dangerous: false },
+  // kiro--v3-slash-model-w120.txt
+  { command: "/model", description: "List or switch models", takesArg: false, argHint: "", common: false, dangerous: false },
+  // kiro--v3-slash-menu-w120.txt, the unfiltered menu's first rows.
+  { command: "/agent", description: "List or switch agents", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/compact", description: "Compact conversation history to reduce context usage", takesArg: false, argHint: "", common: true, dangerous: false },
+  { command: "/clear", description: "Clear the conversation and start a fresh session", takesArg: false, argHint: "", common: false, dangerous: true },
+  // kiro--v3-slash-quit-w120.txt
+  { command: "/quit", description: "Quit the application", takesArg: false, argHint: "", common: false, dangerous: true },
+];
+
+// ── Muse Code ────────────────────────────────────────────────────────────────
+// Sourced from Muse Code's own docs (dev.meta.ai/docs/muse-code/interactive) and checked against
+// Muse 1.4.7's own /help and slash completion, which win where they disagree: the docs' /models is
+// /model there. Where a 1.4.10 screen capture disagrees with docs/1.4.7 (takesArg on /model and
+// /effort, /resume's hint), the capture wins; each such row says so. Muse has more commands than
+// these; the rest are reachable by typing, as on every catalog.
+const MUSE: readonly AgentCommand[] = [
+  { command: "/compact", description: "Summarize prior context to reclaim room", takesArg: false, argHint: "", common: true, dangerous: false }, // harness-bar
+  { command: "/new", description: "Start a fresh session, keeping the terminal scrollback", takesArg: false, argHint: "", common: true, dangerous: true },
+  { command: "/clear", description: "Start a fresh session and wipe the scrollback", takesArg: false, argHint: "", common: true, dangerous: true },
+  // Capture-sourced (muse--palette-hint.txt shows `/model [<model-id>]`; muse--palette-typed-arg.txt
+  // proves `/model x` takes it).
+  { command: "/model", description: "Choose the model mid-session", takesArg: true, argHint: "[<model-id>]", common: true, dangerous: false }, // harness-bar
+  // Capture-sourced (muse--palette-hint-skills.txt shows `/resume [--last|<id-or-name>]`;
+  // muse--resume-picker.txt is the picker it opens).
+  { command: "/resume", description: "Pick a retained session in this workspace to resume", takesArg: true, argHint: "[--last|<id-or-name>]", common: true, dangerous: false }, // harness-bar
+  { command: "/help", description: "Show the full set of commands in this workspace", takesArg: false, argHint: "", common: true, dangerous: false },
+  // Capture-sourced (muse--filter-effort.txt is the `/effort` picker itself; the harness prints its
+  // levels, so bare `/effort` takes no argument).
+  { command: "/effort", description: "Change the reasoning effort mid-session", takesArg: false, argHint: "", common: false, dangerous: false }, // harness-bar
+  { command: "/name", description: "Show or rename this session", takesArg: true, argHint: "[name]", common: false, dangerous: false },
+  { command: "/fork", description: "Branch a new session from the latest message; optional first prompt", takesArg: true, argHint: "[prompt]", common: false, dangerous: false },
+  { command: "/rewind", description: "Branch from an earlier user message into a new session", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/side", description: "Open a side conversation; optional first message", takesArg: true, argHint: "[prompt]", common: false, dangerous: false },
+  { command: "/btw", description: "Open a side conversation with this message (alias /side)", takesArg: true, argHint: "<prompt>", common: false, dangerous: false },
+  { command: "/recap", description: "Show a summary of recent activity", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/export", description: "Export the transcript (.txt) or the full trajectory (JSON)", takesArg: true, argHint: "[transcript|trajectory]", common: false, dangerous: false },
+  { command: "/copy", description: "Copy a response, code block or ran command to the clipboard", takesArg: true, argHint: "[N]", common: false, dangerous: false },
+  { command: "/goal", description: "Set, show, edit, pause, resume, or clear the session goal", takesArg: true, argHint: "[objective|edit|pause|resume|clear]", common: false, dangerous: false },
+  { command: "/loop", description: "Schedule a recurring prompt (interval or 5-field cron)", takesArg: true, argHint: "[interval] <prompt>", common: false, dangerous: false },
+  { command: "/tasks", description: "Open the Tasks drawer for background work and subagents", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/subagents", description: "View running and past subagents", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/stop", description: "Stop background tasks and terminals (not the turn)", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/workflows", description: "Browse active and completed multi-agent workflow runs", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/keymap", description: "Show keyboard shortcuts", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/theme", description: "Set the terminal theme", takesArg: false, argHint: "", common: false, dangerous: false },
+  // Capture-proven rows below: each vouched for by a muse--*.txt fixture (see MUSE-40). The bare-`/`
+  // palette holds ~79 rows; only captured rows ship.
+  // muse--palette-exact.txt + muse--palette-partial.txt (`/usage` typed, partial `/us` ran it).
+  { command: "/usage", description: "Show session usage", takesArg: false, argHint: "", common: true, dangerous: false },
+  // muse--filter-hud.txt is the `/hud` picker open (toggles, not a command with arguments).
+  { command: "/hud", description: "Toggle statusline widgets on or off", takesArg: false, argHint: "", common: true, dangerous: false },
+  // muse--approval-ls-147.txt hint row: "Change approval defaults in /permissions".
+  { command: "/permissions", description: "Change approval defaults", takesArg: false, argHint: "", common: false, dangerous: false },
+  // muse--slash-palette-1410.txt palette rows, verbatim summaries.
+  { command: "/deep-research", description: "Research a question across sources with cross-checking and citations", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/bug", description: "Report a bug to the team", takesArg: false, argHint: "", common: false, dangerous: false },
+  // Bundled skills (muse-core), the ten a person can invoke, each in Muse Code 1.4.8's own `/`
+  // completion on 2026-10-15 tagged `built-in`. The other ten are marked not user-invocable there.
+  { command: "/create-plugin", description: "Create and validate a new native Muse plugin", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/create-skill", description: "Create and validate a new Muse skill", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/doctor", description: "Diagnose Muse Code product and runtime issues", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/grill", description: "Decision interview, each decision recorded in project docs", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/import", description: "Import a Claude Code, Codex, or Grok session", takesArg: true, argHint: "<session-id-or-path>", common: false, dangerous: false },
+  { command: "/manage-settings", description: "Read or change a Muse Code setting", takesArg: false, argHint: "", common: false, dangerous: true },
+  { command: "/migrate", description: "Bring Claude Code or Codex memory and MCP servers into Muse", takesArg: true, argHint: "[memory|mcp] [claude|codex]", common: false, dangerous: false },
+  { command: "/plan", description: "Research first, then write a plan", takesArg: false, argHint: "", common: false, dangerous: false },
+  { command: "/resume-claude", description: "Continue a Claude Code session here", takesArg: true, argHint: "[session-id-or-log-path]", common: false, dangerous: false },
+  { command: "/resume-codex", description: "Continue a Codex session here", takesArg: true, argHint: "[session-id-or-log-path]", common: false, dangerous: false },
 ];
 
 // A Map, not an object literal: the keys tested against it come from Herdr's agent string and from
@@ -286,6 +406,8 @@ const CATALOG = new Map<string, readonly AgentCommand[]>([
   ["opencode", OPENCODE],
   ["omp", OMP],
   ["grok", GROK],
+  ["kiro", KIRO],
+  ["muse", MUSE],
   // Herdr reports this agent under both names, and canonicalAgent() folds neither onto the other,
   // so both keys are filed — one catalog, two spellings.
   ["agy", AGY],
@@ -320,7 +442,7 @@ export function commandsFor(
   mine: readonly OperatorCommand[] = [],
   found: readonly ClaudeCommand[] = [],
 ): readonly AgentCommand[] {
-  const shipped = withFound(agent, catalogFor(agent), found);
+  const shipped = withFound(catalogFor(agent), found);
   const aimed = rowsFor(mine, agent, (row) => row.command);
   // Rule 2: nothing of yours points here, so this pane was never part of what you were choosing.
   if (aimed.length === 0) return shipped;
@@ -339,17 +461,17 @@ export function commandsFor(
 }
 
 /**
- * The reference catalog with the on-disk skill and command candidates folded in, Claude only.
+ * The reference catalog with the on-disk skill and command candidates folded in.
  * Shipped built-in rows stay untouched (`common`, `dangerous`, `takesArg`, `description`); discovered
  * candidates join as searchable rows (`common: false`) with `takesArg: true` so tapping one stages
- * `/cmd ` into the composer for review rather than submitting immediately.
+ * `/cmd ` (or `$skill `) into the composer for review rather than submitting immediately. No agent
+ * name is checked here: the bridge answers an empty list for an agent it has no loader for.
  */
 function withFound(
-  agent: string | undefined | null,
   shipped: readonly AgentCommand[],
   found: readonly ClaudeCommand[],
 ): readonly AgentCommand[] {
-  if (found.length === 0 || canonicalAgent(agent?.toLowerCase().trim() ?? "") !== "claude") return shipped;
+  if (found.length === 0) return shipped;
   const seen = new Set(shipped.map((row) => row.command));
   const merged = [...shipped];
   for (const row of found) {

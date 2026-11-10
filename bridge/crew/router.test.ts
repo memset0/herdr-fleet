@@ -11,6 +11,7 @@ import {
   createCrewRouter,
   CREW_ENROLL_PATH,
   CREW_HELLO_PATH,
+  CREW_LAUNCHERS_COPY_PATH,
   CREW_LEAD_PATH,
   CREW_LEAVE_PATH,
   CREW_PAIRING_PATH,
@@ -695,6 +696,58 @@ describe("GET /crew/v1/snapshot — the one merged route, §9.2", () => {
     expect(Object.hasOwn(answered as object, "machineStats")).toBe(false);
   });
 
+  // ── M76 spec 04: THE MEMBER'S MUX NAME AND PANE COUNT, IN THAT SAME SEAT ────
+  test("mux and panes ride beside the body, and a member that cannot count sends no panes, never 0", async () => {
+    const h = harness(peerStore());
+    const body = ownSnapshot();
+    let counted: number | null = 3;
+    const handler = createCrewRouter({
+      store: h.store,
+      audit: h.audit,
+      transportPinned: true,
+      snapshot: () => body,
+      mux: () => ({ name: "herdr", capabilities: muxCaps({}), unsupportedKeys: [], notes: {} }),
+      panes: () => counted,
+    });
+    const res = (await call(handler, CREW_SNAPSHOT_PATH, { headers: authed }))!;
+    expect(await res.json()).toEqual({ ...body, mux: "herdr", panes: 3 });
+    // The browser's own snapshot is untouched.
+    expect(body).toEqual(ownSnapshot());
+
+    // A bridge still starting has no count: the key is absent, and zero is a different statement.
+    counted = null;
+    const starting: unknown = await (await call(handler, CREW_SNAPSHOT_PATH, { headers: authed }))!.json();
+    expect(starting).toEqual({ ...body, mux: "herdr" });
+    // SAFETY: `toEqual` above has already established that this is an object.
+    expect(Object.hasOwn(starting as object, "panes")).toBe(false);
+
+    // A real zero is reported as zero.
+    counted = 0;
+    const idle: unknown = await (await call(handler, CREW_SNAPSHOT_PATH, { headers: authed }))!.json();
+    expect(idle).toEqual({ ...body, mux: "herdr", panes: 0 });
+  });
+
+  test("host rides beside the body when the machine has a name, and is absent otherwise (M77 spec 01)", async () => {
+    const h = harness(peerStore());
+    const body = ownSnapshot();
+    let named: string | null = " minibuch ";
+    const handler = createCrewRouter({
+      store: h.store,
+      audit: h.audit,
+      transportPinned: true,
+      snapshot: () => body,
+      host: () => named,
+    });
+    expect(await (await call(handler, CREW_SNAPSHOT_PATH, { headers: authed }))!.json()).toEqual({ ...body, host: "minibuch" });
+    for (const unusable of [null, "", "   "]) {
+      named = unusable;
+      const answer: unknown = await (await call(handler, CREW_SNAPSHOT_PATH, { headers: authed }))!.json();
+      expect(answer).toEqual(body);
+      // SAFETY: `toEqual` above has already established that this is an object.
+      expect(Object.hasOwn(answer as object, "host")).toBe(false);
+    }
+  });
+
   test("an UNADMITTED caller never reaches the follow headers either", async () => {
     const h = harness(peerStore());
     let seen = 0;
@@ -787,6 +840,26 @@ describe("POST /crew/v1/enroll — admitted by the TOKEN, not by the two factors
     expect(payload.crewSecret).toBeString();
     // The peer is now pinned on the lead's roster, and the invite is gone.
     expect(h.data().peers.map((p) => [p.memberId, p.fingerprint])).toEqual([["laptop", fp("laptop")]]);
+    expect(h.data().invites).toEqual([]);
+  });
+
+  test("a name the lead already uses is refused with 422 and a reason; the invite is spent, nothing is pinned", async () => {
+    const h = invited();
+    const handler = createCrewRouter({ store: h.store, audit: h.audit, now: () => T0 + 1, hostname: () => "bluefin.lan" });
+    const res = (await call(handler, CREW_ENROLL_PATH, {
+      method: "POST",
+      headers: { "content-type": "application/json", "x-crew-protocol": "2" },
+      body: JSON.stringify(body({ token: h.token, label: "Bluefin" })),
+    }))!;
+    expect(res.status).toBe(422);
+    expect(res.headers.get("x-crew-protocol")).toBe("2");
+    expect(await res.json()).toEqual({
+      error: 'the name "Bluefin" is already taken by the lead. Pass --label <another name>.',
+      code: "label_taken",
+      label: "Bluefin",
+      takenBy: "lead",
+    });
+    expect(h.data().peers).toEqual([]);
     expect(h.data().invites).toEqual([]);
   });
 
@@ -1022,6 +1095,9 @@ describe("dispatched routes — the peer runs its own routes for an admitted lea
       // The new-space folder list (#289): the peer's own `folders.json`, read and starred there.
       ["folders", "GET"],
       ["folders/star", "POST"],
+      // A worktree's plan and create (ADR 0126 point 6): git runs on the member, in its own handlers.
+      ["worktree/plan", "GET"],
+      ["worktree", "POST"],
     ];
     for (const [route, method] of routes) {
       // A GET with a `body` key at all is a TypeError from `new Request`, so the key is added only
@@ -2523,6 +2599,84 @@ describe("POST /crew/v1/pairing — the lead syncs its registry to the DEPUTY on
     const h = harness(leadStore({ peers: [member({ memberId: "nas" })] }));
     const r = router(h);
     expect((await call(r.handler, CREW_PAIRING_PATH, post(body())))!.status).toBe(401);
+  });
+});
+
+describe("POST /crew/v1/launchers-copy — the crew's rows reach the DEPUTY only (ADR 0127 point 5)", () => {
+  const ROW = { command: "make test", label: "Tests", kind: "command", noPrompts: false, cwd: "~/src/app" };
+
+  /** A peer of `desk` holding the warrant that names IT — i.e. this crew's deputy. */
+  function deputy() {
+    const w = mintWarrant(leadStore({ peers: [member({ memberId: "laptop" })] }), "laptop", T0)!.result;
+    return peerStore({ warrant: { warrant: w, deputyCertPem: material("laptop").certPem } });
+  }
+
+  function router(h: ReturnType<typeof harness>, over: { warrantsSelf?: boolean; digest?: string | null; keepsNone?: boolean } = {}) {
+    const copies: unknown[] = [];
+    const handler = createCrewRouter({
+      store: h.store,
+      audit: h.audit,
+      transportPinned: true,
+      now: () => T0,
+      snapshot: () => ownSnapshot(),
+      standby: {
+        warrantsSelf: () => over.warrantsSelf ?? true,
+        silentForMs: () => 60_000,
+        armMs: 30_000,
+        collidingLabels: () => [],
+        applySync: async () => {},
+        syncedDigest: () => null,
+        syncedCollision: () => [],
+        copyDigest: () => over.digest ?? null,
+        applyCopy: over.keepsNone === true ? undefined : async (copy) => void copies.push(copy),
+      },
+    });
+    return { handler, copies };
+  }
+
+  test("the deputy's own lead sends, and the copy lands with whose rows they are", async () => {
+    const r = router(harness(deputy()));
+    const res = (await call(r.handler, CREW_LAUNCHERS_COPY_PATH, post({ rows: [ROW] })))!;
+    expect(res.status).toBe(200);
+    expect(await res.json()).toEqual({ rows: 1, applied: true });
+    expect(r.copies).toEqual([{ from: "desk", crewId: CREW.crewId, rows: [ROW] }]);
+  });
+
+  test("a peer that is NOT the deputy refuses it, and keeps nothing", async () => {
+    const h = harness(peerStore());
+    const r = router(h, { warrantsSelf: false });
+    expect((await call(r.handler, CREW_LAUNCHERS_COPY_PATH, post({ rows: [ROW] })))!.status).toBe(401);
+    expect(r.copies).toEqual([]);
+    expect(h.lines.map((l) => l.action)).toContain("crew.refused");
+  });
+
+  test("a build that keeps no copy refuses it like any non-deputy", async () => {
+    const r = router(harness(deputy()), { keepsNone: true });
+    expect((await call(r.handler, CREW_LAUNCHERS_COPY_PATH, post({ rows: [ROW] })))!.status).toBe(401);
+  });
+
+  test("a LEAD never answers it: it has no lead of its own to have sent it", async () => {
+    const r = router(harness(leadStore({ peers: [member({ memberId: "nas" })] })));
+    expect((await call(r.handler, CREW_LAUNCHERS_COPY_PATH, post({ rows: [ROW] })))!.status).toBe(401);
+    expect(r.copies).toEqual([]);
+  });
+
+  test("a malformed body is a 400 and lands nothing", async () => {
+    for (const bent of [{}, { rows: [{ ...ROW, command: "" }] }, { rows: [ROW, ROW] }]) {
+      const r = router(harness(deputy()));
+      expect((await call(r.handler, CREW_LAUNCHERS_COPY_PATH, post(bent)))!.status).toBe(400);
+      expect(r.copies).toEqual([]);
+    }
+  });
+
+  test("the digest it holds is REPORTED on hello and snapshot, and absent when it holds none", async () => {
+    const h = harness(deputy());
+    const held = router(h, { digest: "d1" });
+    expect(await (await call(held.handler, CREW_HELLO_PATH, { headers: authed }))!.json()).toMatchObject({ launchersDigest: "d1" });
+    expect(await (await call(held.handler, CREW_SNAPSHOT_PATH, { headers: authed }))!.json()).toMatchObject({ launchersDigest: "d1" });
+    const none = router(h);
+    expect(await (await call(none.handler, CREW_HELLO_PATH, { headers: authed }))!.text()).not.toContain("launchersDigest");
+    expect(await (await call(none.handler, CREW_SNAPSHOT_PATH, { headers: authed }))!.text()).not.toContain("launchersDigest");
   });
 });
 

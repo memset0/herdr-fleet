@@ -10,19 +10,24 @@ import {
 import {
   LEAD_CONFLICT,
   CREW_MUX_FIELD,
+  CREW_PANES_FIELD,
   CREW_SESSIONS_FIELD,
+  CREW_STATUS_HOST_FIELD,
+  CREW_STATUS_MUX_FIELD,
   CREW_SURFACE_FIELD,
   CREW_PREFIX,
   PAIRING_LABEL_COLLISION,
   PREFLIGHT_FRESH,
   PREFLIGHT_HEADER,
 } from "./router.ts";
+import { cleanHost } from "./machine-host.ts";
 import { LEAD_LINE_HEADER, LEAD_RELEASE_HEADER, UPDATE_TURN_HEADER } from "./follow.ts";
 import { DIAL_HEADER, SIGNATURE_HEADER, TIMESTAMP_HEADER, type DialParts } from "./signing.ts";
 import type { CrewRequestInit, CrewTlsOptions } from "./transport.ts";
 import type { Warrant } from "./trust-store.ts";
 import { NARROW_VIEW, SESSIONS_ALL, SESSIONS_PARAM, SESSION_PARAM, type SnapshotView } from "../sessions.ts";
 import type { MuxConfig, SessionCard, SessionState } from "../types.ts";
+import type { CopiedRow } from "./standby-launchers.ts";
 import { parseCollisionReport, parsePairingReport, type PairingSync } from "./standby-devices.ts";
 import type { TakeoverBody } from "./takeover.ts";
 import { parseWarrant, parseWarrantActiveReport, type WarrantPush } from "./warrant.ts";
@@ -161,6 +166,67 @@ function readBudgetEnv(env: Record<string, string | undefined>, key: string): st
  * Lead-local, never on the wire, so moving it needs no protocol bump.
  */
 export const WRITE_BUDGET_MS = 5000;
+
+/**
+ * How long a **forwarded read of a pane's screen** (`GET /api/pane/:id`) may take before the lead gives up
+ * on it. The same arithmetic as {@link WRITE_BUDGET_MS}, from the other side: the member, not the lead's
+ * sweep, decides how long that read takes.
+ *
+ * ── WHY (measured, 2026-10-30, M79 spec 04) ───────────────────────────────────
+ * A read with scrollback on a member that runs herdr-core can take 2.4 s: hc 0.1.14 spends that long on
+ * the FIRST history read of a pi terminal after its screen changed (`hc read t2 --lines 1`, 2.38 s; the
+ * same read again, 0 s; a plain screen read and a shell terminal, 0 s). The member's adapter gives the
+ * history read `HISTORY_READ_BUDGET_MS` (2 s) and then answers with the screen alone, marked
+ * `truncated`. That answer arrives at about 2.1 s, so the lead's 1200 ms poll budget refused every
+ * first read of a changed pane with `host_unreachable` (503, "pane/t2: timed out after 1200ms") over a
+ * pane the member would have shown a moment later, and every read after it, inside the member's 30 s
+ * screen-only window, answered. The crew leg's cases 13 and 21 read the pi pane once, so each stopped
+ * on that 503.
+ *
+ * A pane read is one operator's one request, awaited on its own path: it stalls no sweep, and the phone's
+ * poll deadline (6 s) still fires after this one. 5000 ms is the member's 2 s history budget plus a TLS
+ * round trip with room to spare. It equals the default cold-link patient budget, so naming it loses the
+ * bootstrap credit (an explicit budget spends none) without making a cold read less patient.
+ *
+ * Lead-local, never on the wire, so moving it needs no protocol bump.
+ */
+export const PANE_READ_BUDGET_MS = 5000;
+
+/**
+ * How long a **forwarded write to a pane** (`POST /api/pane/:id/reply`, `keys`, `abort`, `clear`, ...) may
+ * take before the lead gives up on it and tells the phone `write_outcome_unknown`. {@link WRITE_BUDGET_MS}
+ * still covers every write that is not addressed to a pane (a launch, a tab, a folder star).
+ *
+ * ── WHY (measured, 2026-10-30, M79 spec 04, crew case 19) ─────────────────────
+ * A send on a member that runs herdr-core costs about 6.4 s: hc 0.1.14 answers a key press about 3 s after
+ * a raw write to the same terminal, and a `reply` to a pi pane writes the text and then presses Enter, so it
+ * waits for the core twice. The member delivered the reply and answered, but past the lead's 5 s, so the
+ * phone read 504 `write_outcome_unknown` over a reply that had gone in.
+ *
+ * 15000 ms is two sends' worth on the core. The lead never dials a write twice (a second dial would be a
+ * second key), so a short budget cannot be retried away; it has to be long enough the first time. It stays
+ * inside the phone's own 20 s mutation budget (`web/src/lib/api.ts` `MUTATION_TIMEOUT_MS`), so the lead's
+ * deadline still fires first and the phone still gets §10.3's legible refusal. A member that is truly gone
+ * is not slower to report: the connect and handshake fail on their own, long before this deadline.
+ *
+ * Lead-local, never on the wire, so moving it needs no protocol bump.
+ */
+export const PANE_WRITE_BUDGET_MS = 15000;
+
+/**
+ * How long a **forwarded worktree create** (`POST /api/worktree`, ADR 0126) may take before the lead gives up on
+ * it and tells the phone `write_outcome_unknown`.
+ *
+ * A create runs `git worktree add` on the member, opens the checkout as a space and may type a launcher into
+ * it: the member's own route holds its connection 90 s for that (`WORKTREE_ROUTE_BUDGET_S`, bridge/server.ts),
+ * and the phone waits 75 s (`WORKTREE_TIMEOUT_MS`, web/src/lib/api.ts). 5 s would read most creates on a real
+ * repo as unknown. 85 s stays inside the lead's own 90 s hold on the phone's connection, so the lead still
+ * answers. A phone that gave up first retries with the SAME request id, and the member answers from its receipt
+ * or joins the create in flight, so a long budget never makes two worktrees. The lead still dials it once.
+ *
+ * Lead-local, never on the wire, so moving it needs no protocol bump.
+ */
+export const WORKTREE_WRITE_BUDGET_MS = 85_000;
 
 /** How long a `hello` PROBE may take before the lead calls a member gone (§10.4), by default. */
 export const DEFAULT_CREW_HELLO_TIMEOUT_MS = 5000;
@@ -424,6 +490,9 @@ export type PeerOutcome<T> =
     }
   | (PeerFailure & { readonly ok: false; readonly receivedAt: number });
 
+/** How a launcher copy ended (ADR 0127 point 5): landed, a deputy without the route, or anything else. */
+export type LaunchersCopyAnswer = "applied" | "no_route" | "failed";
+
 /** What a `hello` reports about the member that answered it (§5). */
 export interface HelloResult {
   readonly protocol: number;
@@ -559,7 +628,13 @@ export interface PeerClientDeps {
  * Returns `null` when either check fails — the caller reports it as unreachable, because a member the
  * lead cannot form a URL for is, from the phone's point of view, exactly a member that is not there.
  */
-export function crewUrl(address: string, route: string, params?: Record<string, string>): string | null {
+/**
+ * A crew call's query. A key the phone (or the lead, ADR 0127's `?cwd=`) repeats is a list, sent as
+ * the same key once per value, so a member's `searchParams.getAll` reads every one of them.
+ */
+export type CrewParams = Readonly<Record<string, string | readonly string[]>>;
+
+export function crewUrl(address: string, route: string, params?: CrewParams): string | null {
   const withScheme = /^https?:\/\//i.test(address) ? address : `https://${address}`;
   let base: URL;
   try {
@@ -579,7 +654,13 @@ export function crewUrl(address: string, route: string, params?: Record<string, 
   // Defence in depth against a route assembled from anything but a literal upstream: `..` segments
   // are normalised by `new URL`, so this catches an escape after normalisation rather than before it.
   if (!url.pathname.startsWith(CREW_PREFIX)) return null;
-  for (const [k, v] of Object.entries(params ?? {})) url.searchParams.set(k, v);
+  for (const [k, v] of Object.entries(params ?? {})) {
+    if (typeof v === "string") {
+      url.searchParams.set(k, v);
+      continue;
+    }
+    for (const each of v) url.searchParams.append(k, each);
+  }
   return url.toString();
 }
 
@@ -705,6 +786,29 @@ export class PeerClient {
       headers: { "content-type": "application/json" },
       body: JSON.stringify(payload),
     });
+  }
+
+  /**
+   * `POST /crew/v1/launchers-copy` — the crew's launcher rows to the DEPUTY (ADR 0127 point 5, §18.14).
+   *
+   * A passthrough dial, so the deputy's own status is kept: a 404 is a build before the route, and the
+   * lead stops sending to it until the next connect. Signed as the pairing sync is. Any other answer
+   * that is not a 2xx, or no answer, is `failed`, and the next sweep's report decides again.
+   */
+  async launchersCopy(link: CrewLink, rows: readonly CopiedRow[]): Promise<LaunchersCopyAnswer> {
+    const outcome = await this.proxy(
+      link,
+      "launchers-copy",
+      undefined,
+      { method: "POST", headers: { "content-type": "application/json" }, body: JSON.stringify({ rows }) },
+      undefined,
+      true,
+    );
+    if (!outcome.ok) return "failed";
+    const status = outcome.value.status;
+    await outcome.value.body?.cancel().catch(() => {});
+    if (status === 404) return "no_route";
+    return status >= 200 && status < 300 ? "applied" : "failed";
   }
 
   /**
@@ -864,7 +968,7 @@ export class PeerClient {
   async proxy(
     link: CrewLink,
     route: string,
-    params?: Record<string, string>,
+    params?: CrewParams,
     init: CrewRequestInit = {},
     budgetMs?: number,
     sign = false,
@@ -904,7 +1008,7 @@ export class PeerClient {
   private async dial(
     link: CrewLink,
     route: string,
-    params: Record<string, string> | undefined,
+    params: CrewParams | undefined,
     init: CrewRequestInit,
     mode: "consumed" | "passthrough",
     // The one knob a caller may widen, and three callers do: the verdict probe's patient budget
@@ -1483,6 +1587,34 @@ export function parsePeerVersion(value: JsonValue): string | null {
   if (typeof raw !== "string") return null;
   const trimmed = raw.trim();
   return trimmed === "" ? null : trimmed;
+}
+
+/** What a member's `snapshot` answer says about its multiplexer, its panes and its host (M76 spec 04, M77 spec 01). */
+export interface PeerStatusReport {
+  /** The multiplexer's registry name, or `null` when the answer carried none. */
+  readonly mux: string | null;
+  /** The agent pane count, or `null` when the answer carried none (a member that could not count). */
+  readonly panes: number | null;
+  /** The machine's own host name (M77 spec 01), or `null` when the answer carried none. */
+  readonly host: string | null;
+}
+
+/**
+ * Read a member's `mux`, `panes` and `host` off the answer its `snapshot` rode on.
+ *
+ * Each is `null` on every shape this build cannot trust (absent, blank, wrong type, a negative or
+ * fractional count). `null` means **"this answer said nothing"**, not "no multiplexer" and never
+ * "zero panes": an older member omits both, and a member still starting omits `panes`.
+ */
+export function parsePeerStatus(value: JsonValue): PeerStatusReport {
+  const rec = asRecord(value);
+  const mux = rec?.[CREW_STATUS_MUX_FIELD];
+  const panes = rec?.[CREW_PANES_FIELD];
+  return {
+    host: cleanHost(rec?.[CREW_STATUS_HOST_FIELD]),
+    mux: typeof mux === "string" && mux.trim() !== "" && mux.length <= MUX_NAME_MAX ? mux.trim() : null,
+    panes: typeof panes === "number" && Number.isSafeInteger(panes) && panes >= 0 ? panes : null,
+  };
 }
 
 /**

@@ -18,12 +18,13 @@ import type { Exec, Files } from "./sys.ts";
 // adapter and a session is addressable — reported on the pane record, or found by an adapter that
 // discovers its own (`DISCOVERS_OWN_SESSIONS`).
 //
-// The session ref reaches Herdr from ONE place: the agent-side hook `herdr integration install
-// <agent>` writes. That hook exits silently when its environment is not what it expects, and it
-// loads at the agent's SESSION START — so installing it under a running agent changes nothing until
-// that agent is restarted. Miss any of it and the pane looks perfectly normal while both affordances
-// simply are not drawn, with nothing anywhere saying why. `/api/pane/:id/history` is not consulted
-// for the hide, so its own `no-log` / `disabled` reasons never get a chance to explain themselves.
+// For every other agent the session ref reaches Herdr from ONE place: the agent-side hook `herdr
+// integration install <agent>` writes. That hook exits silently when its environment is not what it
+// expects, and it loads at the agent's SESSION START — so installing it under a running agent
+// changes nothing until that agent is restarted. Miss any of it and the pane looks perfectly normal
+// while both affordances simply are not drawn, with nothing anywhere saying why.
+// `/api/pane/:id/history` is not consulted for the hide, so its own `no-log` / `disabled` reasons
+// never get a chance to explain themselves.
 //
 // One agent's session start is late on purpose: Codex fires the hook only on its first prompt
 // (issue #294, `REPORTS_SESSION_ON_FIRST_PROMPT`), so its pane with no session is explained here and
@@ -214,6 +215,21 @@ export interface HistoryDeps {
   readonly snapshot: () => Promise<SnapshotRead>;
   /** Which platform's Herdr minimum applies; the running machine's when absent. */
   readonly host?: Host;
+  /**
+   * Why no pane can report a session on this install, when that is so by design: the multiplexer
+   * names agents itself (so no beacon adds a session) and declares no agent session ref. Then
+   * `agent-sessions` is skipped with this reason instead of an error no install step can fix (M74,
+   * herdr-core). Absent on every multiplexer that can report one.
+   */
+  readonly noSessionRefs?: string | undefined;
+  /** What to do about {@link noSessionRefs}, when something can be done (install the hooks). */
+  readonly noSessionRefsRemedy?: string | undefined;
+  /**
+   * The multiplexer names agents itself and a hook adds the session (herdr-core, M74 spec 04), and
+   * hooks are installed: `agent-sessions` reads the bridge's panes as usual, but its remedy is the
+   * hook and not `herdr integration install`.
+   */
+  readonly sessionsFromHooks?: boolean | undefined;
 }
 
 /**
@@ -251,7 +267,13 @@ export async function historyFindings(deps: HistoryDeps): Promise<Finding[]> {
     herdr,
     ...JOURNAL_AGENT_NAMES.map((agent) => integration(agent, status, verdicts)),
     python(deps),
-    sessions(verdicts, read),
+    deps.noSessionRefs === undefined
+      ? sessions(verdicts, read, deps.sessionsFromHooks === true ? HOOK_REMEDY : undefined)
+      : skipped(
+          "agent-sessions",
+          `no pane can report an agent session here: ${deps.noSessionRefs}`,
+          deps.noSessionRefsRemedy ?? "nothing to do; History needs a multiplexer that reports the session",
+        ),
     journalRoots(deps),
   ];
 }
@@ -323,7 +345,8 @@ function integration(
   if (line === undefined) {
     // An adapter that discovers its own session needs no hook at all: no Herdr build lists one,
     // and none has to. Green, not skipped — there is nothing to do here.
-    if (DISCOVERS_OWN_SESSIONS.includes(agent)) {
+    const canonical = Object.entries(AGENT_ALIASES).find(([alias]) => alias === agent)?.[1] ?? agent;
+    if (DISCOVERS_OWN_SESSIONS.includes(canonical)) {
       return ok(check, "no hook — the adapter finds the session log itself");
     }
     return skipped(
@@ -402,7 +425,7 @@ function python(deps: HistoryDeps): Finding {
  * observed consequence. A journalled agent pane without `hasSession` is precisely the pane whose
  * History link the phone will not draw.
  */
-function sessions(verdicts: readonly PaneVerdict[] | null, read: SnapshotRead): Finding {
+function sessions(verdicts: readonly PaneVerdict[] | null, read: SnapshotRead, remedy?: string): Finding {
   const check = "agent-sessions";
   if (verdicts === null) {
     // A REFUSAL IS NOT A SILENCE (issue #238). The bridge fails closed on a request carrying no
@@ -452,10 +475,15 @@ function sessions(verdicts: readonly PaneVerdict[] | null, read: SnapshotRead): 
     check,
     `${summary}; ${String(faulty.length)} report NO session: ${namePanes(faulty)} — their History link and icon are` +
       ` hidden, and the pane looks otherwise normal${notYet}`,
-    `\`herdr integration install <agent>\` for each agent named above (the \`integration-…\` lines say which),` +
-      ` ${INSTALL_NOTE}`,
+    remedy ??
+      `\`herdr integration install <agent>\` for each agent named above (the \`integration-…\` lines say which),` +
+        ` ${INSTALL_NOTE}`,
   );
 }
+
+/** The remedy where the hook adds the session and not Herdr (herdr-core, M74 spec 04). */
+const HOOK_REMEDY =
+  "`collie hooks install claude`, then relaunch the Claude in each pane named above; the hook writes the session id on its first event";
 
 /**
  * `journal-roots` — `COLLIE_TRANSCRIPT`, and whether a journal could be read at all.
@@ -471,7 +499,7 @@ function journalRoots(deps: HistoryDeps): Finding {
     return warn(
       check,
       "COLLIE_TRANSCRIPT is off — the bridge reads no journal at all, so no pane offers a history" +
-        " however well its hooks are installed",
+        " however it reports its session",
       `remove COLLIE_TRANSCRIPT (or set it to 1) in ${deps.ctx.configDir}/.env, then \`collie restart\``,
     );
   }

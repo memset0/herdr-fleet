@@ -125,6 +125,7 @@ describe("Fleet Collie child environment", () => {
     // nothing and Fleet carries no reset for it.
     expect(settingByEnv(RETIRED_CREW_TIMEOUT_ENV)).toBeUndefined();
     expect(FLEET_OWNED_COLLIE_SETTINGS).not.toContain(RETIRED_CREW_TIMEOUT_ENV);
+    expect(collieChildEnv(config, STATE, { COLLIE_TELEMETRY: "true" }).COLLIE_TELEMETRY).toBe("false");
   });
 
   test("stating neither leaves Collie's own defaults alone under either spelling", () => {

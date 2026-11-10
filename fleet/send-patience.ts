@@ -7,11 +7,14 @@
 // went in. The numbers stand alone because the web bundle must not import the bridge's protocol
 // module; fleet/send-patience.test.ts holds them in that order against `LOCK_BOUND_MS`.
 
+/** Hard ceiling including write costs and recovery windows. */
+export const SEND_EXECUTION_MAX_MS = 90_000;
+
 /** The lead's budget for forwarding a member pane's reply route, which runs a whole send on the member. */
-export const SEND_FORWARD_BUDGET_MS = 50_000;
+export const SEND_FORWARD_BUDGET_MS = 110_000;
 
 /** The phone's budget for one send request, through `/api/send` or a member pane's reply route. */
-export const SEND_REQUEST_TIMEOUT_MS = 60_000;
+export const SEND_REQUEST_TIMEOUT_MS = 120_000;
 
 /** A pane's reply route as the lead's forward names it (`bridge/crew/forward.ts`, without `/api/`). */
 const REPLY_ROUTE = /^pane\/[^/]+\/reply$/u;
@@ -31,10 +34,8 @@ export function forwardWriteBudget(route: string, writeBudgetMs: number): number
  */
 export const TAP_SETTLE_DEADLINE_MS = 5_000;
 
-/**
- * How long a key token lives (`TOKEN_LIFETIME_MS`, bridge/surface/key-gate.ts). The Send Protocol
- * mints it, records `submit-sent` on disk, then presses the submit key; on a network filesystem that
- * write alone outlasts Collie's 150 ms and the verified text is left in the box. The gate's revision
- * check still refuses a key that moved the pane in between.
- */
-export const KEY_TOKEN_LIFETIME_MS = 3_000;
+/** Upstream fixture suites can exercise their original polling schedule. */
+export const sendPolicy = { patient: true };
+
+/** Both HTTP listeners must outlast the browser send budget, including a quiet response. */
+export const FLEET_HTTP_IDLE_SECONDS = Math.ceil(SEND_REQUEST_TIMEOUT_MS / 1000) + 10;

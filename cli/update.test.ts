@@ -76,7 +76,9 @@ import {
   wantsMajor,
   wantsRunId,
   wantsToTag,
+  STATUSLINE_LAG_WORD,
 } from "./update.ts";
+import { STATUSLINE_BEHIND_WORD } from "./hooks.ts";
 
 // The fakes model a POSIX box and every fixture here is spelled that way (`/opt/collie`, `/inst`), but
 // the code under test builds its paths with `join`, which hands back `\opt\collie\cli\main.ts` on
@@ -755,6 +757,34 @@ describe("refreshRegistry", () => {
     expect(h.io.stdout.join("\n")).toContain("re-linked");
   });
 
+  test("a herdr-core host runs no herdr command at all (M74 spec 04)", () => {
+    const named = harness({ answers: LINKED, env: { COLLIE_MUX: "herdr-core" } });
+    refreshRegistry(named.deps);
+    expect(named.exec.calls.some((c) => c.startsWith("herdr"))).toBe(false);
+    expect(named.io.stdout).toEqual([]);
+
+    const core = "/run/user/501/herdr-core/default.sock";
+    const picked = harness({ answers: LINKED, env: { XDG_RUNTIME_DIR: "/run/user/501" } });
+    picked.files.write(core, "");
+    refreshRegistry(picked.deps);
+    expect(picked.exec.calls.some((c) => c.startsWith("herdr"))).toBe(false);
+  });
+
+  test("a Herdr TUI host whose socket is briefly gone keeps its herdr plugin steps", () => {
+    const core = "/run/user/501/herdr-core/default.sock";
+    const marker = harness({ answers: LINKED, env: { XDG_RUNTIME_DIR: "/run/user/501" } });
+    marker.files.write(core, "");
+    marker.files.write(`${marker.deps.ctx.home}/.config/herdr/config.toml`, "");
+    refreshRegistry(marker.deps);
+    expect(marker.exec.calls).toContain(`herdr plugin link ${ROOT}`);
+
+    // The instance's own COLLIE_MUX (its .env, merged into ctx.env) decides before any marker.
+    const pinned = harness({ answers: LINKED, env: { XDG_RUNTIME_DIR: "/run/user/501", COLLIE_MUX: "herdr" } });
+    pinned.files.write(core, "");
+    refreshRegistry(pinned.deps);
+    expect(pinned.exec.calls).toContain(`herdr plugin link ${ROOT}`);
+  });
+
   test("is best-effort: no herdr, or a herdr that refuses, never fails the update", () => {
     const none = harness({ absent: ["herdr"], answers: LINKED });
     refreshRegistry(none.deps);
@@ -1340,7 +1370,7 @@ interface BinaryOptions {
   /** The digest the download reports — a different one is the corruption case. */
   digest?: string;
   tagsFailure?: { status: number | null; message: string };
-  downloadFailure?: { status: number | null; message: string };
+  downloadFailure?: { status: number | null; message: string; kind?: "stall" | "slow" };
   restart?: number;
   smoke?: { pre?: boolean; post?: boolean };
   /** The laid candidate's whole answer to `version`, when a case needs more than a wrong word. */
@@ -2368,6 +2398,16 @@ describe("the hooks nudge", () => {
     expect(h.exec.calls).toContain(CHECK);
     expect(h.io.stdout.join("\n")).toContain(NUDGE);
     expect(h.io.stdout.join("\n")).toContain("collie hooks install claude");
+  });
+
+  test("names the statusLine wrap when that is the only thing behind, and still names the command", async () => {
+    // The two spellings of the word are one fact; update.ts keeps its own to stay off hooks.ts.
+    expect(STATUSLINE_LAG_WORD).toBe(STATUSLINE_BEHIND_WORD);
+    const h = binaryHarness({ hooksCheck: { code: EXIT.STATE, stdout: `${STATUSLINE_BEHIND_WORD}\n` } });
+    expect(await runner(h, BINARY_APPLY)).toBe(EXIT.OK);
+    const out = h.io.stdout.join("\n");
+    expect(out).toContain("your wrapped statusLine points at an older collie binary; run `collie hooks install claude --statusline` to re-point it.");
+    expect(out).not.toContain(NUDGE);
   });
 
   test("stays silent when the new binary reports nothing to do", async () => {
@@ -3659,6 +3699,25 @@ describe("staging reports itself while it builds", () => {
         expect(run?.reason).toBe("staging stopped before the new version was laid down");
       }
     });
+  });
+
+  test("a download that stalled says so, and does not claim github.com was unreachable (#613)", async () => {
+    const message = "stalled: no data for 60 s after 12.3 MB of 57.3 MB";
+    const h = binaryHarness({ downloadFailure: { status: null, kind: "stall", message } });
+    expect(await cmdUpdate(h.deps, ["--run-id", RUN])).toBe(EXIT.FAIL);
+    const err = h.io.stderr.join("\n");
+    expect(err).toContain(`error: downloading collie-${NEW}-linux-x64.tar.gz ${message}. Nothing was changed.`);
+    expect(err).not.toContain("could not reach");
+    expect(h.files.exists(`${INST}/versions/${NEW}`)).toBe(false);
+  });
+
+  test("a download that passed the total cap says so, and not 'could not reach' (#613)", async () => {
+    const message = "took longer than 30 min (20.0 MB of 57.3 MB)";
+    const h = binaryHarness({ downloadFailure: { status: null, kind: "slow", message } });
+    expect(await cmdUpdate(h.deps, ["--run-id", RUN])).toBe(EXIT.FAIL);
+    const err = h.io.stderr.join("\n");
+    expect(err).toContain(`error: downloading collie-${NEW}-linux-x64.tar.gz ${message}. Nothing was changed.`);
+    expect(err).not.toContain("could not reach");
   });
 
   test("a second update beside a live one writes nothing: `update.json` keeps one writer", async () => {

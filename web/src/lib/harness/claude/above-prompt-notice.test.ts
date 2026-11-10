@@ -193,6 +193,30 @@ describe("the notice above the box", () => {
     });
   });
 
+  // Seen live on 2026-11-03, Claude Code 2.1.317 at 154 columns with `verbose` on: the session's token
+  // count, right-aligned between the key row and the box. The composer read "Cannot read what is open".
+  // The statusline rows are replaced with neutral words of the same width.
+  it("reads the notice over the verbose token count with the box free, and lifts its card", () => {
+    const rule = "─".repeat(154);
+    const seen = [
+      "✻ Brewed for 26s · done 9:37 AM",
+      `${" ".repeat(150)}[-]`,
+      "✦ Heads up · Your rule for the pipe operator does not hold for one bundle, which still supports PHP 8.4.",
+      "  1: Learn more   2: Knew this already   0: Dismiss",
+      `${" ".repeat(139)}230267 tokens`,
+      rule,
+      "❯ ",
+      rule,
+      `  ${"neutral words ".repeat(10).slice(0, 110)}`,
+      "  ⏵⏵ auto mode on (shift+tab to cycle)",
+    ].join("\n");
+    const rows = splitLines(parseAnsi(seen));
+    expect(readScreen(rows, "claude", requireProfile("claude").idle).surface).toMatchObject({ modal: "none", composer: "empty" });
+    expect(claudeAdapter.composerReady?.(rows)).toBe(true);
+    const card = claudeBuildBlocks(rows).find((b) => b.kind === "menu");
+    if (card?.kind !== "menu") throw new Error("no menu");
+    expect(card.menu.actions.map((action) => action.keys)).toEqual([["1"], ["2"], ["0"]]);
+  });
 });
 
 // Decided 2026-10-19 (ADR 0109): Claude Code's rating survey is a notice like Heads up. On lane 8788 it
@@ -240,6 +264,24 @@ describe("the rating survey above the box", () => {
     const gapped = [...rows.slice(0, keys + 1), splitLines(parseAnsi(""))[0] ?? { segments: [] }, ...rows.slice(keys + 1)];
     expect(cardOf(gapped).menu.actions).toEqual(SURVEY_KEYS);
   });
+
+  // Claude Code 2.1.317 (issue 705, 2026-11-05): the right-aligned `N% until auto-compact` row stands
+  // between the survey and the box, styled as Claude paints it and as plain text from herdr-core.
+  for (const name of ["claude--v2317-survey-context-row--w160.txt", "claude--v2317-survey-context-row-plain--w160.txt"]) {
+    it(`lifts ${name} as the survey card over a live box`, () => {
+      const card = cardOf(lines(name));
+      expect(card.menu.title).toBe("How is Claude doing this session? (optional)");
+      expect(card.menu.actions).toEqual(SURVEY_KEYS);
+      expect(card.menu.liveBox).toEqual({ draft: false });
+      expect(card.lines.map(lineText).map((text) => text.trimEnd())).toEqual(["● How is Claude doing this session? (optional)", "  1: Bad    2: Fine   3: Good   0: Dismiss"]);
+      expect(claudeAdapter.composerReady?.(lines(name))).toBe(true);
+      const blocks = claudeBuildBlocks(lines(name));
+      expect(blocks.some(blockOwnsKeyboard)).toBe(false);
+      expect(dialogNounOf(blocks)).toBeNull();
+      const region = card.menu.signature.split("\n").map((row) => row.trimEnd());
+      expect(region[2]).toMatch(/^ +4% until auto-compact$/u);
+    });
+  }
 
   it("lifts the 2.1.278 capture's survey the same way", () => {
     const card = cardOf(lines(OLD));

@@ -1,4 +1,4 @@
-import { ChevronDown } from "lucide-react";
+import { Icon } from "@/components/icons/icon";
 import type { ComponentProps, ReactNode } from "react";
 
 import { cn } from "@/lib/utils";
@@ -25,7 +25,8 @@ interface SelectProps extends Omit<ComponentProps<"select">, "className"> {
  * the tap floor (DESIGN.md §6), and nothing about the select changes its box when the value does
  * (§2): the native control sizes itself to its widest option, not to the chosen one.
  *
- * The dashboard's workspace and order selects use it, and so does the New page (the machine, the
+ * The dashboard's order select uses it (the workspace filter beside it copies the box onto a button that
+ * opens a sheet, because it chooses several), and so does the New page (the machine, the
  * agent and the command; the old new-space sheet's Repository and Agent fields did before it). The three
  * Settings selects (language, typeface, terminal font) carry the same construction by hand and have
  * not been moved onto this yet.
@@ -50,7 +51,8 @@ export function Select({ className, lead, children, ...props }: SelectProps) {
           {lead}
         </span>
       )}
-      <ChevronDown
+      <Icon
+        name="select-caret"
         aria-hidden
         className="pointer-events-none absolute right-3 top-1/2 size-4 -translate-y-1/2 text-muted-foreground"
       />

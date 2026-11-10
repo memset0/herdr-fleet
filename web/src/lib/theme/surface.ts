@@ -1,4 +1,4 @@
-// The shape of a theme, schema version 2 (M57 specs 14 and 17): ten tokens, each a CLOSED list of
+// The shape of a theme, schema version 2 (M57 specs 14 and 17): thirteen tokens, each a CLOSED list of
 // words, and the one table that turns a word into CSS declarations. Beside it, two more closed doors
 // of version 2 that are not words of the `surface` block: the display face (`fonts.display`, one of
 // the shipped faces) and the terminal palette (`ansi`, eighteen gate-checked colours).
@@ -15,7 +15,7 @@
 // `src/theme-init.test.ts` fails when the line in the file is not the line this module writes.
 //
 // HOW EACH TOKEN REACHES THE PAGE. Tailwind compiles some theme values into each utility and reads
-// others through var(); the ten tokens are the ones that end in a property a utility reads at run time.
+// others through var(); the first ten tokens are the ones that end in a property a utility reads at run time; the last three, zoom, tabs and composer, end in none.
 //   * radius: `--radius-sm/md/lg/xl`. index.css declares them in `@theme` (not `@theme inline`), so
 //     `rounded-md` compiles to `border-radius: var(--radius-md)`. Bare `rounded` and `rounded-full`
 //     are not steps and never move. The radius word also sets `--edge-accent`, the offsets of the
@@ -36,7 +36,7 @@
 //     colour) to {@link GROUND_GRADIENT_END} at the bottom; grain draws two sets of 1px diagonal lines
 //     in {@link GROUND_GRAIN_LINE}. schema.ts measures the page's text pairs on both of those colours.
 //   * chrome (spec 17): `--band-ground` and `--band-rule`, the fill and the edge of the header, the tab
-//     bar and the bottom bar. `page` is today's page colour and rule; `band` is `--secondary` with a
+//     bar and the bottom bar. `page` is the page colour and `--rule`; `band` is `--secondary` with a
 //     `--border` edge.
 //   * rows (spec 17): the rows of a list group (`[data-slot="list-group"]`, ui/list-group.tsx and the
 //     hand-rolled lists that carry the slot). `rules` is today's framed group with a line between
@@ -47,16 +47,28 @@
 //   * icons (spec 17): `--icon-stroke`, the stroke width of every lucide icon (`svg.lucide`).
 //   * labels (spec 17): `--label-transform` and `--label-tracking`, read by the `label-caps` utility
 //     every small section label wears.
+//   * zoom (1.26.2): the one word that sets no property. It says whether the belt's Zoom pill shows
+//     in the Screen view (`screen`, today's behaviour) or never (`none`). Its words hold no
+//     declarations, so nothing reaches the page; the app reads the word itself (lib/zoom-pill.ts),
+//     and a device choice in Settings wins over it.
+//   * tabs: the second word that sets no property. It says how the open tab is drawn.
+//     `plain` is today's row, ink and weight and nothing else; `folder` draws the open tab as a
+//     folder tab that joins the page below it (components/tab-strip.tsx, pane-strip.tsx). The app
+//     reads the word itself (lib/tab-look.ts). Its colour is the optional token `tab-active`.
+//   * composer: the third. It says how the composer is laid out: `field` is today's
+//     (one text field with its row of controls), `box` a boxed composer (lib/composer-layout.ts).
 //
-// EVERY DEFAULT IS TODAY'S VALUE. `src/themes/themes.test.ts` reads index.css and Tailwind's own
-// theme.css and holds each default word equal to what the app drew before version 2.
+// EVERY DEFAULT IS THE STYLESHEET'S VALUE. `src/themes/themes.test.ts` reads index.css and holds each
+// default word equal to what `:root` declares. Since the theme Collie New became `collie`, that is the
+// flat, bold, banded look; the word named `default` of `shadow` and `weight` is Tailwind's own stock
+// value, kept as a word so a stored theme that names it still validates.
 //
 // It imports one leaf file, for the same reason `schema.ts` imports little: the build script loads it
 // with plain Bun.
 
 import { SHIPPED_FONTS, isShippedFont, type ShippedFont } from "../shipped-fonts";
 
-/** The ten shape tokens, in the order a file's words are applied. */
+/** The thirteen shape tokens, in the order a file's words are applied. */
 export const SURFACE_TOKENS = [
   "radius",
   "shadow",
@@ -68,6 +80,9 @@ export const SURFACE_TOKENS = [
   "rows",
   "icons",
   "labels",
+  "zoom",
+  "tabs",
+  "composer",
 ] as const;
 
 export type SurfaceToken = (typeof SURFACE_TOKENS)[number];
@@ -121,18 +136,257 @@ function radii(sm: number, md: number, lg: number, xl: number, edge: string, edg
   ];
 }
 
-/** The bottom colour of the `gradient` ground: the page with 12 percent of the theme's primary. */
-export const GROUND_GRADIENT_END = { base: "background", mix: "primary", percent: 12 } as const;
-/** The line colour of the `grain` ground: the page with 4 percent of the theme's foreground (6 until
- *  spec 18: at 6 a rule on the light grain measured 1.32 and a dashed ring was lost in it). */
-export const GROUND_GRAIN_LINE = { base: "background", mix: "foreground", percent: 4 } as const;
+// ── The ground (spec 17, and the pattern object of schema version 4) ─────────────────────────────
+//
+// A ground is four closed words: a PATTERN, its SIZE, its STRENGTH and its INK. A file names it as one
+// word (`"grain"`, versions 2 to 4) or as an object of the four (`{ "pattern": "dots", "ink":
+// "primary" }`, version 4 only). The word is the object with only a pattern: `"grain"` is
+// `{ "pattern": "grain" }`, and both set the same declarations.
+//
+// FOUR WORDS, FOUR SETS OF PROPERTIES. Each word sets its own custom properties, and the pattern's CSS
+// reads them, so the four combine without a table of every combination (theme-init.js holds the four
+// small tables, not 162 strings):
+//   * pattern  `--ground-image` and `--ground-size` (the html rule paints both), and `--ground-ink`,
+//              the pattern's own ink, which an `ink` word then overrides;
+//   * size     `--ground-scale`, the factor every pitch in a pattern is multiplied by;
+//   * strength `--ground-line`, `--ground-dot`, `--ground-area` and `--ground-tint`: the paint of a
+//              thin line, a dot, a filled shape and the gradient's end, each the page colour with a
+//              few percent of the ink. A pattern reads the one paint that fits how much it covers.
+//   * ink      `--ground-ink`: `var(--foreground)` or `var(--primary)`.
+//
+// OUR CSS ONLY. Every value is a CSS gradient written here from the theme's own colours. A file never
+// supplies a value, a URL, an image or an SVG. The patterns are static: no animation, no blend mode,
+// no filter, so the ground costs nothing at rest (issue 748).
+//
+// CONTRAST. schema.ts measures the page's text on the paint a ground draws, for the words the file
+// names ({@link groundPaint}), as it did for the grain and the gradient.
 
-/** `color-mix(in oklab, ...)` of one of the two ground colours above, spelled in CSS. */
-function groundMix(m: { base: string; mix: string; percent: number }): string {
-  return `color-mix(in oklab, var(--${m.base}) ${100 - m.percent}%, var(--${m.mix}))`;
+/** How much of the page a pattern covers, which picks the paint it reads. */
+type GroundCoverage = "line" | "dot" | "area" | "tint";
+
+/** The ink a ground mixes into the page colour. */
+export const GROUND_INKS = ["foreground", "primary"] as const;
+export type GroundInk = (typeof GROUND_INKS)[number];
+
+/** A pitch in px, multiplied by the size word's factor. */
+function pitch(px: number): string {
+  return `calc(${px}px * var(--ground-scale))`;
 }
 
-const GRAIN_LINES = `${groundMix(GROUND_GRAIN_LINE)} 0 1px, transparent 1px 4px`;
+/** A tile of `px` square, at the size word's factor. */
+function tile(w: number, h: number = w): string {
+  return `${pitch(w)} ${pitch(h)}`;
+}
+
+const LINE = "var(--ground-line)";
+
+/** A ring of radius `r` (px, at the size factor) one pixel wide, around a point of the tile. */
+function arc(at: string, r: number): string {
+  return `radial-gradient(circle at ${at}, transparent calc(${pitch(r)} - 1px), ${LINE} calc(${pitch(r)} - 1px) ${pitch(r)}, transparent ${pitch(r)})`;
+}
+
+/** Two sets of 1px diagonal lines, 4px apart at the default size: Collie's own ground since spec 17. */
+const GRAIN = `repeating-linear-gradient(45deg, ${LINE} 0 1px, transparent 1px ${pitch(4)}), repeating-linear-gradient(-45deg, ${LINE} 0 1px, transparent 1px ${pitch(4)})`;
+
+/** The weave: three layers of the same tile that read as cloth (Lea Verou's CSS3 pattern gallery). */
+const WEAVE = [
+  "linear-gradient(45deg, var(--ground-area) 12%, transparent 0 88%, var(--ground-area) 0)",
+  "linear-gradient(135deg, transparent 37%, var(--ground-area) 0 63%, transparent 0)",
+  "linear-gradient(45deg, transparent 37%, var(--ground-area) 0 63%, transparent 0)",
+].join(", ");
+
+/** The patterns, `flat` first. The first three are the word form of versions 2 to 4. */
+export const GROUND_PATTERN_WORDS = ["flat", "gradient", "grain", "dots", "grid", "lines", "checks", "waves", "weave"] as const;
+export type GroundPatternWord = (typeof GROUND_PATTERN_WORDS)[number];
+
+/** The word form of a ground, versions 2 to 4: the first three patterns, unchanged since spec 17. */
+export type GroundWord = "flat" | "gradient" | "grain";
+
+/** True for the word form of a ground, false for the object form. Compares, never indexes. */
+export function isGroundWord(ground: GroundWord | GroundSpec): ground is GroundWord {
+  return ground === "flat" || ground === "gradient" || ground === "grain";
+}
+
+/** The size words, the default first. */
+export const GROUND_SIZE_WORDS = ["default", "fine", "wide"] as const;
+export type GroundSize = (typeof GROUND_SIZE_WORDS)[number];
+
+/** The strength words, the default first. */
+export const GROUND_STRENGTH_WORDS = ["default", "faint", "bold"] as const;
+export type GroundStrength = (typeof GROUND_STRENGTH_WORDS)[number];
+
+interface GroundPattern {
+  image: string;
+  size: string;
+  coverage: GroundCoverage | null;
+  ink: GroundInk;
+}
+
+/**
+ * The patterns, `flat` first. The first three are the words of versions 2 and 3; the rest are named
+ * only in the object form. Each reads one paint ({@link GroundCoverage}), and `gradient` alone takes
+ * the primary as its own ink, as it did before the object form.
+ */
+export const GROUND_PATTERNS = {
+  flat: { image: "none", size: "auto", coverage: null, ink: "foreground" },
+  gradient: { image: "linear-gradient(to bottom, var(--background), var(--ground-tint))", size: "auto", coverage: "tint", ink: "primary" },
+  grain: { image: GRAIN, size: "auto", coverage: "line", ink: "foreground" },
+  dots: { image: "radial-gradient(circle, var(--ground-dot) 0 1.25px, transparent 1.75px)", size: tile(12), coverage: "dot", ink: "foreground" },
+  grid: {
+    image: `linear-gradient(${LINE} 0 1px, transparent 1px), linear-gradient(90deg, ${LINE} 0 1px, transparent 1px)`,
+    size: tile(16),
+    coverage: "line",
+    ink: "foreground",
+  },
+  lines: { image: `repeating-linear-gradient(45deg, ${LINE} 0 1px, transparent 1px ${pitch(6)})`, size: "auto", coverage: "line", ink: "foreground" },
+  checks: {
+    image: "conic-gradient(var(--ground-area) 25%, transparent 0 50%, var(--ground-area) 0 75%, transparent 0)",
+    size: tile(16),
+    coverage: "area",
+    ink: "foreground",
+  },
+  waves: { image: `${arc("25% 0", 6)}, ${arc("75% 100%", 6)}`, size: tile(24, 12), coverage: "line", ink: "foreground" },
+  weave: { image: WEAVE, size: tile(20), coverage: "area", ink: "foreground" },
+} as const satisfies Record<GroundPatternWord, GroundPattern>;
+
+/** The size words, the default first: the factor on every pitch. */
+export const GROUND_SIZES = { default: "1", fine: "0.75", wide: "2" } as const satisfies Record<GroundSize, string>;
+
+/**
+ * The strength words, the default first: the percent of the ink in each paint. `default` is the grain's
+ * 4 percent of spec 18 and the gradient's 12; no line, dot or shape ever goes past 10. The gradient's
+ * end is one colour spread over the whole page height, so its scale is its own.
+ */
+export const GROUND_STRENGTHS = {
+  default: { line: 4, dot: 7, area: 3, tint: 12 },
+  faint: { line: 2.5, dot: 5, area: 2, tint: 7 },
+  bold: { line: 7, dot: 10, area: 5, tint: 18 },
+} as const satisfies Record<GroundStrength, Record<GroundCoverage, number>>;
+
+/**
+ * A ground in the object form, AS WRITTEN. Every key is optional; a key it leaves out is the default
+ * word. A word may be one this Collie does not know (a newer Collie's pattern): the theme keeps it, so
+ * an export writes it back and a later Collie that knows it draws it, and every reader below resolves
+ * it to the default through `knownGround` first. A word only ever reaches the page as a key of
+ * GROUND_WORDS, never as itself.
+ */
+export interface GroundSpec {
+  pattern?: string;
+  size?: string;
+  strength?: string;
+  ink?: string;
+}
+
+/** A ground in the object form with only the words this Collie knows. */
+export interface KnownGround {
+  pattern?: GroundPatternWord;
+  size?: GroundSize;
+  strength?: GroundStrength;
+  ink?: GroundInk;
+}
+
+/** The words of `spec` this Collie knows; an unknown word is left out, which is its default. Compares, never indexes. */
+export function knownGround(spec: GroundSpec): KnownGround {
+  const known: KnownGround = {};
+  const pattern = GROUND_PATTERN_WORDS.find((word) => word === spec.pattern);
+  const size = GROUND_SIZE_WORDS.find((word) => word === spec.size);
+  const strength = GROUND_STRENGTH_WORDS.find((word) => word === spec.strength);
+  const ink = GROUND_INKS.find((word) => word === spec.ink);
+  if (pattern !== undefined) known.pattern = pattern;
+  if (size !== undefined) known.size = size;
+  if (strength !== undefined) known.strength = strength;
+  if (ink !== undefined) known.ink = ink;
+  return known;
+}
+
+/** The known words of a ground, word or object. */
+function knownOf(ground: GroundWord | GroundSpec | undefined): KnownGround {
+  if (ground === undefined) return {};
+  return isGroundWord(ground) ? { pattern: ground } : knownGround(ground);
+}
+
+/** The four keys of the object form, in the order they are applied. */
+export const GROUND_KEYS = ["pattern", "size", "strength", "ink"] as const;
+export type GroundKey = (typeof GROUND_KEYS)[number];
+
+/** `color-mix(in oklab, ...)` of the page colour and `percent` of the ground's ink. */
+function paint(percent: number): string {
+  return `color-mix(in oklab, var(--background) ${100 - percent}%, var(--ground-ink))`;
+}
+
+/** The declarations of each word of each key. Every word of a key sets the same properties. */
+const GROUND_WORDS = {
+  pattern: Object.fromEntries(
+    GROUND_PATTERN_WORDS.map((word): [string, Declaration[]] => [
+      word,
+      [
+        ["--ground-image", GROUND_PATTERNS[word].image],
+        ["--ground-size", GROUND_PATTERNS[word].size],
+        ["--ground-ink", `var(--${GROUND_PATTERNS[word].ink})`],
+      ],
+    ]),
+  ),
+  size: Object.fromEntries(GROUND_SIZE_WORDS.map((word): [string, Declaration[]] => [word, [["--ground-scale", GROUND_SIZES[word]]]])),
+  strength: Object.fromEntries(
+    GROUND_STRENGTH_WORDS.map((word): [string, Declaration[]] => [
+      word,
+      [
+        ["--ground-line", paint(GROUND_STRENGTHS[word].line)],
+        ["--ground-dot", paint(GROUND_STRENGTHS[word].dot)],
+        ["--ground-area", paint(GROUND_STRENGTHS[word].area)],
+        ["--ground-tint", paint(GROUND_STRENGTHS[word].tint)],
+      ],
+    ]),
+  ),
+  ink: Object.fromEntries(GROUND_INKS.map((ink): [string, Declaration[]] => [ink, [["--ground-ink", `var(--${ink})`]]])),
+} satisfies Record<GroundKey, Record<string, Declaration[]>>;
+
+/** The words of one key of the object form, the default first. */
+export function groundWords(key: GroundKey): string[] {
+  return Object.keys(GROUND_WORDS[key]);
+}
+
+/** A ground as its four words. A word form is its pattern; a key left out is the default word, and the ink is the pattern's own. */
+export function resolveGround(ground: GroundWord | GroundSpec | undefined): Required<KnownGround> {
+  const spec = knownOf(ground);
+  const pattern = spec.pattern ?? "flat";
+  return { pattern, size: spec.size ?? "default", strength: spec.strength ?? "default", ink: spec.ink ?? GROUND_PATTERNS[pattern].ink };
+}
+
+/**
+ * The declarations of a ground, word or object: the pattern's, the size's, the strength's, then an
+ * ink the object names. Always the same eight properties, so one ground overwrites the last.
+ */
+export function groundDeclarations(ground: GroundWord | GroundSpec | undefined): Declaration[] {
+  const spec = knownOf(ground);
+  const out: Declaration[] = [];
+  out.push(...(GROUND_WORDS.pattern[spec.pattern ?? "flat"] ?? []));
+  out.push(...(GROUND_WORDS.size[spec.size ?? "default"] ?? []));
+  out.push(...(GROUND_WORDS.strength[spec.strength ?? "default"] ?? []));
+  if (spec.ink !== undefined) out.push(...(GROUND_WORDS.ink[spec.ink] ?? []));
+  return out;
+}
+
+/** The paint a ground draws, as a mix of the page colour, for the contrast report. Undefined for `flat`. */
+export function groundPaint(ground: GroundWord | GroundSpec | undefined): { base: "background"; mix: GroundInk; percent: number } | undefined {
+  const g = resolveGround(ground);
+  const coverage = GROUND_PATTERNS[g.pattern].coverage;
+  if (coverage === null) return undefined;
+  return { base: "background", mix: g.ink, percent: GROUND_STRENGTHS[g.strength][coverage] };
+}
+
+/** The ground in words for a reader: the word itself, or the object's words in key order. */
+export function groundText(ground: GroundWord | GroundSpec): string {
+  if (isGroundWord(ground)) return ground;
+  const g = resolveGround(ground);
+  return GROUND_KEYS.map((key) => g[key]).join(" ");
+}
+
+/** The bottom colour of the `gradient` ground: the page with 12 percent of the theme's primary. */
+export const GROUND_GRADIENT_END = { base: "background", mix: "primary", percent: GROUND_STRENGTHS.default.tint } as const;
+/** The line colour of the `grain` ground: the page with 4 percent of the theme's foreground (6 until
+ *  spec 18: at 6 a rule on the light grain measured 1.32 and a dashed ring was lost in it). */
+export const GROUND_GRAIN_LINE = { base: "background", mix: "foreground", percent: GROUND_STRENGTHS.default.line } as const;
 
 /**
  * The table. Per token, its words in the order Settings lists them, the default first, and the
@@ -146,8 +400,8 @@ export const SURFACE = {
     round: radii(8, 12, 16, 24, EDGE_RING, EDGE_SOFT),
   },
   shadow: {
-    default: shadows(SHADOW.sm, SHADOW.xs, SHADOW.sm, SHADOW.md, SHADOW.lg, SHADOW.xl, SHADOW["2xl"]),
     flat: shadows(NONE, NONE, NONE, NONE, NONE, NONE, NONE),
+    default: shadows(SHADOW.sm, SHADOW.xs, SHADOW.sm, SHADOW.md, SHADOW.lg, SHADOW.xl, SHADOW["2xl"]),
     lifted: shadows(SHADOW.md, SHADOW.sm, SHADOW.md, SHADOW.lg, SHADOW.xl, SHADOW["2xl"], SHADOW_3XL),
   },
   density: {
@@ -155,13 +409,13 @@ export const SURFACE = {
     roomy: [["--spacing", "0.28rem"]],
   },
   weight: {
-    default: [
-      ["--font-weight-medium", "500"],
-      ["--font-weight-semibold", "600"],
-    ],
     bold: [
       ["--font-weight-medium", "600"],
       ["--font-weight-semibold", "700"],
+    ],
+    default: [
+      ["--font-weight-medium", "500"],
+      ["--font-weight-semibold", "600"],
     ],
   },
   border: {
@@ -169,23 +423,18 @@ export const SURFACE = {
     strong: [["--surface-border-width", "2px"]],
   },
   ground: {
-    flat: [["--ground-image", "none"]],
-    gradient: [["--ground-image", `linear-gradient(to bottom, var(--background), ${groundMix(GROUND_GRADIENT_END)})`]],
-    grain: [
-      [
-        "--ground-image",
-        `repeating-linear-gradient(45deg, ${GRAIN_LINES}), repeating-linear-gradient(-45deg, ${GRAIN_LINES})`,
-      ],
-    ],
+    flat: groundDeclarations("flat"),
+    gradient: groundDeclarations("gradient"),
+    grain: groundDeclarations("grain"),
   },
   chrome: {
-    page: [
-      ["--band-ground", "var(--background)"],
-      ["--band-rule", "var(--rule)"],
-    ],
     band: [
       ["--band-ground", "var(--secondary)"],
       ["--band-rule", "var(--border)"],
+    ],
+    page: [
+      ["--band-ground", "var(--background)"],
+      ["--band-rule", "var(--rule)"],
     ],
   },
   rows: {
@@ -214,14 +463,26 @@ export const SURFACE = {
     heavy: [["--icon-stroke", "2.5"]],
   },
   labels: {
-    caps: [
-      ["--label-transform", "uppercase"],
-      ["--label-tracking", "0.025em"],
-    ],
     sentence: [
       ["--label-transform", "none"],
       ["--label-tracking", "normal"],
     ],
+    caps: [
+      ["--label-transform", "uppercase"],
+      ["--label-tracking", "0.025em"],
+    ],
+  },
+  zoom: {
+    screen: [],
+    none: [],
+  },
+  tabs: {
+    plain: [],
+    folder: [],
+  },
+  composer: {
+    field: [],
+    box: [],
   },
 } as const satisfies { [T in SurfaceToken]: Record<string, readonly Declaration[]> };
 
@@ -234,25 +495,41 @@ export interface Surface {
   density?: SurfaceWord<"density">;
   weight?: SurfaceWord<"weight">;
   border?: SurfaceWord<"border">;
-  ground?: SurfaceWord<"ground">;
+  /** A word (versions 2 to 4) or the object of four words (version 4). */
+  ground?: SurfaceWord<"ground"> | GroundSpec;
   chrome?: SurfaceWord<"chrome">;
   rows?: SurfaceWord<"rows">;
   icons?: SurfaceWord<"icons">;
   labels?: SurfaceWord<"labels">;
+  zoom?: SurfaceWord<"zoom">;
+  tabs?: SurfaceWord<"tabs">;
+  composer?: SurfaceWord<"composer">;
 }
 
-/** The word each token has when a file does not name one: today's look. */
+/**
+ * The word each token has when a file does not name one: the look of the stylesheet, which is the
+ * look of the theme `collie` (flat shadows, bold weight, a band for the chrome, sentence labels).
+ * The three words the app reads itself keep their plain words: a theme that names no `tabs` or
+ * `composer` word gets the plain tab and the field composer, and the theme `collie` names `folder`
+ * and `box` in its file. The `ground` is the same kind of exception: a theme that names none gets
+ * `flat`, and only `collie` names `grain`. index.css carries that grain on `:root` for the default
+ * theme, so every other theme that draws without a `data-theme` block (an imported one) must set
+ * `flat` itself: {@link omittedGroundDeclarations}.
+ */
 export const SURFACE_DEFAULTS = {
   radius: "sharp",
-  shadow: "default",
+  shadow: "flat",
   density: "default",
-  weight: "default",
+  weight: "bold",
   border: "default",
   ground: "flat",
-  chrome: "page",
+  chrome: "band",
   rows: "rules",
   icons: "default",
-  labels: "caps",
+  labels: "sentence",
+  zoom: "screen",
+  tabs: "plain",
+  composer: "field",
 } as const satisfies Required<Surface>;
 
 export function isSurfaceToken(value: string): value is SurfaceToken {
@@ -283,6 +560,9 @@ export function resolveSurface(surface: Surface | undefined): Required<Surface> 
     rows: surface?.rows ?? SURFACE_DEFAULTS.rows,
     icons: surface?.icons ?? SURFACE_DEFAULTS.icons,
     labels: surface?.labels ?? SURFACE_DEFAULTS.labels,
+    zoom: surface?.zoom ?? SURFACE_DEFAULTS.zoom,
+    tabs: surface?.tabs ?? SURFACE_DEFAULTS.tabs,
+    composer: surface?.composer ?? SURFACE_DEFAULTS.composer,
   };
 }
 
@@ -301,11 +581,14 @@ export function surfaceDeclarations(surface: Surface | undefined): Declaration[]
   if (surface.density !== undefined) out.push(...wordDeclarations("density", surface.density));
   if (surface.weight !== undefined) out.push(...wordDeclarations("weight", surface.weight));
   if (surface.border !== undefined) out.push(...wordDeclarations("border", surface.border));
-  if (surface.ground !== undefined) out.push(...wordDeclarations("ground", surface.ground));
+  if (surface.ground !== undefined) out.push(...groundDeclarations(surface.ground));
   if (surface.chrome !== undefined) out.push(...wordDeclarations("chrome", surface.chrome));
   if (surface.rows !== undefined) out.push(...wordDeclarations("rows", surface.rows));
   if (surface.icons !== undefined) out.push(...wordDeclarations("icons", surface.icons));
   if (surface.labels !== undefined) out.push(...wordDeclarations("labels", surface.labels));
+  if (surface.zoom !== undefined) out.push(...wordDeclarations("zoom", surface.zoom));
+  if (surface.tabs !== undefined) out.push(...wordDeclarations("tabs", surface.tabs));
+  if (surface.composer !== undefined) out.push(...wordDeclarations("composer", surface.composer));
   return out;
 }
 
@@ -408,6 +691,16 @@ export function versionTwoDeclarations(theme: VersionTwoParts): Declaration[] {
   ];
 }
 
+/**
+ * The ground of a theme that names none. index.css paints Collie's grain on `:root`, so a theme that
+ * leaves `ground` out has to say `flat` itself, or it would inherit the grain. Empty when the theme
+ * names a ground word (those declarations come from {@link versionTwoDeclarations}).
+ */
+export function omittedGroundDeclarations(surface: Surface | undefined): readonly Declaration[] {
+  // Only the image: with no image, the size, the ink and the paints draw nothing.
+  return surface?.ground === undefined ? [["--ground-image", "none"]] : [];
+}
+
 /** Every property {@link versionTwoDeclarations} can set, each once. The store removes these when it takes a theme off. */
 export const VERSION_TWO_PROPERTIES: readonly string[] = [...SURFACE_PROPERTIES, ...DISPLAY_PROPERTIES, ...ANSI_PROPERTIES];
 
@@ -417,10 +710,20 @@ export const VERSION_TWO_PROPERTIES: readonly string[] = [...SURFACE_PROPERTIES,
  * stored string up as a key (`constructor` and `__proto__` are keys of every object).
  */
 export function surfaceInitTable(): Array<[string, Array<[string, Declaration[]]>]> {
-  return SURFACE_TOKENS.map((token) => [
+  // The ground is left out: theme-init.js reads it, word or object, from {@link groundInitTable}.
+  return SURFACE_TOKENS.filter((token) => token !== "ground").map((token) => [
     token,
     surfaceWords(token).map((word): [string, Declaration[]] => [word, [...wordDeclarations(token, word)]]),
   ]);
+}
+
+/**
+ * The ground for `public/theme-init.js`: `[[key, [[word, [[property, value]]]], fill]]`, the four keys
+ * in order. `fill` is 1 when a key the file leaves out takes its first word, and 0 for the ink, which
+ * the pattern already set. The script reads a word ground as `{ pattern: word }`.
+ */
+export function groundInitTable(): Array<[GroundKey, Array<[string, Declaration[]]>, 0 | 1]> {
+  return GROUND_KEYS.map((key) => [key, Object.entries(GROUND_WORDS[key]), key === "ink" ? 0 : 1]);
 }
 
 /** The display faces for `public/theme-init.js`: `[[face, [[property, value]]]]`. */
@@ -437,7 +740,7 @@ export function ansiInitTable(): Array<[string, string]> {
  * The one generated line of `public/theme-init.js`, indented as it stands in the file: the word table,
  * the display faces and the palette keys.
  */
-export const SURFACE_INIT_LINE = `  var SURFACE = ${JSON.stringify(surfaceInitTable())}, DISPLAY = ${JSON.stringify(displayInitTable())}, ANSI = ${JSON.stringify(ansiInitTable())};`;
+export const SURFACE_INIT_LINE = `  var SURFACE = ${JSON.stringify(surfaceInitTable())}, GROUND = ${JSON.stringify(groundInitTable())}, DISPLAY = ${JSON.stringify(displayInitTable())}, ANSI = ${JSON.stringify(ansiInitTable())};`;
 
 /** The comment line in `public/theme-init.js` that the generated line follows. */
 export const SURFACE_INIT_MARKER =

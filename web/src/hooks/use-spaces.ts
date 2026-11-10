@@ -6,7 +6,9 @@ import { describeApiError, describeThrownError } from "@/lib/api-error-message";
 import { t } from "@/lib/i18n";
 import { setStatus } from "@/lib/status";
 import { stampTopology } from "@/lib/poll-intent";
-import { panePath } from "@/lib/nav";
+import { panePath, type NavExtras } from "@/lib/nav";
+import { mintRequestId } from "@/lib/worktree-name";
+import { startupHarness } from "@/lib/agent-startup";
 import { useNav } from "@/hooks/use-nav";
 import {
   isReadOnly,
@@ -16,18 +18,26 @@ import {
   type WorktreeFolderChoice,
 } from "@/lib/types";
 import { usePairing } from "@/lib/pairing";
-import { scopeKey, type Scope } from "@/lib/scope";
+import { paneScopeKey, scopeKey, type Scope } from "@/lib/scope";
 import { useOptionalRootData } from "@/lib/route-data";
 
 /** What the New page asks `start` to do. Exactly one `what`; `branch` makes it a new branch first. */
 export interface StartAsk {
   what: api.StartWhat;
+  /** An agent row's existing harness metadata; never inferred from its command line. */
+  rowHarness?: string;
   /** The folder, as typed or picked; absent is home (or a row's pinned folder). */
   cwd?: string;
   /** One id per intent, minted by the page and kept by a retry of the same ask. */
   requestId: string;
   /** The chosen machine is older than 1.19.0: a shell goes through its plain space create. */
   legacyShell?: boolean;
+  /**
+   * Start as a new TAB in this pane's space instead of a new space (a large screen's "New agent in
+   * this space"). The route's own `paneId`; the workspace is for a machine older than 1.19.0, whose
+   * plain shell goes through its tab create. Never with `branch`: a worktree is a space of its own.
+   */
+  beside?: { paneId: string; workspaceId: string };
   branch?: { cwd: string; name: string; base: WorktreeBaseChoice; folder: WorktreeFolderChoice };
 }
 
@@ -115,7 +125,7 @@ export function useSpaceActions(canWrite?: () => boolean) {
     // the SAME scope, or the phone would open the new pane's id on the machine it was looking at —
     // where that id is a different terminal, which is the one mistake the host dimension exists to
     // prevent. Absent means the ambient scope, which is every caller that cannot re-address.
-    (res: CreateResponse, what: "tab" | "space", at?: Scope) => {
+    (res: CreateResponse, what: "tab" | "space", at?: Scope, harness?: string) => {
       if (!res.ok) {
         setStatus(describeApiError(res), "error");
         return;
@@ -141,10 +151,23 @@ export function useSpaceActions(canWrite?: () => boolean) {
       revalidatorRef.current.revalidate();
       // `open`: a step DOWN from a dashboard or a space, SIDEWAYS from a pane (a new tab opened
       // from inside one), so the new pane's way up is the level the operator started from (ADR 0067).
-      nav.open(panePath(p.paneId, at ?? scopeRef.current), { freshPane: fresh });
+      const scope = at ?? scopeRef.current;
+      const state: NavExtras = { freshPane: fresh };
+      if (harness !== undefined) state.agentLaunch = { id: mintRequestId(), paneKey: paneScopeKey(scope, p.paneId), harness };
+      nav.open(panePath(p.paneId, scope), state);
     },
     [nav],
   );
+
+  // The create gates, asked BEFORE a create is chosen: the "+" that opens the New tab sheet (M91) gives
+  // the refusal `newTab` would give, on the tap, and opens no sheet. True when it refused.
+  const refuseCreate = useCallback((): boolean => {
+    if (readOnlyRef.current) {
+      setStatus(blockedText(), "error");
+      return true;
+    }
+    return refusedAsSavedCopy();
+  }, [blockedText, refusedAsSavedCopy]);
 
   // ONE create per Space's "+" at a time — the same shape as `launch` below, and for the same
   // reason: a create is a round trip, an impatient second tap on a phone is normal, and every tap
@@ -228,9 +251,9 @@ export function useSpaceActions(canWrite?: () => boolean) {
         if (ask.what.kind === "run") {
           // A one-off line never starts on a branch; the page switches that off, and the bridge refuses it too.
           if (ask.branch !== undefined) return { kind: "refused", message: t("apiError.launch.run_no_branch") };
-          const res = await api.startRun(ask.what.line, { cwd: ask.cwd, requestId: ask.requestId }, scope);
+          const res = await api.startRun(ask.what.line, { cwd: ask.cwd, requestId: ask.requestId, besidePaneId: ask.beside?.paneId }, scope);
           if (!res.ok) return { kind: "refused", message: describeApiError(res) };
-          open(res, "space", scope);
+          open(res, ask.beside === undefined ? "space" : "tab", scope);
           return { kind: "done" };
         }
         if (ask.branch !== undefined) {
@@ -239,17 +262,22 @@ export function useSpaceActions(canWrite?: () => boolean) {
             scope,
           );
           if (!res.ok) return { kind: "refused", message: describeApiError(res) };
-          open(res, "space", scope);
+          open(res, "space", scope, res.launcherStarted ? startupHarness(ask.what, ask.rowHarness) : undefined);
           if (ask.what.kind !== "shell" && !res.launcherStarted) setStatus(t("branchOff.launcherFailed"), "error");
           return { kind: "done" };
         }
         // A machine older than 1.19.0 starts no plain shell by id: its own space create opens one.
+        // A starter makes no tab by hand and ignores the pane, so it is a space whatever was asked.
+        const beside = ask.what.kind === "starter" ? undefined : ask.beside;
+        const cwd = ask.cwd === undefined ? {} : { cwd: ask.cwd };
         const res =
           ask.what.kind === "shell" && ask.legacyShell === true
-            ? await api.createWorkspace(ask.cwd === undefined ? {} : { cwd: ask.cwd }, scope)
-            : await api.startLaunch(ask.what, { cwd: ask.cwd, requestId: ask.requestId }, scope);
+            ? beside === undefined
+              ? await api.createWorkspace(cwd, scope)
+              : await api.createTab(beside.workspaceId, cwd, scope)
+            : await api.startLaunch(ask.what, { cwd: ask.cwd, requestId: ask.requestId, besidePaneId: beside?.paneId }, scope);
         if (!res.ok) return { kind: "refused", message: describeApiError(res) };
-        open(res, "space", scope);
+        open(res, beside === undefined ? "space" : "tab", scope, startupHarness(ask.what, ask.rowHarness));
         return { kind: "done" };
       } catch (e) {
         if (api.outcomeUnknown(e)) return { kind: "unknown" };
@@ -277,14 +305,15 @@ export function useSpaceActions(canWrite?: () => boolean) {
   const launch = useCallback(
     // `beside` is the pane id to open a tab next to — the switcher's row passes the current pane;
     // the dashboard's row passes nothing, and the bridge creates a throwaway Space instead.
-    async (command: string, beside?: string) => {
+    async (command: string, beside?: string, rowHarness?: string) => {
       if (readOnlyRef.current) return setStatus(blockedText(), "error");
       if (refusedAsSavedCopy()) return;
       if (launchingRef.current.has(command)) return;
       launchingRef.current.add(command);
       setLaunching(new Set(launchingRef.current));
+      const scope = scopeRef.current;
       try {
-        open(await api.launch(command, beside, scopeRef.current), beside !== undefined ? "tab" : "space");
+        open(await api.launch(command, beside, scope), beside !== undefined ? "tab" : "space", scope, rowHarness);
       } catch (e) {
         setStatus(describeThrownError(e), "error");
       } finally {
@@ -297,6 +326,7 @@ export function useSpaceActions(canWrite?: () => boolean) {
 
   return {
     start,
+    refuseCreate,
     newTab,
     newSpace,
     launch,

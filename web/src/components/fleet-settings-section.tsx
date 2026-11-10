@@ -1,4 +1,3 @@
-import { FleetTodoistSettings } from "@/components/fleet-todoist";
 import { ManagePaneTags } from "@/components/fleet-pane-tags";
 import { Keyboard, SquareTerminal } from "lucide-react";
 import { useEffect, useRef, useState, useSyncExternalStore } from "react";
@@ -56,7 +55,6 @@ function FleetSettingsGroup() {
         <p className="text-xs text-muted-foreground">{ft("fleet.settings.description")}</p>
       </div>
       <ManagePaneTags settings />
-      <FleetTodoistSettings />
       <FleetCjkFallbackControl />
       <FleetPaneSurfaceControl />
       <FleetShortcutsControl />

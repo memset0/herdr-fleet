@@ -14,6 +14,12 @@
       "status": "verified",
       "verifiedThrough": "1.1.0",
       "verifiedOn": "2026-10-12"
+    },
+    {
+      "range": "1.1.1 - 1.4.0",
+      "status": "provisional",
+      "verifiedThrough": null,
+      "verifiedOn": null
     }
   ],
   "idle": {
@@ -35,6 +41,7 @@
         "column": 0
       },
       "continuationIndent": 0,
+      "draftCaret": true,
       "maxDraftRows": 30,
       "maxTailRows": 60,
       "under": "^(?:[~/…⎇]|[A-Za-z]:\\\\|\\d[\\d.]*%)",
@@ -64,15 +71,41 @@
         "under": "^(?:[~/…⎇]|[A-Za-z]:\\\\|\\d[\\d.]*%| ↳ \\S)",
         "underPainted": true,
         "ownPrompt": true
+      },
+      {
+        "walk": "interior",
+        "top": {
+          "pattern": "^ ▎ (?<label>[✿❀❁✾] (?:waiting for input|queued|(?:working|authorizing|exploring|researching|deciding|planning|implementing|checking|closing)…)(?: · (?:INSERT|esc again to (?:clear|cancel)))*)$",
+          "column": 1
+        },
+        "prompt": {
+          "pattern": "^ ▎(?: (?<draft>(?![✿❀❁✾] ).*))?$",
+          "column": 1
+        },
+        "bottom": {
+          "pattern": "^ ▎$",
+          "column": 1
+        },
+        "continuationIndent": 3,
+        "maxDraftRows": 30,
+        "maxTailRows": 0,
+        "rows": "^ ▎(?: .*)?$",
+        "continuation": "^ ▎(?: (?<text>.*))?$",
+        "under": "^$",
+        "ownPrompt": true
       }
     ],
     "placeholders": {
-      "texts": [],
+      "texts": [
+        "type, or / for commands"
+      ],
       "sgr": 2
     },
     "volatile": {
       "above": {
-        "maxRows": 6
+        "maxRows": 6,
+        "losesText": true,
+        "ticks": true
       },
       "below": {
         "maxRows": 4,
@@ -88,14 +121,16 @@
           "footer": {
             "pattern": "^(?:\\S| ↳ \\S)",
             "maxRows": 6
-          }
+          },
+          "leadOpens": true
         }
       }
     },
     "runningRows": [
       "^\\s*[⠀-⣿•] Working\\b",
       "\\bWorking\\s*\\(.*esc to interrupt\\)",
-      "^ ?─+\\s+[⠀-⣿]\\s+Working\\b"
+      "^ ?─+\\s+[⠀-⣿]\\s+Working\\b",
+      "^ ▎ [✿❀❁✾] (?:queued|(?:working|authorizing|exploring|researching|deciding|planning|implementing|checking|closing)…)(?: · |$)"
     ],
     "dialogsInBox": true
   },
@@ -105,6 +140,9 @@
         "alt+Enter"
       ],
       "win32": [
+        "ctrl+q"
+      ],
+      "wsl": [
         "ctrl+q"
       ]
     },
@@ -130,13 +168,25 @@
     "enterWhileRunning": "steers",
     "queueKey": {
       "default": "alt+Enter",
-      "win32": "ctrl+q"
+      "win32": "ctrl+q",
+      "wsl": "ctrl+q"
     },
     "queuedRow": {
       "pattern": "^\\s*Follow-up: (?<text>\\S.*?)\\s*$",
       "hint": "^\\s*↳ Alt\\+Up to edit all queued messages\\s*$",
       "hintGap": 0
-    }
+    },
+    "steer": [
+      "Enter"
+    ],
+    "steerWitness": [
+      {
+        "pattern": "^\\s*Steering: (?<text>\\S.*?)\\s*$",
+        "hint": "^\\s*↳ Alt\\+Up to edit all queued messages\\s*$",
+        "hintGap": 0,
+        "between": "^\\s*Follow-up: \\S"
+      }
+    ]
   },
   "collapse": {
     "pattern": "\\[paste #\\d+ (?:\\+(?<lines>\\d+) lines|(?<chars>\\d+) chars)\\]"

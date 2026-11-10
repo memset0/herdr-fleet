@@ -1,5 +1,4 @@
 import type { ReactNode } from "react";
-import { ChevronRight } from "lucide-react";
 import { fireEvent, render, screen } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
@@ -67,6 +66,12 @@ describe("groupRuns", () => {
     expect(groupRuns(items).map((g) => g.map((i) => i.id).join(""))).toEqual(["abcde", "agent", "fgh", "ask", "i"]);
     expect(groupRuns([agent], 1).map((g) => g.length)).toEqual([1]);
     expect(groupRuns([x("a"), agent, x("b")], 1).map((g) => g.length)).toEqual([1, 1, 1]);
+  });
+
+  it("never folds a step that returned a picture", () => {
+    const shot = tool({ kind: "read", path: "/shot.png" }, { id: "shot", image: "data:image/png;base64,AAAA" });
+    expect(groupRuns([t("a"), t("b"), shot, t("c")]).map((g) => g.map((i) => i.id).join(""))).toEqual(["a", "b", "shot", "c"]);
+    expect(groupRuns([shot], 1).map((g) => g.length)).toEqual([1]);
   });
 
   it("never folds the agent's own walky talky send or reply, but folds who, status and inbox", () => {
@@ -160,7 +165,7 @@ describe("harnessLabel", () => {
 
 describe("ToolCard", () => {
   it("draws an edit with its path and the lines that moved", () => {
-    render(<ToolCard tool={{ kind: "edit", path: "/home/me/src/a.ts", added: 4, removed: 2 }} status="done" />);
+    render(<ToolCard callId="call-1" tool={{ kind: "edit", path: "/home/me/src/a.ts", added: 4, removed: 2 }} status="done" />);
     expect(screen.getByText("Edit")).toBeInTheDocument();
     expect(screen.getByText("a.ts")).toBeInTheDocument();
     expect(screen.getByText("+4")).toBeInTheDocument();
@@ -168,14 +173,14 @@ describe("ToolCard", () => {
   });
 
   it("says Create for a new file", () => {
-    render(<ToolCard tool={{ kind: "edit", path: "/a.ts", added: 9, removed: 0, created: true }} status="done" />);
+    render(<ToolCard callId="call-1" tool={{ kind: "edit", path: "/a.ts", added: 9, removed: 0, created: true }} status="done" />);
     expect(screen.getByText("Create")).toBeInTheDocument();
   });
 
   it("draws a command and opens its output on a tap", async () => {
     const user = userEvent.setup();
     const { container } = render(
-      <ToolCard tool={{ kind: "execute", command: "ls -la", output: "one\ntwo" }} status="done" />,
+      <ToolCard callId="call-1" tool={{ kind: "execute", command: "ls -la", output: "one\ntwo" }} status="done" />,
     );
     expect(screen.getByText("ls -la")).toBeInTheDocument();
     const fold = screen.getByRole("button", { expanded: false });
@@ -186,7 +191,7 @@ describe("ToolCard", () => {
   });
 
   it("draws a read as one line with its range", () => {
-    render(<ToolCard tool={{ kind: "read", path: "/a.ts", range: [10, 20] }} status="done" />);
+    render(<ToolCard callId="call-1" tool={{ kind: "read", path: "/a.ts", range: [10, 20] }} status="done" />);
     expect(screen.getByText("Read")).toBeInTheDocument();
     expect(screen.getByText("lines 10–20")).toBeInTheDocument();
   });
@@ -195,30 +200,30 @@ describe("ToolCard", () => {
   // are in the DOM at once and only the active layer is marked. Asking "which is shown" therefore
   // means asking the slot, not asking whether a word exists.
   it("tells a refusal apart from a fault", () => {
-    const denied = render(<ToolCard tool={{ kind: "read", path: "/a.ts" }} status="denied" />);
+    const denied = render(<ToolCard callId="call-1" tool={{ kind: "read", path: "/a.ts" }} status="denied" />);
     expect(denied.container.querySelector("[data-active]")).toHaveTextContent("denied");
     denied.unmount();
-    const failed = render(<ToolCard tool={{ kind: "read", path: "/a.ts" }} status="failed" />);
+    const failed = render(<ToolCard callId="call-1" tool={{ kind: "read", path: "/a.ts" }} status="failed" />);
     expect(failed.container.querySelector("[data-active]")).toHaveTextContent("failed");
   });
 
   it("names a non-zero exit code, and says nothing about a zero one", () => {
-    const bad = render(<ToolCard tool={{ kind: "execute", command: "false", exitCode: 1 }} status="done" />);
+    const bad = render(<ToolCard callId="call-1" tool={{ kind: "execute", command: "false", exitCode: 1 }} status="done" />);
     expect(bad.container.querySelector("[data-active]")).toHaveTextContent("exit 1");
     bad.unmount();
-    const good = render(<ToolCard tool={{ kind: "execute", command: "true", exitCode: 0 }} status="done" />);
+    const good = render(<ToolCard callId="call-1" tool={{ kind: "execute", command: "true", exitCode: 0 }} status="done" />);
     expect(good.container.querySelector("[data-active]")).toBeNull();
   });
 
   it("renders agent text as text, never as markup", () => {
-    render(<ToolCard tool={{ kind: "other", name: "Weird", summary: "<img src=x onerror=alert(1)>" }} status="done" />);
+    render(<ToolCard callId="call-1" tool={{ kind: "other", name: "Weird", summary: "<img src=x onerror=alert(1)>" }} status="done" />);
     expect(screen.getByText("<img src=x onerror=alert(1)>")).toBeInTheDocument();
     expect(document.querySelector("img")).toBeNull();
   });
 });
 
 describe("the host's waiting slot", () => {
-  const card = <ToolCard tool={{ kind: "execute", command: "rm -rf /tmp/x" }} status="running" />;
+  const card = <ToolCard callId="call-1" tool={{ kind: "execute", command: "rm -rf /tmp/x" }} status="running" />;
 
   it("draws nothing of its own when no host supplied anything", () => {
     const { container } = render(card);
@@ -228,6 +233,7 @@ describe("the host's waiting slot", () => {
   it("anchors the card and draws what the host gave it", () => {
     const { container } = render(
       <ToolCard
+        callId="call-1"
         tool={{ kind: "execute", command: "rm -rf /tmp/x" }}
         status="running"
         waiting={{ id: "ask-7", body: <p>Allow this?</p> }}
@@ -240,6 +246,7 @@ describe("the host's waiting slot", () => {
   it("draws the host's note in the body's place once the body is gone", () => {
     render(
       <ToolCard
+        callId="call-1"
         tool={{ kind: "execute", command: "rm -rf /tmp/x" }}
         status="running"
         waiting={{ note: "The dialog moved to the terminal." }}
@@ -262,10 +269,10 @@ describe("the host's waiting slot", () => {
 
 describe("an agent card", () => {
   it("is labelled Agent · name with a name, and plain Agent without one", () => {
-    const named = render(<ToolCard tool={{ kind: "task", agent: "Explore", summary: "Look" }} status="done" />);
+    const named = render(<ToolCard callId="call-1" tool={{ kind: "task", agent: "Explore", summary: "Look" }} status="done" />);
     expect(screen.getByText("Agent · Explore")).toBeInTheDocument();
     named.unmount();
-    render(<ToolCard tool={{ kind: "task", summary: "Look" }} status="done" />);
+    render(<ToolCard callId="call-1" tool={{ kind: "task", summary: "Look" }} status="done" />);
     expect(screen.getByText("Agent")).toBeInTheDocument();
     expect(screen.queryByText(/Agent · /)).toBeNull();
   });
@@ -293,7 +300,7 @@ describe("a question card", () => {
     [...container.querySelectorAll("li[aria-current]")].map((li) => li.textContent);
 
   it("shows the header, the question and every option with its description", () => {
-    render(<ToolCard tool={asked} status="running" />);
+    render(<ToolCard callId="call-1" tool={asked} status="running" />);
     expect(screen.getByText("Color choice")).toBeInTheDocument();
     expect(screen.getByText("Which color?")).toBeInTheDocument();
     expect(screen.getByText("Red")).toBeInTheDocument();
@@ -304,23 +311,23 @@ describe("a question card", () => {
 
   it("names itself Question when the call sent no header", () => {
     const bare = { ...asked, questions: [{ ...asked.questions[0]!, header: undefined }] };
-    render(<ToolCard tool={bare} status="running" />);
+    render(<ToolCard callId="call-1" tool={bare} status="running" />);
     expect(screen.getByText("Question")).toBeInTheDocument();
   });
 
   it("draws no button: answering lives in the dock", () => {
-    render(<ToolCard tool={asked} status="running" />);
+    render(<ToolCard callId="call-1" tool={asked} status="running" />);
     expect(screen.queryByRole("button")).toBeNull();
   });
 
   it("waits with the waiting dot and its own sentence", () => {
-    const { container } = render(<ToolCard tool={asked} status="running" />);
+    const { container } = render(<ToolCard callId="call-1" tool={asked} status="running" />);
     expect(screen.getByText("Waiting for an answer")).toBeInTheDocument();
     expect(container.querySelector("[data-active] [aria-label='running']")).not.toBeNull();
   });
 
   it("says what the host's note says in that sentence's place, once", () => {
-    withWaiting(<ToolCard tool={asked} status="running" waiting={{ id: "q1", note: "Answer in the card below" }} />, {});
+    withWaiting(<ToolCard callId="call-1" tool={asked} status="running" waiting={{ id: "q1", note: "Answer in the card below" }} />, {});
     expect(screen.getByText("Answer in the card below")).toBeInTheDocument();
     expect(screen.queryByText("Waiting for an answer")).toBeNull();
   });
@@ -334,14 +341,14 @@ describe("a question card", () => {
   });
 
   it("marks the chosen label once answered, and only that one", () => {
-    const { container } = render(<ToolCard tool={{ ...asked, answers: [["Blue"]] }} status="done" />);
+    const { container } = render(<ToolCard callId="call-1" tool={{ ...asked, answers: [["Blue"]] }} status="done" />);
     expect(marked(container)).toEqual(["BlueThe color blue"]);
     expect(screen.queryByText("Waiting for an answer")).toBeNull();
     expect(container.querySelector("svg.text-status-done")).not.toBeNull();
   });
 
   it("shows a free-text answer as its own marked row", () => {
-    const { container } = render(<ToolCard tool={{ ...asked, answers: [["Teal"]] }} status="done" />);
+    const { container } = render(<ToolCard callId="call-1" tool={{ ...asked, answers: [["Teal"]] }} status="done" />);
     expect(marked(container)).toEqual(["Teal"]);
     // The two real options are still listed, unmarked.
     expect(screen.getByText("Red")).toBeInTheDocument();
@@ -354,20 +361,20 @@ describe("a question card", () => {
       questions: [{ ...asked.questions[0]!, multiple: true }],
       answers: [["Red", "Blue"]],
     };
-    const { container } = render(<ToolCard tool={multi} status="done" />);
+    const { container } = render(<ToolCard callId="call-1" tool={multi} status="done" />);
     expect(screen.getByText("Pick any that apply")).toBeInTheDocument();
     expect(marked(container)).toHaveLength(2);
   });
 
   it("says nothing about a pick when the call completed without answers", () => {
-    const { container } = render(<ToolCard tool={asked} status="done" />);
+    const { container } = render(<ToolCard callId="call-1" tool={asked} status="done" />);
     expect(marked(container)).toEqual([]);
     expect(screen.queryByText("Waiting for an answer")).toBeNull();
     expect(screen.queryByText("Dismissed")).toBeNull();
   });
 
   it("says Dismissed when the reader closed it", () => {
-    const { container } = render(<ToolCard tool={asked} status="denied" />);
+    const { container } = render(<ToolCard callId="call-1" tool={asked} status="denied" />);
     expect(screen.getByText("Dismissed")).toBeInTheDocument();
     expect(container.querySelector("[data-active]")).toHaveTextContent("denied");
   });
@@ -380,7 +387,7 @@ describe("a question card", () => {
         { header: "Size", question: "Which size?", multiple: false, options: [{ label: "S" }] },
       ],
     };
-    render(<ToolCard tool={two} status="running" />);
+    render(<ToolCard callId="call-1" tool={two} status="running" />);
     expect(screen.getByText("Question")).toBeInTheDocument();
     expect(screen.getByText("Color choice")).toBeInTheDocument();
     expect(screen.getByText("Size")).toBeInTheDocument();
@@ -392,7 +399,7 @@ describe("a question card", () => {
       ...asked,
       questions: [{ question: "<img src=x onerror=alert(1)>", multiple: false, options: [{ label: "<b>x</b>" }] }],
     };
-    render(<ToolCard tool={hostile} status="running" />);
+    render(<ToolCard callId="call-1" tool={hostile} status="running" />);
     expect(screen.getByText("<img src=x onerror=alert(1)>")).toBeInTheDocument();
     expect(screen.getByText("<b>x</b>")).toBeInTheDocument();
     expect(document.querySelector("img")).toBeNull();
@@ -534,7 +541,7 @@ describe("Disclosure", () => {
   it("keeps its body out of the DOM until it is opened", async () => {
     const user = userEvent.setup();
     render(
-      <Disclosure label="Details" icon={ChevronRight}>
+      <Disclosure label="Details" icon="disclosure">
         {() => <p>the body</p>}
       </Disclosure>,
     );
@@ -552,13 +559,13 @@ describe("ToolCard paths", () => {
   it("an Edit's path opens the file, a Read's at the first line it read", () => {
     const opened: string[] = [];
     const edit = withLinks(
-      <ToolCard tool={{ kind: "edit", path: "/home/you/webapp/src/cart.ts", added: 1, removed: 0 }} status="done" />,
+      <ToolCard callId="call-1" tool={{ kind: "edit", path: "/home/you/webapp/src/cart.ts", added: 1, removed: 0 }} status="done" />,
       opened,
     );
     expect(edit.container.querySelector("a")!.getAttribute("href")).toBe("/pane/w1%3Ap1/changes/files?path=src%2Fcart.ts");
     edit.unmount();
     const read = withLinks(
-      <ToolCard tool={{ kind: "read", path: "/home/you/webapp/README.md", range: [40, 60] }} status="done" />,
+      <ToolCard callId="call-1" tool={{ kind: "read", path: "/home/you/webapp/README.md", range: [40, 60] }} status="done" />,
       opened,
     );
     const link = read.container.querySelector("a")!;
@@ -568,7 +575,7 @@ describe("ToolCard paths", () => {
   });
 
   it("a path outside the root draws the plain label", () => {
-    const { container } = withLinks(<ToolCard tool={{ kind: "read", path: "/etc/hosts" }} status="done" />, []);
+    const { container } = withLinks(<ToolCard callId="call-1" tool={{ kind: "read", path: "/etc/hosts" }} status="done" />, []);
     expect(container.querySelector("a")).toBeNull();
     expect(container.textContent).toContain("hosts");
   });
@@ -577,7 +584,7 @@ describe("ToolCard paths", () => {
     const user = userEvent.setup();
     const output = "src/cart.ts:3:const total\n/etc/hosts:1:localhost";
     const { container } = withLinks(
-      <ToolCard tool={{ kind: "search", query: "total", where: "/home/you/webapp", output }} status="done" />,
+      <ToolCard callId="call-1" tool={{ kind: "search", query: "total", where: "/home/you/webapp", output }} status="done" />,
       [],
     );
     const fold = container.querySelector("button")!;
@@ -586,5 +593,82 @@ describe("ToolCard paths", () => {
     const links = [...container.querySelectorAll("pre a")];
     expect(links.map((a) => a.getAttribute("href"))).toEqual(["/pane/w1%3Ap1/changes/files?path=src%2Fcart.ts&line=3"]);
     expect(container.querySelector("pre")!.textContent).toBe(output);
+  });
+});
+
+describe("a plan card", () => {
+  const plan: Extract<ChatToolCall, { kind: "plan" }> = {
+    kind: "plan",
+    name: "todo",
+    tasks: [
+      { title: "Write the ADR", status: "done" },
+      { title: "Bridge reducer", status: "in_progress" },
+      { title: "Web card", status: "pending" },
+      { title: "Needs a decision", status: "blocked" },
+      { title: "Old idea", status: "dropped" },
+    ],
+  };
+
+  it("draws the label, done/total and one row per task with its status glyph", () => {
+    render(<ToolCard callId="call-1" tool={plan} status="done" />);
+    expect(screen.getByText("Plan")).toBeInTheDocument();
+    expect(screen.getByText("1/5")).toBeInTheDocument();
+    const rows = screen.getAllByRole("listitem");
+    expect(rows.map((r) => r.textContent)).toEqual(plan.tasks.map((x) => x.title));
+    expect(rows.map((r) => r.getAttribute("data-status"))).toEqual(["done", "in_progress", "pending", "blocked", "dropped"]);
+    expect(screen.getByRole("img", { name: "done" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "in progress" })).toBeInTheDocument();
+    expect(screen.getByRole("img", { name: "blocked" })).toBeInTheDocument();
+  });
+
+  it("strikes a dropped task through, in the content face", () => {
+    render(<ToolCard callId="call-1" tool={plan} status="done" />);
+    const dropped = screen.getByText("Old idea");
+    expect(dropped).toHaveClass("line-through", "font-content");
+    expect(screen.getByText("Web card")).not.toHaveClass("line-through");
+  });
+
+  it("draws a short muted line for an empty list", () => {
+    render(<ToolCard callId="call-1" tool={{ ...plan, tasks: [] }} status="done" />);
+    expect(screen.getByText("No tasks")).toHaveClass("text-muted-foreground");
+    expect(screen.queryByRole("listitem")).toBeNull();
+  });
+
+  it("renders a task title as text", () => {
+    render(<ToolCard callId="call-1" tool={{ ...plan, tasks: [{ title: "<img src=x onerror=alert(1)>", status: "pending" }] }} status="done" />);
+    expect(screen.getByText("<img src=x onerror=alert(1)>")).toBeInTheDocument();
+    expect(document.querySelector("img[src]")).toBeNull();
+  });
+
+  it("reads as the plan label and done/total in a folded run, and counts among the other steps", () => {
+    expect(stepLine(plan)).toEqual({ verb: "Plan", subject: "1/5", mono: false });
+    const items: ChatItem[] = [
+      tool(plan, { id: "a" }),
+      tool({ kind: "read", path: "/a.ts" }, { id: "b" }),
+      tool({ kind: "read", path: "/b.ts" }, { id: "c" }),
+    ];
+    render(<ToolGroup items={items} />);
+    expect(screen.getByText("2 reads, 1 other step")).toBeInTheDocument();
+  });
+});
+
+describe("a background command", () => {
+  it("shows a background marker in its head, and none on an ordinary command", () => {
+    const { rerender } = render(<ToolCard callId="call-1" tool={{ kind: "execute", command: "sleep 9", background: true }} status="running" />);
+    expect(screen.getByText("background")).toBeInTheDocument();
+    rerender(<ToolCard callId="call-1" tool={{ kind: "execute", command: "sleep 9" }} status="running" />);
+    expect(screen.queryByText("background")).toBeNull();
+  });
+});
+
+describe("a quiet other tool", () => {
+  it("is a muted line: lower-contrast label and summary, still one row", () => {
+    const { container, rerender } = render(<ToolCard callId="call-1" tool={{ kind: "other", name: "mem_save", summary: "saved a note", quiet: true }} status="done" />);
+    expect(container.querySelector("[data-quiet]")).not.toBeNull();
+    expect(screen.getByText("mem_save")).toHaveClass("opacity-60");
+    expect(screen.getByText("saved a note")).toHaveClass("opacity-60");
+    rerender(<ToolCard callId="call-1" tool={{ kind: "other", name: "mem_save", summary: "saved a note" }} status="done" />);
+    expect(container.querySelector("[data-quiet]")).toBeNull();
+    expect(screen.getByText("mem_save")).not.toHaveClass("opacity-60");
   });
 });

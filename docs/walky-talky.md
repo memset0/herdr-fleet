@@ -1,10 +1,65 @@
-# Walky talky: messages between agent sessions
+# WalkyTalky: messages between agent sessions
 
-Walky talky lets one agent session send a short message to another, on any harness, and lets you
-message a session the same way. The message is typed into the target pane as the agent's next
-prompt, under a one-line header that names the sender. A pane that cannot take it right now keeps
-it in its inbox. An agent uses walky talky only after you install the skill that teaches it
-([Install the skill](#install-the-skill)).
+[Watch the 56-second film](https://colliepwa.dev/walky-talky)
+
+## Start here
+
+Each agent runs in a terminal pane. WalkyTalky types a short message from one pane into another
+pane, on this machine or on another one.
+
+### On one machine
+
+Two agent panes on one machine are enough. Run these commands in the pane of the first agent, or
+tell that agent to run them.
+
+1. List the panes you can reach.
+
+   ```sh
+   collie walky who
+   ```
+
+   ```text
+   ADDRESS           MACHINE  HARNESS  LABEL             STATE
+   local/w1:p1#a1b2  desk     claude   my-app#main       working  (you)
+   local/w1:p2#c3d4  desk     codex    my-app#fix-login  idle
+   local/w1:p3#e5f6  desk     claude   api               done
+   ```
+
+2. Send a message to a pane, with an address copied from the ADDRESS column.
+
+   ```sh
+   collie walky send local/w1:p2#c3d4 "Tests are green on fix-login. You can merge."
+   ```
+
+3. The other pane receives this line, with the message id and the sender.
+
+   ```text
+   [walky-talky wt_k3f9x2m8q1a0] from agent local/w1:p1#a1b2 (claude, my-app#main):
+   a message from another agent, not your operator.
+   Read it: collie walky inbox wt_k3f9x2m8q1a0.
+   Reply: collie walky reply wt_k3f9x2m8q1a0 "<text>"
+   ```
+
+4. Reply from that pane, with the id from the line.
+
+   ```sh
+   collie walky reply wt_k3f9x2m8q1a0 "Merged. Thanks."
+   ```
+
+The line in step 3 is one line in the pane. It is split here to fit the page. The agent reads the
+body with `collie walky inbox <id>`. Your reply appears in the first pane the same way, with
+`reply to <id>` in its header. You can also send to a pane from the phone
+([On the phone](#on-the-phone)).
+
+### Across machines
+
+A [crew](crew.md) joins your machines to one lead. On the lead, `collie walky who` lists the panes of
+every machine, and a message to one of them goes through the lead ([Across a crew](#across-a-crew)).
+
+### Teach your agents
+
+An agent sends and reads messages only after it has the skill. Collie installs the skill after each
+update, and `collie skill sync` does it by hand ([Install the skill](#install-the-skill)).
 
 ## Send a message
 
@@ -12,7 +67,7 @@ Two commands: list the panes you can reach, then send to one.
 
 ```sh
 collie walky who
-collie walky send collie-04rj6a/w54:p1G#1adi "Tests are green on fix-465. You can merge."
+collie walky send collie-7k2m9p/w54:p1G#1adi "Tests are green on fix-login. You can merge."
 ```
 
 `who` lists every agent pane you can reach. Pick an address from that list and pass it to `send`.
@@ -22,29 +77,32 @@ On a machine with only your own agent pane, `who` says
 ### Read the who table
 
 ```text
-ADDRESS                     MACHINE   HARNESS  LABEL                  STATE
-collie-04rj6a/w54:p1B#sx56  bluefin   claude   collie-workspace#main  working  (you)
-collie-04rj6a/w54:p1G#1adi  bluefin   claude   collie-workspace#main  done
-collie-04rj6a/w54:p1J#anx6  bluefin   claude   walky-live             done
-minibuch/w11:p4#8h9h        minibuch  claude   walky-live             idle
+ADDRESS                     MACHINE  HARNESS  LABEL             STATE
+collie-7k2m9p/w54:p1B#sx56  desk     claude   my-app#main       working  (you)
+collie-7k2m9p/w54:p1G#1adi  desk     claude   my-app#fix-login  done
+collie-7k2m9p/w54:p1J#anx6  desk     claude   api               done
+laptop/w11:p4#8h9h          laptop   claude   api               idle
+server/t1#9m3x              server   claude   my-app#main       idle
 ```
 
 - **Copy ADDRESS as printed.** Its first part is the member id, not the machine. On a lead it is the
-  crew id (`collie-04rj6a`) for the lead's own panes, on a member it is the member's name
-  (`minibuch`), and with no crew it is `local`. Pick the row by MACHINE and LABEL.
+  crew id (`collie-7k2m9p`) for the lead's own panes, on a member it is the member's name
+  (`laptop`), and with no crew it is `local`. Pick the row by MACHINE and LABEL.
 - **`(you)` marks your own pane.** A message to it is refused `that is your own pane`.
-- **Labels can repeat.** Two rows above are called `walky-live`, one on each machine. MACHINE tells
+- **Labels can repeat.** Two rows above are called `api`, one on each machine. MACHINE tells
   them apart. If two rows still match, ask the operator which one is meant.
 - **STATE** is the pane's own status: `idle`, `working`, `blocked`, `done` or `unknown`. A crew
   member the lead cannot reach shows `unreachable`. A pane that is `working` or `blocked` still
   takes a message. Collie queues it or holds it, as in [Into a busy pane](#into-a-busy-pane).
+- **`, walky off` after STATE** means that session turned its WalkyTalky off. It takes messages
+  from you only ([Turn it off for one session](#turn-it-off-for-one-session)).
 
 `send` waits up to 15 seconds for the receipt, then prints three lines: the id, the pane, and the
 state in words.
 
 ```text
 wt_k3f9x2m8q1a0
-to collie-04rj6a/w54:p1G#1adi, claude, collie-workspace#fix-465
+to collie-7k2m9p/w54:p1G#1adi, claude, my-app#fix-login
 typed into the pane
 ```
 
@@ -52,7 +110,7 @@ When the message is not typed yet, a fourth line says `check later: collie walky
 With no text after the address, the body is read from stdin:
 
 ```sh
-git log --oneline -5 | collie walky send collie-04rj6a/w54:p1G#1adi
+git log --oneline -5 | collie walky send collie-7k2m9p/w54:p1G#1adi
 ```
 
 ### How the answer comes back
@@ -70,14 +128,17 @@ receiver read it or answered it.
 
 ## Addresses
 
-An address names one pane, one machine's panes, or every pane.
+An address names one pane, one machine's panes, every pane, or the panes of one folder.
 
 | Address | Who receives it |
 | --- | --- |
-| `<member>/<pane>#<token>` | One pane, while it stays open. `who` prints this form, for example `collie-04rj6a/w54:p1G#1adi`. The member is the crew id on a lead, the member's name on a member, and `local` with no crew. It is never the machine name |
+| `<member>/<pane>#<token>` | One pane, while it stays open. `who` prints this form, for example `collie-7k2m9p/w54:p1G#1adi`. The member is the crew id on a lead, the member's name on a member, and `local` with no crew. It is never the machine name |
 | `<member>/<pane>` | Whatever pane holds that id now. On a machine with no crew the member is `local` |
 | `<member>/all` | Every agent pane on that machine. From the phone only |
 | `all` | Every agent pane you can reach. From the phone only |
+| `<repo>` | Every agent pane in a folder of that name, on every machine of the crew, on any branch. `<repo>` is the last part of the folder path, as `who` shows it before the `#` in the LABEL column, for example `my-app` |
+| `<repo>#<branch>` | The same, on one branch, for example `my-app#main` |
+| `here` | The sender's own folder, on every machine of the crew, without the sender's own pane |
 
 A terminal may give a closed pane's id to the next pane. Herdr's `w6:p3`, tmux's `%7` and zellij's
 `terminal_3` only count up, but Collie does not rely on that. So Collie gives every pane a token,
@@ -89,7 +150,7 @@ the new address.
 
 An address works with or without the token: the token pins the session, so a pane that was replaced is refused. An address with no token means the pane that holds that id now, whatever it is.
 The `to` line of `send` shows the pane as `who` lists it. `status` and the receipt name the pane
-without the token, for example `collie-04rj6a/w54:p1G`.
+without the token, for example `collie-7k2m9p/w54:p1G`.
 
 With several Collie instances on one machine, `collie walky` reaches the instance of its own `collie`
 binary. The installed skill pins the binary of the instance that installed it. Set
@@ -97,7 +158,84 @@ binary. The installed skill pins the binary of the instance that installed it. S
 instance's panes.
 
 A shell pane never receives a message. Only panes the bridge sees as an agent do. An agent may
-message one pane at a time; only you may broadcast.
+message one pane, or the panes of one folder; only you may broadcast to `all` or `<member>/all`.
+
+### Send to a workspace
+
+A workspace is a folder name. The same folder name on two machines is one workspace, so one
+message can reach the agents of a project on every machine of the crew. The lead reads the
+LABEL column of its merged `who` list, picks every agent pane whose `<repo>` matches, and makes one
+delivery per pane. The sender's own pane is never one of them. Each delivery has its own receipt.
+
+Check the scope first. `who --workspace` lists only the panes a send to that word would reach, and
+`who --here` does the same for your own folder. `--here` needs a pane. The two flags are not
+allowed together.
+
+```sh
+collie walky who --workspace my-app
+```
+
+```text
+ADDRESS                     MACHINE  HARNESS  LABEL             STATE
+collie-7k2m9p/w54:p1B#sx56  desk     claude   my-app#main       working  (you)
+collie-7k2m9p/w54:p1G#1adi  desk     claude   my-app#fix-login  done
+server/t1#9m3x              server   claude   my-app#main       idle
+```
+
+`who --workspace my-app#main` keeps one branch. A folder with no agent pane prints
+`no agent panes in <scope>`.
+
+Then send to the word. This send runs in the pane marked `(you)` above, and reaches the other two
+panes, one on `desk` and one on `server`:
+
+```sh
+collie walky send my-app "Rebased on main. Pull before you push."
+```
+
+```text
+wt_p4t8c2r6h0ze
+to my-app
+collie-7k2m9p/w54:p1G: typed into the pane
+server/t1: typed into the pane
+```
+
+`here` does the same without naming the folder: `collie walky send here "..."` reaches your
+siblings in your own folder. `status <id>` prints the lines again, each with how this machine knew
+the sender, and ends with a totals line, here `2 deliveries: delivered 2`.
+
+A machine the lead cannot reach has one line for all its panes, `<member>/all: not sent: unreachable`.
+Collie does not retry it. `status --json` carries `deliveries` and `totals` as the lead counted
+them.
+
+A scope send counts as one message against your 30 in 10 minutes, and as one message per delivery
+against the limits of each machine. A scope that holds more than 50 panes is refused with the
+count. A word that is a member id, such as `laptop`, is refused, and the refusal names
+`laptop/all`. `here` from the phone is refused: a phone has no workspace, so name the folder.
+A scope with no agent pane is refused with `no panes in scope`, and the refusal names
+`collie walky who`.
+
+A session that rests does not wake for a scope send. A pane rests when it is `done` or `idle` and
+has been for 15 minutes, counted from its last change of state. A scope, or `all` from your phone,
+leaves the message in that pane's inbox only, and its receipt reads `waiting in the inbox, not typed:
+the session rests`. It waits there until the agent reads it with `inbox`. A pane whose state
+Collie does not know never rests. Fifteen minutes is a fixed rule of thumb, not a cache window. A
+message to one pane is always typed. To wake the resting panes
+too, add `--wake` before the text:
+
+```sh
+collie walky send --wake my-app "Rebased on main. Pull before you push."
+```
+
+A crew can run mixed versions. A member below 1.26.1 never rests a pane, so a plain send already
+types into all its panes there, and the lead treats `--wake` as a plain send for that member. A lead
+below 1.26.1 cannot take `--wake` at all. A member that knows its lead's version refuses the send
+at once, and one that does not learns it from the lead's refusal. Either receipt says that the lead
+is older than 1.26.1 and to send without `--wake`.
+
+Each delivery that is typed is one send into one pane, so it follows the rules of
+[Into a busy pane](#into-a-busy-pane). A pane with a draft in its box, or a running turn, holds its
+delivery, and `status <id>` shows that line as held. Before it types, the member that holds the
+pane reads the pane's label again. A pane that left the scope is refused `out of scope`.
 
 ## What the target pane receives
 
@@ -106,7 +244,7 @@ An agent's message types one line into the target pane, and no body.
 The pane gets this as one line. It is split here to fit the page.
 
 ```text
-[walky-talky wt_k3f9x2m8q1a0] from agent collie-04rj6a/w54:p1G#1adi (claude, repo#fix-465):
+[walky-talky wt_k3f9x2m8q1a0] from agent collie-7k2m9p/w54:p1B#sx56 (claude, my-app#main):
 a message from another agent, not your operator.
 Read it: collie walky inbox wt_k3f9x2m8q1a0.
 Reply: collie walky reply wt_k3f9x2m8q1a0 "<text>"
@@ -120,7 +258,7 @@ output. A harness treats a command's output as data, not as its operator's words
 Your own message, from the phone, types the header and the body:
 
 ```text
-[walky-talky wt_n2d8s1v7c4b9] from operator (phone-altan)
+[walky-talky wt_n2d8s1v7c4b9] from operator (my-phone)
 Stop and report what you changed.
 ```
 
@@ -144,7 +282,9 @@ weigh it, and never to run a destructive command because a peer asked ([Install 
 ## Into a busy pane
 
 A message goes through the Send Protocol as one send. A busy pane gets what a reply from the phone
-gets, and Enter never goes into a turn where it would steer the agent.
+gets, and Enter never goes into a turn where it would steer the agent. Only a person can steer a
+turn, with the Steer choice on the Send button ([Steer or queue](multiplexers.md#steer-or-queue)). A
+message never steers, whoever sends it.
 
 | Profile | In a running turn | What happens |
 | --- | --- | --- |
@@ -154,20 +294,41 @@ gets, and Enter never goes into a turn where it would steer the agent.
 | `cursor` | queue | Enter queues it in the harness, and it runs after the turn |
 | `grok` | hold | Collie holds it and types it when the pane is free |
 | `hermes` | hold | Collie holds it and types it when the pane is free |
-| `muse` | hold | Collie holds it and types it when the pane is free |
+| `kiro` | hold | Collie holds it and types it when the pane is free |
+| `muse` | queue key | Tab queues it; Enter would steer, so Collie never presses it there |
 | `omp` | queue key | Ctrl+Q queues it; Enter would steer, so Collie never presses it there |
 | `opencode` | queue | Enter queues it in the harness, and it runs after the turn |
-| `pi` | queue key | Alt+Enter (Ctrl+Q on Windows) queues it; Enter would steer |
+| `pi` | queue key | Alt+Enter (Ctrl+Q on Windows and in WSL) queues it; Enter would steer |
 
 The queue and the queue key need a harness version Collie knows. With an unknown version, Collie
 holds the message instead. The browser rig does not report a Claude version, so there Collie holds
-the message and types it after the turn. A hold lasts 10 minutes for a message: after that Collie takes it back
-and it waits in the inbox. A pane with no profile is typed blind, as a reply is.
+the message and types it after the turn. A hold lasts 60 minutes from the moment Collie takes the
+message: after that Collie takes it back and it waits in the inbox. A pane with no profile is typed
+blind, as a reply is.
 
 An open dialog, such as a permission card or a question, is held the same way. Nothing goes into
 the dialog. Once the dialog is answered, Collie types the message and the receipt reads "typed into
-the pane". It waits in the inbox only when the hold runs out first. A box that holds your own draft
-is never typed into: the message waits in the inbox as `draft present`.
+the pane". It waits in the inbox only when the hold runs out first.
+
+A draft in the box holds the message too. Collie never types into a box that holds your own text.
+It types the message once the box is empty and the pane idle on two checks in a row. If you send
+the draft instead, its turn starts, and Collie types the message after that turn.
+
+While a message waits, its receipt reads `held: draft present` or `held: turn running`. Collie
+types it when the box clears or the turn ends, up to 60 minutes. Do not send it again. One clock
+runs for both reasons, and a bridge restart keeps the hold and the clock.
+
+Before Collie types a held message, it checks the pane once more. If the pane closed and another
+session took its id, the message stays in the inbox as `pane replaced`.
+
+A held message has two ways out before the hour ends. The sender takes it back with
+`collie walky cancel <id>` from the pane that sent it. A message sent from the phone is cancelled on
+the phone: its line under the box, and its row in the pane's WalkyTalky sheet, carry Cancel while it is
+held. The owner of the target pane sees "1 message waits for the box to clear" above the box. A tap
+opens the WalkyTalky sheet, where each held message has Drop. Either way the message stays in the
+inbox, not typed, and the receipt reads `cancelled by sender` or `dropped by the pane's owner`. A
+message that was already typed cannot be taken back; the answer says so, and the receipt stands. Only
+the sender can cancel. On a crew, a message held on another machine is taken back on that machine. It is not cancelled.
 
 Two messages to one pane are typed one after the other, never into each other. The second waits
 while the first is typed, and its receipt stays "queued". A message that still waits after 2
@@ -181,6 +342,7 @@ Answer a message, read your inbox and look up a receipt.
 collie walky reply wt_k3f9x2m8q1a0 "Merged. Thanks."
 collie walky inbox
 collie walky status wt_n2d8s1v7c4b9
+collie walky cancel wt_n2d8s1v7c4b9
 ```
 
 - `reply <id>` sends to the pane the message came from, as a reply to it. A message from an
@@ -189,10 +351,18 @@ collie walky status wt_n2d8s1v7c4b9
 - `inbox` prints this pane's unread messages and marks them read. `--keep` leaves them unread.
 - `inbox --all` prints the last 50 that reached the pane. Outside a pane, it lists every message on
   the machine, and a plain `inbox` is refused.
+- `who --workspace <repo>[#<branch>]` and `who --here` list only the panes of one workspace
+  ([Send to a workspace](#send-to-a-workspace)).
 - `status <id>` prints the id, then one line per pane. Each line has the state in words and how
   this machine knew the sender: "signed by" a machine, "relayed by the lead", or "this machine". A
-  machine that refused a whole broadcast, for example with walky talky off, has one line for all
-  its panes, `<member>/all`.
+  machine that refused a whole broadcast, for example with WalkyTalky off, has one line for all
+  its panes, `<member>/all`. A send to a workspace adds `to <scope>` under the id and a totals
+  line at the end.
+- `cancel <id>` takes back a message you sent while it is held. Run it in the pane that sent the
+  message. The message stays in the inbox, not typed, and the receipt reads
+  `waiting in the inbox, not typed: cancelled by sender`. A message that was already typed prints
+  "already typed, nothing to take back" and keeps its receipt. A second `cancel` prints the receipt
+  and changes nothing. From another pane it is refused: only the sender can cancel it.
 
 Every verb takes `--json` for a script.
 
@@ -208,20 +378,21 @@ certificate with its own word for it, so the receiving machine checks the sender
   panes, then this line:
 
   ```text
-  other machines: run `collie walky who` on the lead (bluefin), or use the phone
+  other machines: run `collie walky who` on the lead (desk), or use the phone
   ```
 
 - **The outcome comes back to the sender.** The machine that types a message reports the outcome to
   the lead with its crew updates, until the lead confirms it got it. The lead then sends the outcome
   on to the member that sent the message. So `send` on a member waits as it does for a local pane,
   up to 15 seconds, and prints "typed into the pane". `collie walky status <id>` on the member shows
-  the same. Until the outcome arrives, a member shows `queued (outcome known on the lead)`, and
-  `send` adds the `check later` line. Under an older lead it never arrives. Then run
+  the same. Until the outcome arrives, a member shows `queued (outcome known on the lead)`, or
+  `held: draft present` when the lead passed the hold on, and `send` adds the `check later` line.
+  Both mean wait: do not send it again. Under an older lead the outcome never arrives. Then run
   `collie walky status <id>` on the lead, or open the pane on the phone.
 - **A slow machine does not hold up a broadcast.** The lead gives each machine 8 seconds. A machine
   that takes longer shows `may have arrived, will not be sent again (member slow)`, and its next
   crew update fills in the outcome.
-- **An older machine refuses.** A message to a member older than walky talky gives
+- **An older machine refuses.** A message to a member older than WalkyTalky gives
   `not sent: older member` at once, with no dial. A member under an older lead gives
   `not sent: older lead`. Run `collie crew update --all` to fix it
   ([Crews](crew.md#messages-between-machines)).
@@ -245,11 +416,11 @@ a crew, a message whose clock is more than 10 minutes off is refused `stale`.
 
 | State | Printed as | Meaning |
 | --- | --- | --- |
-| `accepted` | queued | Logged, not typed yet |
+| `accepted` | queued, or held with the reason | Logged, not typed yet. `held: draft present` or `held: turn running`: Collie types it when the box clears or the turn ends, up to 60 minutes. Do not send it again |
 | `delivered` | typed into the pane | The text went into the pane and was submitted |
-| `inbox-only` | waiting in the inbox, not typed | Not typed, for the reason shown: `held past 10 minutes` (a busy pane or an open dialog outlasted the hold), `draft present`, `box not free`, `pane busy`, `no terminal`, `bridge restarted`. It waits in the pane's inbox |
-| `refused` | not sent | Not taken, for the reason shown: no such pane, pane replaced, not an agent pane, a limit, an older member or lead, or walky talky off on that machine |
-| `unknown` | may have arrived, will not be sent again | The outcome was not read, a hold was still pending after 10 minutes, or the log lost the record. Collie never sends it again |
+| `inbox-only` | waiting in the inbox, not typed | Not typed, for the reason shown: `held past 60 minutes` (a draft, a busy pane or an open dialog outlasted the hold), `cancelled by sender`, `dropped by the pane's owner`, `box not free`, `pane busy`, `pane replaced`, `no terminal`, `bridge restarted`, `resting` (a scope or `all` met a session that rests, printed as "the session rests"; send with `--wake` to type it). It waits in the pane's inbox |
+| `refused` | not sent | Not taken, for the reason shown: no such pane, pane replaced, not an agent pane, a limit, an older member or lead, a session with its WalkyTalky off, or WalkyTalky off on that machine |
+| `unknown` | may have arrived, will not be sent again | The outcome was not read, a hold was still pending after 60 minutes, or the log lost the record. Collie never sends it again |
 
 The words are what the CLI and the phone show. `--json` and the receipt keep the state names.
 `send` exits 0 for `accepted`, `delivered` and `inbox-only`.
@@ -264,39 +435,56 @@ with a wrong one, prints the usage and exits 2.
 
 The phone shows a message as a card and sends one from the composer, so you need no terminal.
 
-A message in a pane's Chat appears as a card titled "Message from" and the sender's label. The card
-shows the sender's kind (`agent` or `operator`), the message body, and "reply to" the id it answers.
+A message in a pane's Chat appears as a card titled "Message from" and the sender's name. The card
+shows the sender's kind (`agent` or `operator`), the message body, and "in reply to" the sender and
+time of the message it answers.
 A small word says how the sender was known: "signed by" a machine, "relayed by the lead", "this
 machine", or "not verified".
+
+The phone names a session by its pane name, the same name every other screen shows. A session you
+rename shows its new name on an old message. An address in a message body that names a live pane
+reads as that pane's name too. In the WalkyTalky sheet that name is a button that opens the pane. A bare
+pane id counts only when one live pane carries it. An address that no live pane holds stays text.
+The address and the message id stay on the wire, in the agent's terminal, in `who` and in the CLI.
+Where the log does not hold the message a reply answers, the card shows the id.
 
 The card appears only when the log of the machine that owns the pane holds that message. For a pane
 on a crew member, the lead reads that member's log. A header that an agent merely prints stays plain
 text, with the quiet mark "no log record on this machine"
-([Troubleshooting](troubleshooting.md#walky-talky)). The card shows the body from that log at once,
+([Troubleshooting](troubleshooting.md#walkytalky)). The card shows the body from that log at once,
 also for a message from another agent that its pane has not read yet.
 
 When the phone cannot read the log, it claims nothing: no card and no mark. This happens on a member
 older than 1.23.0, and on a member the lead cannot reach.
 
-Tap the card to open the Messages sheet on that message. The sheet scrolls to it and marks it, and
+Tap the card to open the WalkyTalky sheet on that message. The sheet scrolls to it and marks it, and
 its Reply button is next to it.
 
-When an agent runs `collie walky` in a tool card, the card wears a small "walky talky" badge. After
+While a message waits for the pane's box to clear, a line above the box reads "1 message waits for
+the box to clear", or the count. Tap it to open the WalkyTalky sheet. A held message from an agent has
+a Drop button there: the hold ends, the message stays in the inbox, and its row reads
+`waiting in the inbox, not typed: dropped by the pane's owner`. A held message you sent from the
+phone has Cancel instead, on its row and on the line under the box. Its row then reads
+`cancelled by sender`. A message that was already typed answers "Already typed. Nothing to take
+back." The line and the buttons go when nothing is held any more.
+
+When an agent runs `collie walky` in a tool card, the card wears a small "WalkyTalky" badge. After
 `send` or `reply`, one line under it reads "Message to" the pane and the receipt state, for example
-"Message to collie-04rj6a/w54:p1G: typed into the pane". After `inbox <id>`, the message's card shows under
+"Message to collie-7k2m9p/w54:p1G: typed into the pane". After `inbox <id>`, the message's card shows under
 the tool card. Both come from the bridge's log, never from what the command printed. If the log
 does not hold the id, the card shows plain output. A message id in Chat text, or in a tool's
-output, becomes a small chip when the log holds it, and a tap on the chip opens the Messages sheet
+output, becomes a small chip when the log holds it, and a tap on the chip opens the WalkyTalky sheet
 on that message. Any other id stays plain text. The terminal view marks every row that prints an id
 the log holds the same way as the header row.
 
 Each receipt state shows the words in the table above, with the reason after "not sent" and
 "waiting in the inbox, not typed".
 
-- **Messages.** Open a pane's menu and tap "Messages" to see the messages for that pane, newest
+- **WalkyTalky.** Open a pane's menu and tap "WalkyTalky" to see the messages for that pane, newest
   first. The list holds the messages that reached the pane and the ones the pane sent. A sent message
-  has the title "To" and the pane it went to, with the receipt state in words, and no "Reply"
-  button. A message from an agent has a "Reply" button, and the reply keeps the token of the sender's
+  reads "Sent to" and the session's name, or the name and "on" the machine, with the receipt state
+  in words, and has no "Reply" button. A hold reads in plain words: "that session has unsent text",
+  or "that session is busy". A message from an agent has a "Reply" button, and the reply keeps the token of the sender's
   address. A pane on a crew member has the row too, and its list comes from that member's own log. A
   reply from it goes through the lead like any message. An empty sheet says "No messages for this pane
   yet." A machine whose log the phone cannot read says "This machine does not keep messages yet."
@@ -304,19 +492,22 @@ Each receipt state shows the words in the table above, with the reason after "no
   The text goes to this pane as a message from you. The phone adds the pane's token to the address,
   so the text reaches the session you are looking at. If another pane has taken the id since, the
   line shows `not sent: pane replaced` and nothing is typed. A pane from a machine older than tokens
-  gets the bare address. A line under the box shows "Message to" the pane and the receipt state. While it says "queued", the line follows the receipt and changes to the
-  final word. Tap "Dismiss" to clear the line. A plain tap on Send still sends the text as before.
+  gets the bare address. A line under the box shows "Message to" the pane and the receipt state.
+  While it says "queued" or "held", the line follows the receipt and changes to the final word. A
+  held message adds "Typed when the box clears or the turn ends, up to 60 minutes. Do not send it
+  again." Tap "Dismiss" to clear the line. A plain tap on Send still sends the text as before.
 - **Message all agents.** On the Crew page, tap "Message all agents". Write the text, pick "Send
   to" (`All machines` or one machine) and tap "Send message". The sheet then asks
   "Message 5 agents on 2 machines?" with the count for that choice. The count leaves out machines
   the lead cannot reach. Tap "Send" to send, or "Back". The sheet lists the shell panes it skips.
-  It shows "Agents reached" and one receipt per target. The receipt for the whole broadcast reads
+  Panes that rest sit under "Resting, not woken": they get the message in their inbox only. Turn on
+  "Wake them too" to type it into them as well, and the count follows. It shows "Agents reached" and one receipt per target, each named by its session. The receipt for the whole broadcast reads
   "every machine". A line "Not sent on this machine" counts the recent refusals per reason. A
   device that may not send sees "This device may not send messages." under the button.
 
 ## Install the skill
 
-An agent uses walky talky only when it knows how. Collie writes the skill that teaches it into
+An agent uses WalkyTalky only when it knows how. Collie writes the skill that teaches it into
 your agents' own instruction files.
 
 The skill is a short text. It teaches the agent the `collie walky` verbs, how to read the header
@@ -411,9 +602,43 @@ This removes the Claude file and cuts out the block. It leaves the rest of each 
 Collie records the uninstall under its state directory, so the next update does not put the skill
 back. `collie skill install <harness>` removes that record again.
 
+## Turn it off for one session
+
+```sh
+collie walky off
+collie walky on
+```
+
+Run `off` inside the agent's own pane, or use the WalkyTalky switch at the top of the session's
+WalkyTalky sheet on the phone. From then on, no other agent can message that session, and
+the session cannot message other agents. Your own messages still reach it, from the phone or from
+a terminal outside any pane. `on` turns it back. Both print one line and exit 0, and a second `off`
+changes nothing. With two Collie instances on one multiplexer, the command sets both. The phone
+sets the instance it is connected to, and across a crew the machine that owns the pane. While the
+session is off, the pane menu's WalkyTalky row reads "WalkyTalky off".
+
+- **An agent's message to that session is refused.** Nothing is typed and nothing waits in its
+  inbox. The sender reads
+  `not sent: walky talky off. This session takes messages from its operator only. Ask your operator.`
+- **A message from that session is refused.** The agent reads
+  `not sent: your walky talky is off. Turn it on: collie walky on`.
+- **A message that was already queued or held is checked again.** It is refused the same way
+  before it is typed, and it leaves the inbox.
+- **`who` marks the session** with `, walky off` after STATE. Inside an off session, `who` ends
+  with `Your walky talky is off. Turn it on: collie walky on`.
+- **The switch belongs to one session in one pane.** It stays through a bridge restart and an agent
+  restart in the same open pane. It ends when the pane closes, so a new session in that pane
+  starts on.
+
+> A bridge that is down for more than about 30 seconds forgets which session held each pane. The
+> panes then start on again.
+
+The session itself can also turn the switch on again. The switch keeps other agents out. It is not
+a lock against the agent in that pane.
+
 ## Limits and switches
 
-What walky talky refuses, and how to turn it off.
+What WalkyTalky refuses, and how to turn it off.
 
 ```sh
 # in .env, then run `collie restart`
@@ -427,13 +652,13 @@ CLI on that machine still sends.
 note when an installed copy is behind, and `collie skill install` and `collie skill sync` still
 work by hand.
 
-These are the limits that stay on:
+These are the limits that stay on. Each bridge counts them for its own panes, on this machine:
 
 | Limit | Refused as |
 | --- | --- |
 | 30 messages per sender in 10 minutes. A sender is its kind, machine and pane, never its label | `rate limit` |
 | Your broadcast to `all` or `<member>/all` counts one message per pane it reaches | `rate limit` |
-| 6 messages in 10 minutes between the same two panes, either direction | `pair limit` |
+| 6 messages in 10 minutes between the same two panes, either direction. `COLLIE_WALKY_PAIR_LIMIT` (`walky_pair_limit` in the `[bridge]` section of the config file) sets it, from 1 to 100, and each machine counts for itself | `pair limit` |
 | On a lead, 60 messages in 10 minutes from one machine, all its panes together | `rate limit` |
 | A body over 4,000 characters, after control bytes are removed | `body over 4,000 characters` |
 | A reply chain deeper than 4 replies | `thread depth` |
@@ -443,6 +668,8 @@ These are the limits that stay on:
 | A pane id that two sessions on one machine both use, in an address with no token | `ambiguous pane` |
 | An address whose token names a pane that closed, and another pane holds the id now | `pane replaced` |
 | A reply whose sender pane closed, now sits in another session, or holds a new token | `sender gone` |
+| An agent's message to a session that turned its WalkyTalky off | `walky talky off` |
+| An agent's message from a session that turned its WalkyTalky off | `your walky talky is off` |
 
 - **Collie never answers a message on its own**, and never answers a dialog with one. A send over an
   open dialog is held: nothing enters the dialog, the message is typed after the dialog is answered,
@@ -454,6 +681,29 @@ These are the limits that stay on:
 - **The refusals are counted**, per reason, in `<stateDir>/walky/refusals.json`, with no body and
   no sender. `collie doctor` shows them in the row `walky-refusals`. The Crew page shows them under
   a broadcast.
+
+## When a message does not arrive
+
+Find the receipt, then follow the symptom. `collie walky status <id>` prints the receipt.
+
+- **`not sent: pane replaced`, or no such pane.** The address is old or wrong. Run `collie walky who`
+  and copy ADDRESS again ([Read the who table](#read-the-who-table), [Addresses](#addresses)).
+- **`held: draft present` or `held: turn running`.** The pane is busy. Collie types the message when
+  the box clears or the turn ends. Do not send it again ([Into a busy pane](#into-a-busy-pane)).
+- **`waiting in the inbox, not typed`.** The receipt names the reason. The pane's agent reads the
+  message with `collie walky inbox` ([Receipts](#receipts)).
+- **`not sent: older member` or `not sent: older lead`.** One machine of the crew is too old. Run
+  `collie crew update --all` ([Across a crew](#across-a-crew)).
+- **`not sent: unreachable`.** The lead cannot reach that machine. Collie does not retry it
+  ([Send to a workspace](#send-to-a-workspace)).
+- **`not sent: walky talky off`.** That session takes messages from you only. Pass the message on
+  yourself ([Turn it off for one session](#turn-it-off-for-one-session)).
+- **`not sent: off`, `rate limit` or `pair limit`.** A switch or a limit refused it
+  ([Limits and switches](#limits-and-switches)).
+- **The message is typed and the agent does nothing.** The agent may not have the skill yet
+  ([Install the skill](#install-the-skill)).
+
+[Troubleshooting](troubleshooting.md#walkytalky) lists more symptoms, each with its fix.
 
 ## How it works
 
@@ -481,7 +731,7 @@ are in [`CREW_PROTOCOL.md` §21](../CREW_PROTOCOL.md).
 > The receipt and the log protect the phone's card against a header typed on the screen. On a crew,
 > the signature protects a message between machines. Nothing protects you from a local agent that
 > lies about its own pane. A pane token tells panes apart and proves nothing: `who` prints it to
-> every agent ([Security](security.md#walky-talky)).
+> every agent ([Security](security.md#walkytalky)).
 
-On Windows walky talky is not available yet. The CLI prints
+On Windows WalkyTalky is not available yet. The CLI prints
 `walky talky needs a Unix socket on this host`.

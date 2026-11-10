@@ -36,6 +36,27 @@ it("a current OMP Ask offers selectable answers even with its hide hint", () => 
   expect(ompModalOnScreen(lines)).toBe(true);
 });
 
+// omp 18.16.0 prints the hide hint as a glyph keycap, `⌥H hide`; read as an unknown control, it left
+// the dialog unreadable on the phone, with no answer buttons and no way to reach `Other`.
+it("omp 18.16 Ask with the `⌥H hide` keycap offers its answers, `Other` included", () => {
+  const lines = load("omp--v18-16-0-ask-single-glyph-hide--w200.txt");
+  const model = detectAskSelect(lines);
+  expect(model?.question).toBe("과일을 고르세요");
+  expect(model?.options.map((option) => [option.label, option.keys])).toEqual([
+    ["사과", ["Enter"]],
+    ["배", ["Down", "Enter"]],
+    ["포도", ["Down", "Down", "Enter"]],
+    [OTHER, ["Down", "Down", "Down", "Enter"]],
+    ["Cancel", ["Escape"]],
+  ]);
+  expect(ompModalOnScreen(lines)).toBe(true);
+  const moved = detectAskSelect(load("omp--v18-16-0-ask-single-glyph-hide-moved--w200.txt"));
+  expect(moved?.options.map((option) => [option.label, option.keys]).slice(0, 2)).toEqual([
+    ["사과", ["Up", "Enter"]],
+    ["배", ["Enter"]],
+  ]);
+});
+
 it("answers the current question in an OMP batch with the verified pointer walk", () => {
   const model = detectAskSelect(load("omp--v18-10-ask-batch.txt"));
   expect(model?.question).toBe("Where should the note go?");
@@ -139,6 +160,22 @@ it("declines unknown controls after the current footer instead of guessing their
   expect(detectAskSelect(fromTexts(lines))).not.toBeNull();
   expect(detectAskSelect(fromTexts(lines.map((line) => line.replace("Alt+H hide", "Alt+H hide · x accept all")))))
     .toBeNull();
+});
+
+it("declines an unknown glyph control after `⌥H hide`", () => {
+  const lines = textsOf("omp--v18-16-0-ask-single-glyph-hide--w200.txt");
+  expect(detectAskSelect(fromTexts(lines.map((line) => line.replace("⌥H hide", "⌥H hide · ⌥X accept all")))))
+    .toBeNull();
+});
+
+// `Ctrl+O expand`/`collapse` are matched as text only. A glyph `⌃O` has not been captured, and the cut
+// state must never offer answers, so both the Ask grammar and the modal gate decline it.
+it.each(["⌃O expand", "⌃O collapse"])("declines `⌥H hide · %s`, a glyph expansion control not captured yet", (hint) => {
+  const lines = fromTexts(
+    textsOf("omp--v18-16-0-ask-single-glyph-hide--w200.txt").map((line) => line.replace("⌥H hide", `⌥H hide · ${hint}`)),
+  );
+  expect(detectAskSelect(lines)).toBeNull();
+  expect(ompModalOnScreen(lines)).toBe(false);
 });
 
 describe("the 18.4.10 dialog (glyph keycaps) lifts as a pointed list", () => {
@@ -248,6 +285,84 @@ describe("the Nerd Font preset (18.4.4) lifts, read from its own glyphs", () => 
   });
 });
 
+// omp 18.18.0 under `symbolPreset: nerd` (2026-11-08, omp/keycaps.ts): a batch of two questions. The tab
+// segment's keycap is U+F0312, a saved answer is U+F192, the review's pointer is U+F054.
+describe("the Nerd Font preset in a batch (18.18.0) lifts each step and the review", () => {
+  /** The lines with one glyph swapped in every segment, the styles kept, for the mixed-preset controls.
+   *  With `onLine`, only on the rows whose text holds it. */
+  const swapped = (name: string, from: string, to: string, onLine?: string): StyledLine[] => {
+    const lines = structuredClone(load(name));
+    for (const line of lines) {
+      if (onLine !== undefined && !lineText(line).includes(onLine)) continue;
+      for (const segment of line.segments) segment.text = segment.text.replaceAll(from, to);
+    }
+    return lines;
+  };
+
+  it("the first question: its tab in the caption, the walk from the chevron, Cancel as Escape", () => {
+    const model = detectAskSelect(load("omp--v18-18-0-nerd-ask-batch--w250.txt"))!;
+    expect(model.caption).toBe("Ask (1/2) · color");
+    expect(model.question).toBe("Which color do you prefer?");
+    expect(model.options).toEqual([
+      { label: "red", keys: ["Enter"], keyLabel: "❯" },
+      { label: "green", keys: ["Down", "Enter"], keyLabel: "" },
+      { label: OTHER, keys: ["Down", "Down", "Enter"], keyLabel: "" },
+      { label: "Cancel", keys: ["Escape"], keyLabel: "Esc" },
+    ]);
+  });
+
+  it("the second question is told apart from the first by its tab", () => {
+    const model = detectAskSelect(load("omp--v18-18-0-nerd-ask-batch-q2--w250.txt"))!;
+    expect(model.caption).toBe("Ask (2/2) · pet");
+    expect(model.options.map((o) => o.label)).toEqual(["cat", "dog", OTHER, "Cancel"]);
+  });
+
+  it("a revisited question shows its saved answer (U+F192) and still lifts, one saved answer at most", () => {
+    const name = "omp--v18-18-0-nerd-ask-batch-saved--w250.txt";
+    const model = detectAskSelect(load(name))!;
+    expect(model.caption).toBe("Ask (2/2) · pet");
+    expect(model.options.map((o) => [o.label, o.keys])).toEqual([
+      ["cat", ["Enter"]],
+      ["dog", ["Down", "Enter"]],
+      [OTHER, ["Down", "Down", "Enter"]],
+      ["Cancel", ["Escape"]],
+    ]);
+    expect(detectAskSelect(swapped(name, "\u{F10C}", "\u{F192}", " dog"))).toBeNull();
+    // The unicode saved mark under nerd rows is a screen omp never draws.
+    expect(detectAskSelect(swapped(name, "\u{F192}", "◉"))).toBeNull();
+  });
+
+  it("the complete review: every answer on the card, Submit as Enter alone", () => {
+    const model = detectAskSelect(load("omp--v18-18-0-nerd-ask-review--w250.txt"))!;
+    expect(model.question).toBe("Review answers\n1. color: red\n2. pet: cat");
+    expect(model.options).toEqual([
+      { label: "Submit", keys: ["Enter"], keyLabel: "⏎" },
+      { label: "Cancel", keys: ["Escape"], keyLabel: "Esc" },
+    ]);
+  });
+
+  it("the review with every question unanswered declines, as in `unicode`", () => {
+    expect(detectAskSelect(load("omp--v18-18-0-nerd-ask-review-unanswered--w250.txt"))).toBeNull();
+  });
+
+  it.each([
+    ["the unicode tab keycap in the nerd footer", "omp--v18-18-0-nerd-ask-batch--w250.txt", "\u{F0312}", "⇥"],
+    ["the unicode pointer under the nerd footer", "omp--v18-18-0-nerd-ask-batch--w250.txt", "\u{F054}", "❯"],
+    ["the unicode Submit pointer under the nerd review footer", "omp--v18-18-0-nerd-ask-review--w250.txt", "\u{F054}", "❯"],
+    ["the unicode enter keycap in the nerd review footer", "omp--v18-18-0-nerd-ask-review--w250.txt", "\u{F0311}", "⏎"],
+  ])("%s declines: a screen omp never draws", (_name, name, from, to) => {
+    expect(detectAskSelect(load(name))).not.toBeNull();
+    expect(detectAskSelect(swapped(name, from, to))).toBeNull();
+  });
+
+  it("a batch under the 17.x text keycaps declines: no batch was captured in that dialect", () => {
+    const name = "omp--v18-18-0-nerd-ask-batch--w250.txt";
+    const text = swapped(name, "\u{F0311} select", "Enter select");
+    for (const line of text) for (const segment of line.segments) segment.text = segment.text.replace("\u{F12B7} cancel", "Esc cancel");
+    expect(detectAskSelect(text)).toBeNull();
+  });
+});
+
 describe("the 18.8.0 dialog with option descriptions (#372) lifts, each description on its option", () => {
   const DESCRIBED = "omp--v18-8-ask-single-described.txt";
   // Staging's description wraps onto a second row at the same indent, six columns in.
@@ -283,6 +398,144 @@ describe("the 18.8.0 dialog with option descriptions (#372) lifts, each descript
     const model = detectAskSelect(fromTexts(noted))!;
     expect(model.options[1]!.label).toBe("Production");
     expect(model.options[1]!.description).toBe("✎ note · Ship straight to production.");
+  });
+});
+
+// omp 18.12.6 (omp-gang tester 04, case 9): the model gave each option a `preview`, drawn behind a rail under
+// the description. The grammar declined every preview row, so the Surface read `unreadable` and a plain send
+// was refused `unconfirmed`. Now the rows belong to their option, and the card shows them after `Preview:`.
+describe("omp 18.12.6 Ask with option previews lifts, each preview on its option", () => {
+  const PREVIEWED = "omp--v18-12-6-ask-previews--w120.txt";
+  const texts = (): string[] => textsOf(PREVIEWED);
+  const pad = (s: string) => `│${s.padEnd(118)}│`;
+  const at = (needle: string): number => texts().findIndex((t) => t.includes(needle));
+
+  it("the capture: three options with descriptions and previews, Other, and the walk to each", () => {
+    const model = detectAskSelect(load(PREVIEWED))!;
+    expect(model.question).toBe("Which of these would be most useful for your work right now?");
+    expect(model.options.map((o) => o.label)).toEqual(["Code refactoring", "Bug investigation", "New feature development", OTHER, "Cancel"]);
+    expect(model.options.map((o) => o.keys)).toEqual([
+      ["Enter"],
+      ["Down", "Enter"],
+      ["Down", "Down", "Enter"],
+      ["Down", "Down", "Down", "Enter"],
+      ["Escape"],
+    ]);
+    expect(model.options.map((o) => o.keyLabel)).toEqual(["❯", "", "", "", "Esc"]);
+    expect(model.options.map((o) => o.description)).toEqual([
+      "Improving structure and maintainability · Preview: Clean up technical debt",
+      "Tracking down and fixing issues · Preview: Debug existing problems",
+      "Building new capabilities · Preview: Implement fresh functionality",
+      undefined,
+      undefined,
+    ]);
+    // The echo block above the panel is no part of it: the card starts at the panel's title.
+    const region = detectAskSelectRegion(load(PREVIEWED))!;
+    expect(textsOf(PREVIEWED)[region.startLine]).toMatch(/^╭─ Ask ─+╮$/);
+    expect(model.signature).not.toContain("Ask 1 questions");
+  });
+
+  it("omp's plan mode asks the same shape (\"Gather task for plan mode\", 14-turn-queue): four choices, Other, Cancel", () => {
+    const plan = "omp--v18-12-6-ask-plan-mode--w120.txt";
+    const model = detectAskSelect(load(plan))!;
+    expect(model.question).toBe("What work should I plan?");
+    expect(model.options.map((o) => o.label)).toEqual([
+      "Feature or enhancement",
+      "Bug fix or repair",
+      "Refactor or cleanup",
+      "Integration or migration",
+      OTHER,
+      "Cancel",
+    ]);
+    expect(model.options.map((o) => o.keys)).toEqual([["Enter"], ["Down", "Enter"], ["Down", "Down", "Enter"], ["Down", "Down", "Down", "Enter"], ["Down", "Down", "Down", "Down", "Enter"], ["Escape"]]);
+    expect(model.options[1]!.description).toBe("Fix broken behavior or correct implementation · Preview: Describe the bug and expected behavior");
+    // The echo block above the panel (`╭─── Ask 1 questions`, `[task] · options:4`) and the status row are outside it.
+    expect(model.signature).not.toContain("options:4");
+    expect(ompBuildBlocks(load(plan)).at(-1)!.kind).toBe("prompt-select");
+  });
+
+  it("the footer's Alt+H hide segment is accepted, and the pipeline lifts one prompt-select", () => {
+    const blocks = ompBuildBlocks(load(PREVIEWED));
+    expect(blocks.at(-1)!.kind).toBe("prompt-select");
+    expect(blocks.filter((b) => b.kind !== "raw")).toHaveLength(1);
+    expect(ompModalOnScreen(load(PREVIEWED))).toBe(true);
+  });
+
+  it("a pointer moved at the desk is another prompt: the race guard sees the pointer", () => {
+    const moved = texts().map((t) => t.replace("│ ❯ ○ Code refactoring", "│   ○ Code refactoring").replace("│   ○ Bug investigation", "│ ❯ ○ Bug investigation"));
+    const first = detectAskSelect(load(PREVIEWED))!;
+    const after = detectAskSelect(fromTexts(moved))!;
+    expect(after.options.map((o) => o.keys)).toEqual([["Up", "Enter"], ["Enter"], ["Down", "Enter"], ["Down", "Down", "Enter"], ["Escape"]]);
+    expect(promptsEqual(first, after)).toBe(false);
+    expect(first.coreSignature).toBe(after.coreSignature);
+  });
+
+  it("a multi-row preview with an empty row in it joins with breaks, and a saved note's mark leads", () => {
+    const rows = texts();
+    const first = at("Clean up technical debt");
+    const more = [pad("       │ "), pad("       │ - keep the public API"), pad("       │ ")];
+    const longer = [...rows.slice(0, first + 1), ...more, ...rows.slice(first + 1)];
+    const model = detectAskSelect(fromTexts(longer))!;
+    expect(model.options[0]!.description).toBe("Improving structure and maintainability · Preview: Clean up technical debt ↵  ↵ - keep the public API");
+    const noted = rows.map((t) => t.replace("○ Bug investigation  ", "○ Bug investigation  ✎ note"));
+    expect(detectAskSelect(fromTexts(noted))!.options[1]!.description).toBe("✎ note · Tracking down and fixing issues · Preview: Debug existing problems");
+  });
+
+  it("an option with a preview and no description shows the preview alone", () => {
+    const rows = texts().filter((t) => !t.includes("Improving structure"));
+    expect(detectAskSelect(fromTexts(rows))!.options[0]!.description).toBe("Preview: Clean up technical debt");
+  });
+
+  it("declines a preview under Other, under no option, after a description's successor, of blank rows only, or with a hidden character", () => {
+    const rows = texts();
+    const other = at("Other (type your own)");
+    expect(detectAskSelect(fromTexts([...rows.slice(0, other + 1), pad("       │ a deep teal"), ...rows.slice(other + 1)]))).toBeNull();
+    const body = at("Which of these");
+    const divider = rows.findIndex((t, i) => i > body && /^├─+┤$/.test(t));
+    expect(detectAskSelect(fromTexts([...rows.slice(0, divider + 1), pad("       │ before any option"), ...rows.slice(divider + 1)]))).toBeNull();
+    const first = at("Clean up technical debt");
+    expect(detectAskSelect(fromTexts([...rows.slice(0, first + 1), pad("       a description after the preview"), ...rows.slice(first + 1)]))).toBeNull();
+    expect(detectAskSelect(fromTexts(rows.map((t, i) => (i === first ? pad("       │ ") : t))))).toBeNull();
+    expect(detectAskSelect(fromTexts(rows.map((t, i) => (i === first ? pad("       │ Clean up \u202etechnical debt") : t))))).toBeNull();
+  });
+
+  it("a preview row that runs off the box with no right border still declines", () => {
+    const rows = texts().map((t) => (t.includes("Clean up technical debt") ? t.replace(/\s*│$/, "") : t));
+    // Text with no right border is read as a clipped row only by the description rule; for a preview the
+    // right border is required, as for a description row.
+    expect(detectAskSelect(fromTexts(rows))).toBeNull();
+  });
+});
+
+describe("omp 18.12.6 free-text-only Ask (omp-gang 04-readers F3, 2026-10-26) lifts: `Other` alone, then Cancel", () => {
+  const FREE = "omp--v18-12-6-ask-freetext--w120.txt";
+
+  it("the question, the one `Other` row (a bare Enter opens the answer editor) and Cancel", () => {
+    const model = detectAskSelect(load(FREE))!;
+    expect(model.question).toBe("What feature or API should I plan?");
+    expect(model.options).toEqual([
+      { label: OTHER, keys: ["Enter"], keyLabel: "❯" },
+      { label: "Cancel", keys: ["Escape"], keyLabel: "Esc" },
+    ]);
+    expect(model.family).toBe("select");
+    expect(ompBuildBlocks(load(FREE)).at(-1)!.kind).toBe("prompt-select");
+  });
+
+  it("the card starts at the panel's title, not at the echo block above it", () => {
+    const region = detectAskSelectRegion(load(FREE))!;
+    expect(textsOf(FREE)[region.startLine]).toMatch(/^╭─ Ask ─+╮$/);
+    expect(region.model.signature).not.toContain("Ask 1 questions");
+  });
+
+  it("a lone row that is not `Other`, and an `Other` row with no pointer, decline", () => {
+    const rows = textsOf(FREE);
+    expect(detectAskSelect(fromTexts(rows.map((t) => t.replace("Other (type your own)", "Something else"))))).toBeNull();
+    expect(detectAskSelect(fromTexts(rows.map((t) => t.replace("│ ❯ ○", "│   ○"))))).toBeNull();
+  });
+
+  it("no row at all declines", () => {
+    const rows = textsOf(FREE);
+    expect(detectAskSelect(fromTexts(rows.filter((t) => !t.includes("Other (type your own)"))))).toBeNull();
   });
 });
 
@@ -484,7 +737,7 @@ describe("fails closed", () => {
     expect(detectAskSelect(fromTexts(insert(206, pad("       the colour of warnings"))))).toBeNull();
   });
 
-  it("with a description-shaped row under no option, under `Other`, off its indent, led by an option's glyph, or an option's preview", () => {
+  it("with a description-shaped row under no option, under `Other`, off its indent, or led by an option's glyph", () => {
     const described = textsOf("omp--v18-8-ask-single-described.txt");
     expect(detectAskSelect(fromTexts(described))).not.toBeNull();
     const pad = (s: string) => `│${s.padEnd(described[26]!.length - 2)}│`;
@@ -504,10 +757,6 @@ describe("fails closed", () => {
       const led = described.map((t, i) => (i === 30 ? pad(`       ${glyph} Ship straight to production.`) : t));
       expect(detectAskSelect(fromTexts(led)), `led by ${glyph}`).toBeNull();
     }
-    // An option's `preview`, which omp draws under its description at the same indent, behind a `│`
-    // rail of its own (read from omp 18.8.7's `ask-dialog.ts`; no capture shows one).
-    const previewed = [...described.slice(0, 31), pad("       │ kubectl rollout status deploy/api"), ...described.slice(31)];
-    expect(detectAskSelect(fromTexts(previewed))).toBeNull();
   });
 
   it("with glyphs and a rail inside a description row, the description stays on the option above and the pointer stays put", () => {
@@ -558,11 +807,11 @@ describe("fails closed", () => {
     expect(detectAskSelect(fromTexts(twice))).toBeNull();
   });
 
-  it("with `Other` as the only row", () => {
+  it("with `Other` as the only row: omp 18.12.6 draws a free-text question so, and it lifts (see the free-text describe)", () => {
     const only = [...single.slice(0, 201), single[204]!, ...single.slice(205)].map((t, i) =>
       i === 201 ? t.replace("│   ○", "│ ❯ ○") : t,
     );
-    expect(detectAskSelect(fromTexts(only))).toBeNull();
+    expect(detectAskSelect(fromTexts(only))?.options.map((o) => o.label)).toEqual([OTHER, "Cancel"]);
   });
 
   it("with more than four question rows, or none", () => {
@@ -609,6 +858,9 @@ describe("the grammar claims nothing else in the corpus", () => {
     "omp--v18-4-ask-single.txt",
     "omp--v18-8-ask-single-described-moved.txt",
     "omp--v18-8-ask-single-described.txt",
+    "omp--v18-12-6-ask-previews--w120.txt",
+    "omp--v18-12-6-ask-plan-mode--w120.txt",
+    "omp--v18-12-6-ask-freetext--w120.txt",
     "omp--v18-10-ask-single.txt",
     "omp--v18-10-ask-batch.txt",
     "omp--v18-10-ask-batch-moved.txt",
@@ -618,6 +870,12 @@ describe("the grammar claims nothing else in the corpus", () => {
     "omp--v18-10-ask-long.txt",
     "omp--v18-10-ask-long-expanded.txt",
     "omp--v18-10-ask-revisited.txt",
+    "omp--v18-16-0-ask-single-glyph-hide--w200.txt",
+    "omp--v18-16-0-ask-single-glyph-hide-moved--w200.txt",
+    "omp--v18-18-0-nerd-ask-batch--w250.txt",
+    "omp--v18-18-0-nerd-ask-batch-q2--w250.txt",
+    "omp--v18-18-0-nerd-ask-batch-saved--w250.txt",
+    "omp--v18-18-0-nerd-ask-review--w250.txt",
   ]);
 
   it("lifts only the supported Ask states in the complete corpus", () => {

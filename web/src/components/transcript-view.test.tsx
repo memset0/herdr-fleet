@@ -1,4 +1,4 @@
-import { render, screen } from "@testing-library/react";
+import { fireEvent, render, screen, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 
 import { http, HttpResponse } from "msw";
@@ -95,6 +95,76 @@ describe("TranscriptView", () => {
       />,
     );
     expect(screen.getByRole("button")).toBeDisabled();
+  });
+
+  it("an empty result stub with no image isn't expandable either (chevron-with-blank-body bug)", () => {
+    showToolCalls();
+    render(
+      <TranscriptView
+        entries={[
+          turn({
+            role: "assistant",
+            parts: [{ kind: "tool", name: "Grep", summary: "foo", result: { text: "", truncated: false } }],
+          }),
+        ]}
+      />,
+    );
+    expect(screen.getByRole("button")).toBeDisabled();
+  });
+
+  it("a find hit inside a tool's output unfolds the call and highlights the matched output", () => {
+    const { container } = render(
+      <TranscriptView
+        query="SECRET_TOKEN"
+        entries={[
+          turn({
+            role: "assistant",
+            parts: [
+              {
+                kind: "tool",
+                name: "Bash",
+                summary: "cat /etc/hosts",
+                result: { text: "127.0.0.1 SECRET_TOKEN_XYZ" },
+              },
+            ],
+          }),
+        ]}
+      />,
+    );
+    const button = screen.getByRole("button", { name: /Bash/ });
+    expect(button).toHaveAttribute("aria-expanded", "true");
+    expect(container.querySelector("pre mark")).toHaveTextContent("SECRET_TOKEN");
+  });
+
+  it("a tool call auto-expanded by a search query can be collapsed by tapping its header, and clearing the query does not leave it stuck open", async () => {
+    showToolCalls();
+    const entries = [
+      turn({
+        role: "assistant",
+        parts: [
+          {
+            kind: "tool",
+            name: "Bash",
+            summary: "cat /etc/hosts",
+            result: { text: "127.0.0.1 SECRET_TOKEN_XYZ" },
+          },
+        ],
+      }),
+    ];
+    const { rerender } = render(<TranscriptView query="SECRET_TOKEN" entries={entries} />);
+    const button = screen.getByRole("button", { name: /Bash/ });
+    expect(button).toHaveAttribute("aria-expanded", "true");
+
+    // Tapping collapses it even while the query still matches.
+    await userEvent.click(button);
+    expect(button).toHaveAttribute("aria-expanded", "false");
+    expect(screen.queryByText(/127\.0\.0\.1/)).not.toBeInTheDocument();
+
+    // Tapping again re-opens it under the active query, and clearing the query collapses it again.
+    await userEvent.click(button);
+    expect(button).toHaveAttribute("aria-expanded", "true");
+    rerender(<TranscriptView query="" entries={entries} />);
+    expect(screen.getByRole("button", { name: /Bash/ })).toHaveAttribute("aria-expanded", "false");
   });
 
   it("flags truncated output rather than silently dropping the tail", async () => {
@@ -357,13 +427,15 @@ describe("TranscriptView — images", () => {
 
   // Reads need the pairing token (ADR 0086) and an `<img src>` cannot send it, so the picture is
   // fetched with the token and drawn from an object URL, link and image alike.
-  it("renders an attachment as a link to the blob, with alt text from the dictionary", async () => {
+  it("renders an attachment from the blob that opens full size in a sheet, with alt text from the dictionary", async () => {
     const seen = watchBlobs();
     setDeviceToken("tok-test-placeholder");
     render(<TranscriptView entries={[turn({ parts: [{ kind: "image", url: BLOB }] })]} />);
     const img = await screen.findByAltText("Attachment");
     expect(img.getAttribute("src")).toMatch(/^blob:/);
-    expect(img.closest("a")?.getAttribute("href")).toBe(img.getAttribute("src"));
+    expect(img.closest("a")).toBeNull();
+    fireEvent.click(img.closest("button")!);
+    expect(within(screen.getByRole("dialog")).getByAltText("Attachment").getAttribute("src")).toBe(img.getAttribute("src"));
     expect(seen).toEqual([{ path: BLOB, auth: "Bearer tok-test-placeholder" }]);
   });
 

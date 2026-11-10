@@ -7,8 +7,8 @@ import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { MetaColours } from "@/hooks/use-theme";
 import { parseJsonObject } from "@/lib/json";
 
-import { THEME_TOKENS, fillHalves, parseTheme, toSrgbHex, type Theme } from "./schema";
-import { ANSI_PROPERTIES, VERSION_TWO_PROPERTIES, SURFACE_PROPERTIES } from "./surface";
+import { THEME_TOKENS, contrastReport, fillHalves, isOptionalThemeToken, parseTheme, toSrgbHex, type Theme } from "./schema";
+import { ANSI_PROPERTIES, VERSION_TWO_PROPERTIES, SURFACE_PROPERTIES, wordDeclarations } from "./surface";
 
 // The store keeps module-scope state (the design store, the library, the metas), so each case
 // imports a fresh graph over a storage it seeded itself.
@@ -21,7 +21,10 @@ const LIBRARY_KEY = "collie:themes:v1";
 function collie(): Theme {
   const parsed = parseTheme(COLLIE_RAW, { maxBytes: 64 * 1024, allowReservedId: true });
   if (!parsed.ok) throw new Error("collie.json no longer parses");
-  return parsed.theme;
+  // The fixtures are version 1 copies of collie's 43 required tokens; the optional ones (version 3), the surface and the palette are left out.
+  const strip = (half: Theme["light"]) => Object.fromEntries(Object.entries(half ?? {}).filter(([token]) => !isOptionalThemeToken(token)));
+  const { surface: _surface, ansi: _ansi, ...rest } = parsed.theme;
+  return { ...rest, version: 1, fonts: { ui: "aldrich" }, light: strip(parsed.theme.light), dark: strip(parsed.theme.dark) };
 }
 
 /** A complete imported theme: collie's tokens, another id, and a dark ground of #123456. */
@@ -38,7 +41,7 @@ function midnight(id = "midnight", extra: Partial<Theme> = {}): Theme {
   };
 }
 
-/** Collie's own index.css palette on its own ground: a palette that passes the gate. */
+/** The first Collie look's palette on its own ground: a palette that passes the gate. */
 const PALETTE = {
   "0": "#000000", "1": "#cd3131", "2": "#0dbc79", "3": "#e5e510", "4": "#2472c8", "5": "#bc3fbc",
   "6": "#11a8cd", "7": "#e5e5e5", "8": "#666666", "9": "#f14c4c", "10": "#23d18b", "11": "#f5f543",
@@ -58,8 +61,8 @@ async function boot(opts: { design?: string; library?: string } = {}) {
   document.documentElement.removeAttribute("data-theme");
   document.documentElement.className = "";
   document.head.innerHTML =
-    '<meta name="theme-color" content="#f5f5f5" media="(prefers-color-scheme: light)">' +
-    '<meta name="theme-color" content="#0a0a0a" media="(prefers-color-scheme: dark)">';
+    '<meta name="theme-color" content="#e4e3e0" media="(prefers-color-scheme: light)">' +
+    '<meta name="theme-color" content="#2a2927" media="(prefers-color-scheme: dark)">';
   vi.resetModules();
   const store = await import("./store");
   const design = await import("@/lib/design");
@@ -84,7 +87,7 @@ describe("the default theme", () => {
     expect(root().hasAttribute("data-theme")).toBe(false);
     expect(root().getAttribute("style")).toBeNull();
     expect(inline()).toEqual([]);
-    expect(metas()).toEqual(["#f5f5f5", "#0a0a0a"]);
+    expect(metas()).toEqual(["#e4e3e0", "#2a2927"]);
     expect(store.activeThemeId()).toBe("collie");
   });
 
@@ -96,7 +99,7 @@ describe("the default theme", () => {
     store.setActiveTheme("collie");
     expect(root().hasAttribute("data-theme")).toBe(false);
     expect(root().getAttribute("style") ?? "").toBe("");
-    expect(metas()).toEqual(["#f5f5f5", "#0a0a0a"]);
+    expect(metas()).toEqual(["#e4e3e0", "#2a2927"]);
   });
 
   it("stores no theme field for collie", async () => {
@@ -142,10 +145,11 @@ describe("an imported theme", () => {
     const { store, theme } = await boot();
     store.addImported(midnight());
     store.setActiveTheme("midnight");
-    expect(theme.metaColours()).toEqual({ light: toSrgbHex(collie().light?.background ?? ""), dark: "#123456" });
-    expect(metas()).toEqual([theme.metaColours().light, "#123456"]);
+    // midnight names no `chrome` word, so it has the stylesheet's band, and the metas follow `secondary`.
+    expect(theme.metaColours()).toEqual({ light: toSrgbHex(collie().light?.secondary ?? ""), dark: toSrgbHex(collie().dark?.secondary ?? "") });
+    expect(metas()).toEqual([theme.metaColours().light, theme.metaColours().dark]);
     store.setActiveTheme("collie");
-    expect(theme.metaColours()).toEqual({ light: "#f5f5f5", dark: "#0a0a0a" });
+    expect(theme.metaColours()).toEqual({ light: "#e4e3e0", dark: "#2a2927" });
   });
 
   it("writes its bundled face into design.font once, and keeps the font alone afterwards", async () => {
@@ -210,7 +214,7 @@ describe("removal", () => {
     expect(store.activeThemeId()).toBe("collie");
     expect(design.designPrefs().theme).toBeUndefined();
     expect(inline()).toEqual([]);
-    expect(metas()).toEqual(["#f5f5f5", "#0a0a0a"]);
+    expect(metas()).toEqual(["#e4e3e0", "#2a2927"]);
     expect(store.library()).toEqual([]);
     expect(localStorage.getItem(LIBRARY_KEY)).toBeNull();
   });
@@ -254,7 +258,7 @@ describe("the library", () => {
           { ...midnight("urlish"), light: { background: "url(https://x.test/a.png)" } },
           { ...midnight("extra"), surprise: true },
           midnight("nightwatch"),
-          { ...midnight("future"), version: 3 },
+          { ...midnight("future"), version: 5 },
           "not an object",
           midnight("good"),
         ],
@@ -301,6 +305,218 @@ describe("the library", () => {
   });
 });
 
+describe("a library another version wrote (rollback)", () => {
+  it("loads a 1.27-shaped blob, with no origins, clean: every theme kept, none with an origin, nothing written", async () => {
+    const written = blob({ version: 1, themes: [midnight("a"), midnight("b")] });
+    const { store } = await boot({ design: blob({ theme: "b" }), library: written });
+    expect(store.library().map((t) => t.id)).toEqual(["a", "b"]);
+    expect(store.originOf("a")).toBeUndefined();
+    expect(store.activeThemeId()).toBe("b");
+    expect(localStorage.getItem(LIBRARY_KEY)).toBe(written);
+  });
+
+  const LATER_SHA = "abcdefabcdefabcdefabcdefabcdefabcdefabcd";
+  /** A theme a later Collie wrote: version 5, which this one refuses. */
+  const v5 = { version: 5, id: "future", name: "Future", light: { background: "#101010" }, sparkle: "much" };
+  const v5Origin = { kind: "registry", repo: "sam/future", path: "collie-theme.json", sha: LATER_SHA, at: 7, extra: "kept" };
+
+  it("round-trips a later Collie's blob: an unknown key and a version 5 theme survive a save unchanged", async () => {
+    const written = { later: { any: ["thing", 1] }, version: 1, themes: [midnight("a"), v5], origins: { future: v5Origin } };
+    const { store } = await boot({ library: blob(written) });
+    expect(store.library().map((t) => t.id)).toEqual(["a"]);
+    store.addImported(midnight("b"));
+    const stored = JSON.parse(localStorage.getItem(LIBRARY_KEY) ?? "{}");
+    expect(stored).toEqual({ ...written, themes: [midnight("a"), midnight("b"), v5] });
+    store.removeImported("b");
+    expect(JSON.parse(localStorage.getItem(LIBRARY_KEY) ?? "{}")).toEqual(written);
+  });
+
+  it("keeps the held part when the last readable theme goes, and never applies or counts it", async () => {
+    const { store } = await boot({ design: blob({ theme: "future" }), library: blob({ version: 1, themes: [midnight("a"), v5] }) });
+    expect(store.activeThemeId()).toBe("collie");
+    store.removeImported("a");
+    expect(JSON.parse(localStorage.getItem(LIBRARY_KEY) ?? "{}")).toEqual({ version: 1, themes: [v5] });
+    // A held entry takes no slot: eight readable themes still fit beside it.
+    for (let i = 0; i < 8; i += 1) expect(store.addImported(midnight(`t${i}`))).toEqual({ ok: true });
+    expect(store.addImported(midnight("t8"))).toEqual({ ok: false, reason: "full" });
+  });
+
+  it("caps the held bytes: what passes the cap is dropped, in file order", async () => {
+    const warn = vi.spyOn(console, "warn").mockImplementation(() => undefined);
+    const big = (id: string) => ({ ...v5, id, pad: "x".repeat(60 * 1024) });
+    const { store } = await boot({ library: blob({ version: 1, themes: [midnight("a"), big("h1"), big("h2"), big("h3"), big("h4"), big("h5")] }) });
+    store.addImported(midnight("b"));
+    const stored = JSON.parse(localStorage.getItem(LIBRARY_KEY) ?? "{}");
+    expect(stored.themes.map((t: { id: string }) => t.id)).toEqual(["a", "b", "h1", "h2", "h3", "h4"]);
+    expect(warn).toHaveBeenCalledWith("[theme] a stored theme is dropped: past the held cap");
+    expect(store.HELD_MAX_BYTES).toBe(4 * 64 * 1024);
+  });
+
+  it("gives a kept theme's origin to the kept theme when a held entry has the same id", async () => {
+    const mine = { kind: "paste", at: 3 };
+    const { store } = await boot({ library: blob({ version: 1, themes: [midnight("future"), v5], origins: { future: mine } }) });
+    expect(store.originOf("future")).toEqual(mine);
+    store.addImported(midnight("b"));
+    const stored = JSON.parse(localStorage.getItem(LIBRARY_KEY) ?? "{}");
+    expect(stored.origins).toEqual({ future: mine });
+    expect(stored.themes).toHaveLength(3);
+  });
+
+  it("loads a blob with a sibling key it does not know, and a later save keeps the themes", async () => {
+    const { store } = await boot({ library: blob({ version: 1, themes: [midnight("a")], later: { any: "thing" } }) });
+    expect(store.library().map((t) => t.id)).toEqual(["a"]);
+    store.addImported(midnight("b"));
+    const stored = JSON.parse(localStorage.getItem(LIBRARY_KEY) ?? "{}");
+    expect(stored.themes).toEqual([midnight("a"), midnight("b")]);
+  });
+});
+
+describe("origins (theme sources)", () => {
+  const SHA = "0123456789abcdef0123456789abcdef01234567";
+  const NEXT_SHA = "fedcba9876543210fedcba9876543210fedcba98";
+  const FROM_LIST = { kind: "registry", repo: "sam/night", path: "collie-theme.json", sha: SHA, at: 1_700_000_000_000 } as const;
+
+  it("stores an origin beside the themes, never inside a theme, and reads it back", async () => {
+    const { store } = await boot();
+    store.addImported(midnight("one"), FROM_LIST);
+    store.addImported(midnight("two"), { kind: "paste", at: 5 });
+    store.addImported(midnight("three"));
+    const stored = JSON.parse(localStorage.getItem(LIBRARY_KEY) ?? "{}");
+    expect(stored.themes).toEqual([midnight("one"), midnight("two"), midnight("three")]);
+    expect(stored.origins).toEqual({ one: FROM_LIST, two: { kind: "paste", at: 5 } });
+    const again = await boot({ library: localStorage.getItem(LIBRARY_KEY) ?? "" });
+    expect(again.store.originOf("one")).toEqual(FROM_LIST);
+    expect(again.store.originOf("two")).toEqual({ kind: "paste", at: 5 });
+    expect(again.store.originOf("three")).toBeUndefined();
+  });
+
+  it("writes no origins key while there is none, so the blob stays what an older Collie wrote", async () => {
+    const { store } = await boot();
+    store.addImported(midnight("one"));
+    expect(Object.keys(JSON.parse(localStorage.getItem(LIBRARY_KEY) ?? "{}"))).toEqual(["version", "themes"]);
+  });
+
+  it("drops a bad origin and keeps its theme, and never throws on boot", async () => {
+    const bad = {
+      a: { ...FROM_LIST, repo: "https://evil.example/x" },
+      b: { ...FROM_LIST, sha: "abc" },
+      c: { ...FROM_LIST, path: "../x.json" },
+      d: { kind: "url", at: 1 },
+      e: { kind: "file", at: -1 },
+      f: FROM_LIST,
+      ghost: FROM_LIST,
+    };
+    const themes = ["a", "b", "c", "d", "e", "f"].map((id) => midnight(id));
+    const { store } = await boot({ library: blob({ version: 1, themes, origins: bad }) });
+    expect(store.library().map((t) => t.id)).toEqual(["a", "b", "c", "d", "e", "f"]);
+    for (const id of ["a", "b", "c", "d", "e", "ghost", "constructor"]) expect(store.originOf(id), id).toBeUndefined();
+    expect(store.originOf("f")).toEqual(FROM_LIST);
+    const broken = await boot({ library: blob({ version: 1, themes, origins: "nope" }) });
+    expect(broken.store.library()).toHaveLength(6);
+  });
+
+  it("drops the origin with its theme", async () => {
+    const { store } = await boot();
+    store.addImported(midnight("one"), FROM_LIST);
+    store.removeImported("one");
+    expect(store.originOf("one")).toBeUndefined();
+    expect(JSON.parse(localStorage.getItem(LIBRARY_KEY) ?? "{}").origins).toBeUndefined();
+  });
+
+  it("an update takes the same slot, moves the origin, and keeps the theme on, also past the cap", async () => {
+    const { store, design } = await boot();
+    for (let i = 0; i < 8; i += 1) store.addImported(midnight(`t${i}`), i === 3 ? FROM_LIST : undefined);
+    store.setActiveTheme("t3");
+    const fontBefore = design.designPrefs().font;
+    const next = { ...midnight("t3"), name: "Night 2" };
+    const moved = { ...FROM_LIST, sha: NEXT_SHA, at: FROM_LIST.at + 1 };
+    expect(store.replaceImported("t3", next, moved, { sha: FROM_LIST.sha })).toEqual({ ok: true });
+    expect(store.library()).toHaveLength(8);
+    expect(store.library()[3]?.name).toBe("Night 2");
+    expect(store.originOf("t3")).toEqual(moved);
+    expect(store.activeThemeId()).toBe("t3");
+    expect(design.designPrefs().font).toBe(fontBefore);
+  });
+
+  it("an update with a new id replaces the old one, and the active choice follows it", async () => {
+    const { store } = await boot();
+    store.addImported(midnight("a"));
+    store.addImported(midnight("old"), FROM_LIST);
+    store.addImported(midnight("c"));
+    store.setActiveTheme("old");
+    expect(store.replaceImported("old", midnight("new"), FROM_LIST, { sha: FROM_LIST.sha })).toEqual({ ok: true });
+    expect(store.library().map((t) => t.id)).toEqual(["a", "new", "c"]);
+    expect(store.originOf("old")).toBeUndefined();
+    expect(store.originOf("new")).toEqual(FROM_LIST);
+    expect(store.activeThemeId()).toBe("new");
+  });
+
+  it("an update refuses a shipped id, a taken id and a theme that fails the check, and changes nothing", async () => {
+    const { store } = await boot();
+    store.addImported(midnight("a"));
+    store.addImported(midnight("b"), FROM_LIST);
+    expect(store.replaceImported("b", midnight("nightwatch"), FROM_LIST, { sha: FROM_LIST.sha })).toEqual({ ok: false, reason: "reserved-id" });
+    expect(store.replaceImported("b", midnight("a"), FROM_LIST, { sha: FROM_LIST.sha })).toEqual({ ok: false, reason: "duplicate" });
+    expect(store.replaceImported("b", { ...midnight("b"), light: { background: "red" } }, FROM_LIST, { sha: FROM_LIST.sha })).toEqual({
+      ok: false,
+      reason: "invalid",
+    });
+    expect(store.library().map((t) => t.id)).toEqual(["a", "b"]);
+  });
+
+  it("an update refuses as changed when the slot is gone or holds another commit, and changes nothing", async () => {
+    const { store } = await boot();
+    store.addImported(midnight("a"));
+    store.addImported(midnight("b"), FROM_LIST);
+    const before = localStorage.getItem(LIBRARY_KEY);
+    const moved = { ...FROM_LIST, sha: NEXT_SHA };
+    expect(store.replaceImported("gone", midnight("gone"), moved, { sha: FROM_LIST.sha })).toEqual({ ok: false, reason: "changed" });
+    // Deleted and installed again at another commit between the check and the tap.
+    expect(store.replaceImported("b", midnight("b"), moved, { sha: NEXT_SHA })).toEqual({ ok: false, reason: "changed" });
+    // A theme with no list origin (a file, or kept before origins) has no commit to match.
+    expect(store.replaceImported("a", midnight("a"), moved, { sha: FROM_LIST.sha })).toEqual({ ok: false, reason: "changed" });
+    expect(store.originOf("b")).toEqual(FROM_LIST);
+    expect(localStorage.getItem(LIBRARY_KEY)).toBe(before);
+  });
+
+  it("an update from a derived source needs the slot to hold the same theme and no list origin", async () => {
+    const { store } = await boot();
+    store.addImported(midnight("f"), { kind: "file", at: 9 });
+    store.addImported(midnight("n"));
+    store.addImported(midnight("l"), FROM_LIST);
+    const moved = { ...FROM_LIST, sha: NEXT_SHA };
+    // Another theme than About saw, and a slot with a list origin: changed.
+    expect(store.replaceImported("f", midnight("f2"), moved, { content: { ...midnight("f"), name: "Other" } })).toEqual({ ok: false, reason: "changed" });
+    expect(store.replaceImported("l", midnight("l2"), moved, { content: midnight("l") })).toEqual({ ok: false, reason: "changed" });
+    // The same theme, from a file or kept with no origin: the update goes through and stores the origin.
+    expect(store.replaceImported("f", midnight("f2"), moved, { content: midnight("f") })).toEqual({ ok: true });
+    expect(store.originOf("f2")).toEqual(moved);
+    expect(store.replaceImported("n", midnight("n2"), moved, { content: midnight("n") })).toEqual({ ok: true });
+    expect(store.library().map((t) => t.id)).toEqual(["f2", "n2", "l"]);
+  });
+
+  it("an update storage refuses keeps the old theme, in memory, in storage and on screen", async () => {
+    const { store } = await boot();
+    store.addImported(midnight("b"), FROM_LIST);
+    store.setActiveTheme("b");
+    const before = localStorage.getItem(LIBRARY_KEY);
+    const { result } = renderHook(() => store.useLibrary());
+    const library = result.current;
+    vi.spyOn(Storage.prototype, "setItem").mockImplementation(() => {
+      throw new DOMException("full", "QuotaExceededError");
+    });
+    const next = { ...midnight("b2"), name: "Night 2" };
+    expect(store.replaceImported("b", next, { ...FROM_LIST, sha: NEXT_SHA }, { sha: FROM_LIST.sha })).toEqual({ ok: false, reason: "storage" });
+    vi.restoreAllMocks();
+    expect(store.library().map((t) => t.id)).toEqual(["b"]);
+    expect(result.current).toBe(library);
+    expect(store.originOf("b")).toEqual(FROM_LIST);
+    expect(store.originOf("b2")).toBeUndefined();
+    expect(store.activeThemeId()).toBe("b");
+    expect(localStorage.getItem(LIBRARY_KEY)).toBe(before);
+  });
+});
+
 describe("applyTheme checks the theme again", () => {
   it("applies nothing for a theme with a value outside the grammar", async () => {
     const { store } = await boot();
@@ -327,7 +543,7 @@ describe("applyTheme checks the theme again", () => {
     store.setActiveTheme("midnight");
     store.applyTheme({ ...midnight(), dark: { background: "#12345" } }, "imported");
     expect(inline()).toEqual([]);
-    expect(metas()).toEqual(["#f5f5f5", "#0a0a0a"]);
+    expect(metas()).toEqual(["#e4e3e0", "#2a2927"]);
   });
 
   it("refuses an imported theme that wears a shipped id", async () => {
@@ -344,9 +560,14 @@ describe("applyTheme checks the theme again", () => {
     store.addImported(theme);
     store.setActiveTheme("markup");
     expect(inline()).toHaveLength(43);
-    expect(root().style.length).toBe(43);
+    expect(root().style.length).toBe(44); // the 43 colour tokens and the flat ground
     for (let i = 0; i < root().style.length; i += 1) {
       const name = root().style.item(i);
+      // The flat ground the theme says for itself is the one non-colour property, from a closed table.
+      if (name === "--ground-image") {
+        expect(root().style.getPropertyValue(name)).toBe("none");
+        continue;
+      }
       expect(THEME_TOKENS.map((t) => `--${t}`)).toContain(name);
       expect(root().style.getPropertyValue(name)).toMatch(/^light-dark\([#a-z0-9 ./()%-]+, [#a-z0-9 ./()%-]+\)$/);
     }
@@ -393,19 +614,54 @@ describe("the shape words of an imported theme (schema version 2)", () => {
     const { store } = await boot();
     store.addImported(midnight("shaped", { version: 2, surface: { radius: "soft", density: "roomy" } }));
     store.setActiveTheme("shaped");
-    expect(surfaceSet()).toEqual(["--radius-sm", "--radius-md", "--radius-lg", "--radius-xl", "--edge-accent", "--edge-shadow", "--spacing"]);
+    expect(surfaceSet()).toEqual(["--radius-sm", "--radius-md", "--radius-lg", "--radius-xl", "--edge-accent", "--edge-shadow", "--spacing", "--ground-image"]);
     expect(root().style.getPropertyValue("--edge-accent")).toBe("inset 0 0 0 2px");
     expect(root().style.getPropertyValue("--edge-shadow")).toBe("0 1px 3px 0 rgb(0 0 0 / 0.1)");
     expect(root().style.getPropertyValue("--radius-md")).toBe("6px");
     expect(root().style.getPropertyValue("--spacing")).toBe("0.28rem");
   });
 
-  it("sets no shape property for a theme without a surface block", async () => {
+  it("sets no shape property but a flat ground for a theme without a surface block", async () => {
     const { store } = await boot();
     store.addImported(midnight());
     store.setActiveTheme("midnight");
     expect(inline()).toHaveLength(THEME_TOKENS.length);
-    expect(surfaceSet()).toEqual([]);
+    expect(surfaceSet()).toEqual(["--ground-image"]);
+    expect(root().style.getPropertyValue("--ground-image")).toBe("none");
+  });
+
+  // index.css paints Collie's grain on :root. `collie` sets nothing and so shows it; an imported theme
+  // that names no ground says `flat` itself; going back to `collie` takes that inline `none` off in the
+  // same tick, so the grain returns with no frame in between.
+  it("keeps an imported theme with no ground flat, and gives collie its grain back in the same tick", async () => {
+    const stylesheet = readFileSync(resolve(web, "src/index.css"), "utf8");
+    const { store } = await boot();
+    store.addImported(midnight("plain"));
+    store.addImported(midnight("shaped", { version: 2, surface: { radius: "soft" } }));
+    store.addImported(midnight("woven", { version: 2, surface: { ground: "grain" } }));
+    expect(stylesheet).toContain(`--ground-image: ${wordDeclarations("ground", "grain")[0]?.[1]};`);
+    const ground = () => root().style.getPropertyValue("--ground-image");
+
+    store.initTheme();
+    expect(ground()).toBe("");
+    for (const id of ["plain", "shaped"]) {
+      store.setActiveTheme(id);
+      expect(ground(), id).toBe("none");
+      store.setActiveTheme("collie");
+      expect(ground(), `back from ${id}`).toBe("");
+      expect(root().getAttribute("style") ?? "").toBe("");
+    }
+    store.setActiveTheme("woven");
+    expect(ground()).toBe(wordDeclarations("ground", "grain")[0]?.[1]);
+  });
+
+  it("measures no grain for an imported theme with no ground, and the grain for collie", async () => {
+    const collieFile = parseTheme(readFileSync(resolve(web, "src/themes/collie.json"), "utf8"), { maxBytes: 1_000_000, allowReservedId: true });
+    expect(collieFile.ok && collieFile.theme.surface?.ground).toBe("grain");
+    const plain = contrastReport(midnight("plain"), collie()).map((f) => f.check);
+    expect(plain.some((check) => check.includes("grain ground"))).toBe(false);
+    const own = collieFile.ok ? contrastReport(collieFile.theme, collie()).map((f) => f.check) : [];
+    expect(own).toContain("foreground on the grain ground");
   });
 
   it("takes every shape property off on the way back to collie or to another theme", async () => {
@@ -428,7 +684,7 @@ describe("the shape words of an imported theme (schema version 2)", () => {
     expect(surfaceSet()).toEqual([...SURFACE_PROPERTIES]);
     expect(versionTwoSet()).toEqual([...VERSION_TWO_PROPERTIES]);
     store.setActiveTheme("plain");
-    expect(versionTwoSet()).toEqual([]);
+    expect(versionTwoSet()).toEqual(["--ground-image"]);
     store.setActiveTheme("shaped");
     store.setActiveTheme("collie");
     expect(root().getAttribute("style") ?? "").toBe("");
@@ -495,7 +751,8 @@ describe("the seven more tokens on an imported theme", () => {
     expect(root().style.getPropertyValue("--ansi-4")).toBe("#2472c8");
     store.addImported(midnight());
     store.setActiveTheme("midnight");
-    expect(VERSION_TWO_PROPERTIES.filter((p) => root().style.getPropertyValue(p) !== "")).toEqual([]);
+    // Only the flat ground: a theme that names none must not inherit :root's grain.
+    expect(VERSION_TWO_PROPERTIES.filter((p) => root().style.getPropertyValue(p) !== "")).toEqual(["--ground-image"]);
   });
 
   it("applies nothing for a stored palette that fails the gate", async () => {

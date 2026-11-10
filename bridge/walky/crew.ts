@@ -34,8 +34,8 @@ import { fingerprintOfCert } from "../crew/identity.ts";
 import type { PeerSnapshotBody } from "../crew/merge.ts";
 import { signCanonical, verifyCanonical } from "../crew/signing.ts";
 import type { TrustedMember, TrustStoreData } from "../crew/trust-store.ts";
-import { bareAddress, INSTANCE_TOKEN, labelOf, LOCAL_MEMBER, paneAddress, parseAddress } from "./address.ts";
-import { attestationString, verifyMessage, voucherString } from "./canonical.ts";
+import { bareAddress, INSTANCE_TOKEN, isPaneId, isScopeAddress, labelOf, LOCAL_MEMBER, paneAddress, parseAddress, type WalkyAddress } from "./address.ts";
+import { attestationString, signMessage, verifyMessage, voucherString } from "./canonical.ts";
 import { cleanBody } from "./clean.ts";
 import type { RouteRemote } from "./deliver.ts";
 import type { LogRecord, WalkyLog } from "./log.ts";
@@ -84,10 +84,24 @@ function cleanEnough(body: string): boolean {
   return body !== "" && [...body].length <= WALKY_BODY_MAX && cleanBody(body).body === body;
 }
 
-/** An address a crew hop may carry: `all`, or one that names its member (`local` is a solo word). */
+/** An address a crew hop may carry: `all`, a scope (M75), or one that names its member (`local` is a solo word). */
 function crewAddressable(to: string): boolean {
   const address = parseAddress(to);
-  return address !== null && (address.kind === "all" || address.memberId !== LOCAL_MEMBER);
+  if (address === null) return false;
+  if (address.kind === "all" || isScopeAddress(address)) return true;
+  return address.memberId !== LOCAL_MEMBER;
+}
+
+/**
+ * Whether a route segment names an address on this member. A scope (M75) names no member: the lead
+ * expanded it and routes it one pane at a time, so its segment is a pane id, never `all`, and the
+ * member checks that pane's label against the scope itself (deliver.ts `scopeDelivery`).
+ */
+function routeFits(to: WalkyAddress, self: string, segment: string): boolean {
+  if (to.kind === "all") return segment === WALKY_ALL_SEGMENT;
+  if (isScopeAddress(to)) return segment !== WALKY_ALL_SEGMENT && isPaneId(segment);
+  if (to.memberId !== self) return false;
+  return to.kind === "member-all" ? segment === WALKY_ALL_SEGMENT : segment === to.paneId;
 }
 
 /** Printable ASCII with no bracket or parenthesis: the characters a header field may carry. */
@@ -210,11 +224,7 @@ export function checkFromLead(
   if (sender !== undefined && !senderHolds(sender, message, lead, crewId)) return { ok: false, answer: UNAUTHORIZED };
   // The route names the pane the message is for: its own pane id, or `all` for a whole machine.
   const to = parseAddress(message.to);
-  const fits =
-    to !== null &&
-    (to.kind === "all"
-      ? segment === WALKY_ALL_SEGMENT
-      : to.memberId === self && (to.kind === "member-all" ? segment === WALKY_ALL_SEGMENT : segment === to.paneId));
+  const fits = to !== null && routeFits(to, self, segment);
   if (!fits) return { ok: false, answer: badRequest("the route does not name this message's address on this member") };
   // A sender block that held: the sender's own signature verified, against a certificate the lead vouched for.
   if (sender !== undefined) return { ok: true, message, verified: "origin" };
@@ -293,8 +303,10 @@ export class WalkyCrew {
     const { message, verified } = checked;
     if (!fresh(message, this.now())) return { status: 200, body: { receipts: [this.deps.service.deliverer.refusal(message.id, message.to, "stale", verified)] } };
     this.deps.audit?.({ action: "walky.deliver", detail: { via: "crew", from, to: message.to, verified, textLength: message.body.length } });
-    // This machine's panes only: a message a crew hop brought is never routed on.
-    return { status: 200, body: { receipts: await this.deps.service.receive(message, verified, true) } };
+    // This machine's panes only: a message a crew hop brought is never routed on. A scope (M75) is
+    // delivered to the one pane the route names, and only while that pane's label sits in the scope.
+    const pane = isScopeAddress(parseAddress(message.to)) ? segment : undefined;
+    return { status: 200, body: { receipts: await this.deps.service.receive(message, verified, true, undefined, pane) } };
   }
 
   /**
@@ -315,8 +327,8 @@ export class WalkyCrew {
 /**
  * The member's half of the outcomes push: write each receipt its lead sent for a message THIS member
  * sent to another machine. A receipt is written only when this member's log holds a record for that
- * id and target whose message names this member as its sender, and only when it is newer or another
- * state (the `mergeReport` rule, so a resent receipt is skipped). A receipt for a pane on this
+ * id and target whose message names this member as its sender, and only when it moves forward
+ * (`movesForward`, the `mergeReport` rule, so a resent receipt is skipped). A receipt for a pane on this
  * machine is never taken: this member's own outcome is its own word. Answers how many were written.
  */
 export function writeOutcomes(log: WalkyLog, self: string, receipts: readonly WalkyReceipt[]): number {
@@ -324,7 +336,8 @@ export function writeOutcomes(log: WalkyLog, self: string, receipts: readonly Wa
   for (const receipt of receipts) {
     if (!canonicalTarget(receipt.target)) continue;
     const address = parseAddress(receipt.target);
-    if (address === null || (address.kind !== "all" && address.memberId === self)) continue;
+    // A scope's own line is the sender's word on its own machine: the lead never sends one back.
+    if (address === null || isScopeAddress(address) || (address.kind !== "all" && address.memberId === self)) continue;
     const held = log.get(receipt.id, receipt.target);
     if (held === null) {
       // A pane of a leg this member sent as a whole and never heard pane by pane (a slow leg): the
@@ -414,6 +427,11 @@ export interface LeadRouteDeps {
    * nothing. Absent: every member is dialled.
    */
   readonly older?: (memberId: string) => boolean;
+  /**
+   * Whether a member's reported version predates `wake` (`olderThanWake`, M85). A `wake` message goes to
+   * such a member as a plain send, see {@link leadRouteRemote}. Absent: every member gets the message as sent.
+   */
+  readonly olderThanWake?: (memberId: string) => boolean;
   /** How long one member's leg may take before it is `unknown: member slow`. Default {@link WALKY_LEG_MS}. */
   readonly legMs?: number;
   readonly now?: () => number;
@@ -454,24 +472,57 @@ export const WALKY_FIRST_VERSION = "1.23.0";
  * semver's (bridge/update.ts `compareSemver`), passed in so this file holds no release logic.
  */
 export function olderThanWalky(version: string | null, own: string, compare: (a: string, b: string) => number): boolean {
+  return olderThanFloor(version, own, compare, WALKY_FIRST_VERSION);
+}
+
+function olderThanFloor(version: string | null, own: string, compare: (a: string, b: string) => number, first: string): boolean {
   // A version that names no release (`unknown`, a hash) is not called older either.
   if (version === null || !/^\d+\.\d+\.\d+/u.test(version)) return false;
-  const floor = /^\d+\.\d+\.\d+/u.test(own) && compare(own, WALKY_FIRST_VERSION) < 0 ? own : WALKY_FIRST_VERSION;
+  const floor = /^\d+\.\d+\.\d+/u.test(own) && compare(own, first) < 0 ? own : first;
   return compare(version, floor) < 0;
+}
+
+/** The first release that reads `wake` (M85): its canonical string has the extra line, and it rests panes. */
+export const WAKE_FIRST_VERSION = "1.26.1";
+
+/**
+ * Whether a version is too old for `wake`: below 1.26.1, or, on a build made before 1.26.1 that carries
+ * the feature, below that build's own version. Same rules as {@link olderThanWalky}: a version that
+ * names no release is never called older.
+ */
+export function olderThanWake(version: string | null, own: string, compare: (a: string, b: string) => number): boolean {
+  return olderThanFloor(version, own, compare, WAKE_FIRST_VERSION);
+}
+
+/** One dial of the lead's seam: the member, the route's pane segment, and the target its receipts name. */
+interface Leg {
+  readonly memberId: string;
+  readonly segment: string;
+  readonly target: string;
 }
 
 /**
  * The lead's seam: a message for another member goes to `/crew/v1/pane/<pane | all>/walky` there,
  * with the lead's attestation beside it. `all` goes to every member but the sender's own machine,
- * which delivered to its panes itself before it asked the lead.
+ * which delivered to its panes itself before it asked the lead. A scope (M75, `panes` given) goes to
+ * one member, one leg per pane the lead's expansion named there, the sender's own machine included:
+ * the sender's machine handed the scope over whole and delivered nothing itself.
  */
 export function leadRouteRemote(deps: LeadRouteDeps): RouteRemote {
   const now = deps.now ?? Date.now;
-  return async (message, members) => {
+  return async (message, members, panes) => {
     const roster = deps.members();
-    const targets = members === WALKY_ALL_SEGMENT ? roster.filter((id) => id !== message.from.memberId && id !== deps.self) : [members];
     const address = parseAddress(message.to);
-    const segment = address?.kind === "pane" ? address.paneId : WALKY_ALL_SEGMENT;
+    const whole = address?.kind === "pane" ? address.paneId : WALKY_ALL_SEGMENT;
+    const legs: Leg[] =
+      panes !== undefined
+        ? panes.map((paneId) => ({ memberId: members, segment: paneId, target: `${members}/${paneId}` }))
+        : (members === WALKY_ALL_SEGMENT ? roster.filter((id) => id !== message.from.memberId && id !== deps.self) : [members]).map((memberId) => ({
+            memberId,
+            segment: whole,
+            // A receipt names the pane id, never the instance token the address may carry.
+            target: members === WALKY_ALL_SEGMENT ? `${memberId}/${WALKY_ALL_SEGMENT}` : bareAddress(message.to),
+          }));
     const signing = deps.signing();
     // One block per message: the voucher names the sender, not the receiver. Never for this lead's own
     // message, which every member checks against the one certificate it pins already.
@@ -479,26 +530,44 @@ export function leadRouteRemote(deps: LeadRouteDeps): RouteRemote {
     const senderCert = signing === null || signer === null || signer === deps.self ? null : (deps.senderCert?.(signer) ?? null);
     const sender = senderCert === null || signing === null || signer === null ? null : senderBlockFor(signer, senderCert, signing.keyPem, signing.crewId);
     const lists = await Promise.all(
-      targets.map(async (memberId): Promise<WalkyReceipt[]> => {
-        // A receipt names the pane id, never the instance token the address may carry.
-        const target = members === WALKY_ALL_SEGMENT ? `${memberId}/${WALKY_ALL_SEGMENT}` : bareAddress(message.to);
+      legs.map(async ({ memberId, segment, target }): Promise<WalkyReceipt[]> => {
         if (!roster.includes(memberId)) return [ownReceipt(message, target, "refused", deps.self, now(), "no such member")];
         if (deps.older?.(memberId) === true) return [ownReceipt(message, target, "refused", deps.self, now(), "older member")];
         if (signing === null) return [ownReceipt(message, target, "refused", deps.self, now(), "no crew key")];
-        const attest = attestFor(message, signing.keyPem, signing.crewId, memberId);
+        // A member older than 1.26.1 never rests a pane, so a plain send already types into every pane
+        // there: `--wake` asks for nothing it does not do. Its bridge also cannot verify the canonical
+        // string with the `wake` line, and would answer the uniform 401. So this leg carries the message
+        // without `wake`, attested over that copy (plainCopy says what signature it carries). The sender's
+        // own signature covered the `wake` string and cannot vouch for it, so the leg has no `sender` block.
+        const plain = message.wake === true && deps.olderThanWake?.(memberId) === true;
+        const legMessage = plain ? plainCopy(message, signing.keyPem, deps.self) : message;
+        const attest = attestFor(legMessage, signing.keyPem, signing.crewId, memberId);
         // Every member is dialled at once, and each leg is cut at WALKY_LEG_MS.
-        const body = sender === null ? { message, attest } : { message, attest, sender };
+        const body = sender === null || plain ? { message: legMessage, attest } : { message: legMessage, attest, sender };
         const answer = await within(deps.post(memberId, segment, JSON.stringify(body)), deps.legMs ?? WALKY_LEG_MS);
         if (answer === null) return [ownReceipt(message, target, "unknown", deps.self, now(), MEMBER_SLOW)];
         const receipts = receiptsOfAnswer(message, target, answer, deps.self, now(), "older member");
         // Only a 200 carries the member's own receipts; every other answer is this lead's word.
         if (answer.kind !== "answer" || answer.status !== 200) return receipts;
-        const scoped = scopedToMember(receipts, memberId, target);
+        const scoped = scopedToMember(receipts, memberId, target, panes !== undefined);
         return scoped.length > 0 ? scoped : [ownReceipt(message, target, "accepted", deps.self, now())];
       }),
     );
     return lists.flat();
   };
+}
+
+/**
+ * The message without `wake`, as a member below 1.26.1 can take it. The lead's own message is signed
+ * again with the lead's key, so the member still reads it as `origin`. Another member's message keeps
+ * the signer and signature its sender made: they cover the string with the `wake` line, so they no
+ * longer verify, but the member never checks them without a `sender` block. It trusts the lead's
+ * attestation and reads the message as `lead`, exactly as it did before sender blocks existed. The
+ * signer must stay the sender: the member's shape check refuses a signer that is not `from.memberId`.
+ */
+function plainCopy(message: WalkyMessage, keyPem: string, self: string): WalkyMessage {
+  const { wake: _wake, ...rest } = message;
+  return message.signer === self ? signMessage(rest, keyPem, self) : rest;
 }
 
 /**
@@ -509,11 +578,12 @@ export function leadRouteRemote(deps: LeadRouteDeps): RouteRemote {
  * read as the whole broadcast refused. A receipt in another machine's name (this lead's included), or
  * for a pane on another machine, is dropped.
  */
-function scopedToMember(receipts: readonly WalkyReceipt[], memberId: string, target: string): WalkyReceipt[] {
+function scopedToMember(receipts: readonly WalkyReceipt[], memberId: string, target: string, onePane: boolean): WalkyReceipt[] {
   return receipts.flatMap((receipt) => {
     if (receipt.by !== memberId) return [];
     const address = parseAddress(receipt.target);
-    if (address?.kind === "pane") return address.memberId === memberId ? [receipt] : [];
+    // A scope's leg names one pane (M75): the member answers for that pane, never for a sibling.
+    if (address?.kind === "pane") return address.memberId === memberId && (!onePane || receipt.target === target) ? [receipt] : [];
     return [{ ...receipt, target }];
   });
 }
@@ -523,15 +593,37 @@ export interface MemberRouteDeps {
   readonly self: string;
   /** POST the signed message to the lead's `/crew/v1/walky`, signed per §8.6. */
   readonly post: (payload: string) => Promise<CrewDialAnswer>;
+  /**
+   * The release this member last heard its lead state, or null when it heard none (a dev build, or a
+   * lead mid-update). A `wake` message is refused up front for a lead below 1.26.1. Absent: never known.
+   */
+  readonly leadRelease?: () => string | null;
+  /** This member's own version, the floor's stand-in on a build made before 1.26.1. */
+  readonly own?: string;
+  /** The semver comparison, passed in like {@link olderThanWalky}'s. Needed with `leadRelease`. */
+  readonly compare?: (a: string, b: string) => number;
   readonly now?: () => number;
 }
+
+/** The receipt reason for a `wake` message a lead below 1.26.1 cannot take. */
+export const LEAD_OLDER_THAN_WAKE = "lead older than 1.26.1: send without --wake";
+/** The reason when the lead answered 401 to a `wake` message and its release was not known up front. */
+export const LEAD_REFUSED_WAKE = "refused by the lead: a lead older than 1.26.1 cannot take --wake; send without it";
 
 /** A member's seam: every message for another machine goes to the lead once, and the lead routes it. */
 export function memberRouteRemote(deps: MemberRouteDeps): RouteRemote {
   const now = deps.now ?? Date.now;
   return async (message, members) => {
     const target = members === WALKY_ALL_SEGMENT ? WALKY_ALL_SEGMENT : bareAddress(message.to);
+    // A lead below 1.26.1 cannot verify a `wake` message and would answer the uniform 401. When this
+    // member knows the lead's release, it says so before any dial; when it does not, the 401 is read below.
+    if (message.wake === true && deps.compare !== undefined && olderThanWake(deps.leadRelease?.() ?? null, deps.own ?? WAKE_FIRST_VERSION, deps.compare)) {
+      return [ownReceipt(message, target, "refused", deps.self, now(), LEAD_OLDER_THAN_WAKE)];
+    }
     const answer = await deps.post(JSON.stringify(message));
+    if (message.wake === true && answer.kind === "answer" && answer.status === 401) {
+      return [ownReceipt(message, target, "refused", deps.self, now(), LEAD_REFUSED_WAKE)];
+    }
     return receiptsOfAnswer(message, target, answer, deps.self, now(), "older lead");
   };
 }
@@ -550,7 +642,8 @@ export interface CrewMemberView {
  * Every agent pane on every member, from the bodies the lead's sweep already holds: no dial. A
  * member the lead cannot reach right now keeps its last panes, each with the state `unreachable`.
  * A pane that carries its instance token (`PaneWire.instance`) is listed as `<member>/<pane>#<token>`;
- * one from an older member, with no token, as `<member>/<pane>`.
+ * one from an older member, with no token, as `<member>/<pane>`. A pane that says its walky talky is
+ * off (`PaneWire.walkyOff`, M89) carries `walky: "off"`; an older member never says so, and reads as on.
  */
 export function crewTargets(members: readonly CrewMemberView[], titles: boolean): WalkyTarget[] {
   const out: WalkyTarget[] = [];
@@ -563,34 +656,43 @@ export function crewTargets(members: readonly CrewMemberView[], titles: boolean)
       const facts = { paneId: pane.paneId, cwd: pane.cwd, branch, paneLabel: pane.paneLabel, terminalTitle: pane.terminalTitle };
       // The token is the member's word, already parsed at the merge (crew/merge.ts `untagPane`); checked again here.
       const instance = pane.instance !== undefined && INSTANCE_TOKEN.test(pane.instance) ? pane.instance : null;
-      out.push({
+      const target: WalkyTarget = {
         address: paneAddress(member.memberId, pane.paneId, instance),
         memberId: member.memberId,
         machine: member.name,
         harness: pane.agent,
         label: labelOf(facts, titles),
         state: member.reachable ? pane.status : "unreachable",
-      });
+      };
+      out.push(pane.walkyOff === true ? { ...target, walky: "off" } : target);
     }
   }
   return out;
 }
 
 /**
- * The shell panes on every member, which never receive a message: the Crew page lists them as
- * skipped beside a broadcast's count. From the same bodies, with no dial.
+ * The panes on every member a broadcast does not type into by default: the shell panes, which never
+ * receive a message, and (M85) the agent panes that rest, which a broadcast leaves in the inbox unless
+ * the sender wakes them. The Crew page lists both as skipped beside a broadcast's count. From the same
+ * bodies, with no dial; `rests` is the bridge's resting rule (deliver.ts `isResting`, given its clock). A member that is unreachable has no resting panes here: its panes are not
+ * reachable at all, and `crewTargets` already says so.
  */
-export function crewSkipped(members: readonly CrewMemberView[], titles: boolean): WalkySkipped[] {
+export function crewSkipped(
+  members: readonly CrewMemberView[],
+  titles: boolean,
+  rests: (pane: { readonly state: string; readonly activeAt: number | null }) => boolean = () => false,
+): WalkySkipped[] {
   const out: WalkySkipped[] = [];
   for (const member of members) {
     const seen = new Set<string>();
     const shells = [...(member.body?.agents ?? []).filter((pane) => pane.kind === "shell"), ...(member.body?.shellPanes ?? [])];
-    for (const pane of shells) {
+    const resting = member.reachable ? (member.body?.agents ?? []).filter((pane) => pane.kind !== "shell" && rests({ state: pane.status, activeAt: pane.lastActiveAt ?? null })) : [];
+    for (const [pane, reason] of [...shells.map((shell) => [shell, "shell"] as const), ...resting.map((quiet) => [quiet, "resting"] as const)]) {
       if (seen.has(pane.paneId)) continue;
       seen.add(pane.paneId);
       const branch = pane.gitHead?.kind === "branch" ? pane.gitHead.name : null;
       const facts = { paneId: pane.paneId, cwd: pane.cwd, branch, paneLabel: pane.paneLabel, terminalTitle: pane.terminalTitle };
-      out.push({ address: `${member.memberId}/${pane.paneId}`, memberId: member.memberId, machine: member.name, label: labelOf(facts, titles) });
+      out.push({ address: `${member.memberId}/${pane.paneId}`, memberId: member.memberId, machine: member.name, label: labelOf(facts, titles), reason });
     }
   }
   return out;
@@ -601,6 +703,15 @@ export function crewSkipped(members: readonly CrewMemberView[], titles: boolean)
 /** A random 8-hex epoch, minted once per bridge process: a restarted member never matches an old ack. */
 export function mintEpoch(): string {
   return randomBytes(4).toString("hex");
+}
+
+/**
+ * Whether a receipt goes on the wire in a report or a push (§21): past `accepted`, or `accepted` with a
+ * reason, a held send (M62 spec 02, added 2026-10-21). It still ranks as `accepted` (`stateRank`), so it
+ * never goes over `unknown` or a finished state, and an older peer reads it as `accepted`.
+ */
+export function reportable(receipt: WalkyReceipt): boolean {
+  return receipt.state !== "accepted" || receipt.reason !== undefined;
 }
 
 interface HeldReceipt {
@@ -620,7 +731,7 @@ export interface WalkyReportOptions {
 
 /**
  * A member's report to its lead: the receipts it wrote, for its own panes, for messages that came
- * from another machine, past `accepted`. Filled as the log writes them. Each held receipt gets a
+ * from another machine, past `accepted` or held ({@link reportable}). Filled as the log writes them. Each held receipt gets a
  * sequence number, and the report rides every `/crew/v1/snapshot` answer with the cursor of its
  * newest receipt (`<epoch>.<seq>`) until the lead acks that cursor on a later sweep (§21, added
  * 2026-10-18). In memory only: at most {@link WALKY_REPORT_MAX}, oldest dropped, and a receipt goes
@@ -644,15 +755,21 @@ export class WalkyReport {
     this.now = options.now ?? Date.now;
   }
 
-  /** Listen on a log: every receipt for a message from elsewhere, placed on a pane here, past `accepted`. */
+  /**
+   * Listen on a log: every receipt for a message from elsewhere, placed on a pane here, past `accepted`,
+   * and a held one (`accepted` with the reason that holds it, M62 spec 02). A scope this member sent
+   * (M75) counts as from elsewhere: the lead expanded it and routed this machine's panes back here,
+   * so only the report tells the lead how they ended.
+   */
   listen(log: WalkyLog): void {
     log.onReceipt((record) => this.note(record));
   }
 
   /** Hold one record's newest receipt when it belongs in the report. A newer state replaces the older. */
   note(record: LogRecord): void {
-    if (record.session === null || record.message.from.memberId === this.self) return;
-    if (record.receipt.state === "accepted") return;
+    if (record.session === null) return;
+    if (record.message.from.memberId === this.self && !isScopeAddress(parseAddress(record.message.to))) return;
+    if (!reportable(record.receipt)) return;
     this.held = this.held.filter((held) => !(held.receipt.id === record.receipt.id && held.receipt.target === record.receipt.target));
     this.seq += 1;
     this.held.push({ receipt: record.receipt, seq: this.seq, heldAt: this.now() });
@@ -741,7 +858,7 @@ function outboxKey(receipt: Pick<WalkyReceipt, "id" | "target">): string {
  *   dial of that member's snapshot as `X-Crew-Walky-Ack`. A lead restart starts with none, and the
  *   member's resend is harmless.
  *
- *   The outbox. Every receipt this lead's log writes, past `accepted`, for a message a member sent
+ *   The outbox. Every receipt this lead's log writes, past `accepted` or held, for a message a member sent
  *   to another machine (this lead's own deliveries, and the lines `mergeReport` writes), held for that
  *   member: at most {@link WALKY_OUTBOX_MAX}, and {@link STALE_MS} each. It is pushed with
  *   `POST /crew/v1/walky/outcomes` at once, and again on each sweep while it is not empty. A 200
@@ -797,10 +914,10 @@ export class WalkyLeadSide {
   /** Hold a record's newest receipt for its sender's machine, when it belongs there, and push at once. */
   note(record: LogRecord): void {
     const memberId = record.message.from.memberId;
-    if (memberId === null || memberId === this.deps.self || record.receipt.state === "accepted") return;
+    if (memberId === null || memberId === this.deps.self || !reportable(record.receipt)) return;
     const address = parseAddress(record.target);
     // Only for a target on another machine: the sender's own panes are the sender's word.
-    if (address === null || (address.kind !== "all" && address.memberId === memberId)) return;
+    if (address === null || isScopeAddress(address) || (address.kind !== "all" && address.memberId === memberId)) return;
     const box = this.boxes.get(memberId) ?? new Map<string, HeldReceipt>();
     const key = outboxKey(record.receipt);
     box.delete(key);

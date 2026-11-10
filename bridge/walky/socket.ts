@@ -4,14 +4,18 @@
 // token: the socket's mode is the credential, as the hold socket's is.
 //
 // Requests (`v: 1`, plus `markers`: the raw multiplexer markers the CLI read from its environment):
-//   send    { id, to, body, replyTo }   → { ok, receipts, target? }
+//   send    { id, to, body, replyTo, wake? }   → { ok, receipts, target? }
 //   inbox   { all, ack, id? }           → { ok, pane, messages }   (`id`: that one message)
-//   who     {}                          → { ok, self, targets, note? }
-//   status  { id }                      → { ok, receipts, message, elsewhere }
+//   who     {}                          → { ok, self, targets, note?, selfOff? }
+//   status  { id }                      → { ok, receipts, message, elsewhere, deliveries?, totals? }
 //   ack     { ids | null }              → { ok, acked }
+//   cancel  { id }                      → { ok, results }   (M62 spec 03: the sender takes a held message back)
+//   off     {}                          → { ok, off }       (M89: the asker's own pane turns its walky talky off)
+//   on      {}                          → { ok, off }       (M89: and on again)
 // A refusal is `{ ok: false, error }`. `not here` means the markers name no pane of this bridge, so
-// the CLI asks the next bridge on the machine. A send with no markers at all is refused: the operator
-// sends from a paired device, never from this socket.
+// the CLI asks the next bridge on the machine; a request this bridge cannot read answers the same when
+// its markers name no pane here, else `bad request: <reason>` (refusals.ts). A send with no markers
+// at all is refused: the operator sends from a paired device, never from this socket.
 
 import { chmodSync, existsSync, lstatSync, mkdirSync, unlinkSync } from "node:fs";
 import { once } from "node:events";
@@ -21,12 +25,17 @@ import { dirname, join } from "node:path";
 import type { BeaconMatcher } from "../beacon/decorate.ts";
 import type { BeaconMarker } from "../beacon/types.ts";
 import { HOST, type Host } from "../host.ts";
-import { parseWalkyRequest, WALKY_LINE_MAX, type WalkyRequest } from "./parse.ts";
-import type { WalkyService } from "./service.ts";
+import { readWalkyRequest, WALKY_LINE_MAX, type WalkyRequest, type WalkyRequestRead } from "./parse.ts";
+import type { WalkyDelivery, WalkyService } from "./service.ts";
+import type { TakeBack } from "./deliver.ts";
 import type { WalkyEntry, WalkyMessage, WalkyReceipt, WalkyTarget } from "./types.ts";
 
 /** What the socket answers a send that names no pane. */
 export const SEND_NEEDS_A_PANE = "run this inside a pane, or send from the phone";
+/** What the socket answers a cancel that names no pane: an operator's message is cancelled on the phone. */
+export const CANCEL_NEEDS_A_PANE = "run this inside the pane that sent it, or cancel from the phone";
+/** What the socket answers `off` or `on` from outside an agent pane: the flag is the asker's own (M89). */
+export const SWITCH_NEEDS_A_PANE = "run this inside an agent pane";
 
 /** The socket of one state dir. */
 export function walkySocketPath(stateDir: string): string {
@@ -78,12 +87,31 @@ export interface WalkyServerDeps {
 
 /** What one request is answered with. */
 export type WalkyAnswer =
-  | { readonly ok: false; readonly error: string }
+  | { readonly ok: false; readonly error: string; readonly missing?: string }
   | { readonly ok: true; readonly receipts: readonly WalkyReceipt[]; readonly target?: WalkyTarget }
-  | { readonly ok: true; readonly receipts: readonly WalkyReceipt[]; readonly message: WalkyMessage | null; readonly elsewhere: readonly string[] }
-  | { readonly ok: true; readonly self: string | null; readonly targets: readonly WalkyTarget[]; readonly note?: string }
+  | {
+      readonly ok: true;
+      readonly receipts: readonly WalkyReceipt[];
+      readonly message: WalkyMessage | null;
+      readonly elsewhere: readonly string[];
+      /** A scope send (M75): one line per delivery and the parent's totals. Absent for any other address. */
+      readonly deliveries?: readonly WalkyDelivery[];
+      readonly totals?: Readonly<Record<string, number>>;
+    }
+  | { readonly ok: true; readonly self: string | null; readonly targets: readonly WalkyTarget[]; readonly note?: string; readonly selfOff?: true }
   | { readonly ok: true; readonly pane: string | null; readonly messages: readonly WalkyEntry[] }
-  | { readonly ok: true; readonly acked: number };
+  | { readonly ok: true; readonly acked: number }
+  | { readonly ok: true; readonly off: boolean }
+  | { readonly ok: true; readonly results: readonly TakeBack[] };
+
+/**
+ * A bridge that knows the pane but holds no message with the id (added 2026-10-30). It answers `not here`,
+ * so the CLI asks the next bridge, a machine can run two Collies on one multiplexer and either may hold
+ * the message, and carries the sentence the CLI prints when no bridge held it in `missing`.
+ */
+export function noMessageHere(sentence: string): WalkyAnswer {
+  return { ok: false, error: "not here", missing: sentence };
+}
 
 /** Answer one parsed request. Exported for its test: the server only frames it. */
 export async function answerRequest(service: WalkyService, request: WalkyRequest, targets: readonly PlaceTarget[]): Promise<WalkyAnswer> {
@@ -99,24 +127,26 @@ export async function answerRequest(service: WalkyService, request: WalkyRequest
         service.noteRefusal("no pane");
         return { ok: false, error: SEND_NEEDS_A_PANE };
       }
-      const answer = await service.send({ id: request.id, to: request.to, body: request.body, replyTo: request.replyTo }, { kind: "agent", pane });
+      const answer = await service.send({ id: request.id, to: request.to, body: request.body, replyTo: request.replyTo, wake: request.wake }, { kind: "agent", pane });
       if (!answer.ok) return answer;
       return answer.target === undefined ? { ok: true, receipts: answer.receipts } : { ok: true, receipts: answer.receipts, target: answer.target };
     }
     case "who": {
       const self = pane === null ? null : service.addressOf(pane.paneId, pane.instance);
       const note = service.whoNote();
-      return note === null ? { ok: true, self, targets: service.who() } : { ok: true, self, targets: service.who(), note };
+      const answer = note === null ? { ok: true as const, self, targets: service.who() } : { ok: true as const, self, targets: service.who(), note };
+      return pane?.off === true ? { ...answer, selfOff: true } : answer;
     }
     case "status": {
-      const { receipts, message, elsewhere } = service.status(request.id);
-      return { ok: true, receipts, message, elsewhere };
+      const { receipts, message, elsewhere, deliveries, totals } = service.status(request.id);
+      if (deliveries === undefined || totals === undefined) return { ok: true, receipts, message, elsewhere };
+      return { ok: true, receipts, message, elsewhere, deliveries, totals };
     }
     case "inbox": {
       if (request.id !== null) {
         // One message by id: the way an agent reads the body its nudge line named.
         const entry = service.one(request.id, pane);
-        if (entry === null) return { ok: false, error: pane === null ? `no message ${request.id} on this machine` : `no message ${request.id} for this pane` };
+        if (entry === null) return pane === null ? { ok: false, error: `no message ${request.id} on this machine` } : noMessageHere(`no message ${request.id} for this pane`);
         if (pane !== null && request.ack) service.ack(pane.session, pane.paneId, pane.instance, [entry.id]);
         return { ok: true, pane: pane === null ? null : service.addressOf(pane.paneId, pane.instance), messages: [entry] };
       }
@@ -132,7 +162,37 @@ export async function answerRequest(service: WalkyService, request: WalkyRequest
     case "ack":
       if (pane === null) return { ok: false, error: "needs a pane" };
       return { ok: true, acked: service.ack(pane.session, pane.paneId, pane.instance, request.ids) };
+    case "cancel": {
+      // The sender only (M62 spec 03): the pane the markers place must be the one that sent the message.
+      if (pane === null) {
+        service.noteRefusal("no pane");
+        return { ok: false, error: CANCEL_NEEDS_A_PANE };
+      }
+      const taken = service.cancel(request.id, { kind: "agent", pane });
+      return !taken.ok && taken.error.startsWith("no message ") ? noMessageHere(taken.error) : taken;
+    }
+    case "off":
+    case "on":
+      // The asker's own pane, placed by its markers, never named by an argument (M89, decision 3).
+      if (pane === null || !pane.agent) {
+        service.noteRefusal("no pane");
+        return { ok: false, error: SWITCH_NEEDS_A_PANE };
+      }
+      return { ok: true, off: service.setOff(pane, request.op === "off", "session") };
   }
+}
+
+/**
+ * Answer a request this bridge cannot read (added 2026-10-30). Markers that name no pane here answer
+ * `not here`, as a readable request's do: the CLI then asks the next bridge, which may be newer and the
+ * pane's own. Several bridges of different releases share a machine (the release lane beside a dev
+ * lane), and the CLI asks its own install's first. Anything else answers the reason, never the bare word.
+ */
+export async function answerUnread(service: WalkyService, read: Extract<WalkyRequestRead, { ok: false }>, targets: readonly PlaceTarget[]): Promise<WalkyAnswer> {
+  if (read.markers.length === 0) return { ok: false, error: read.reason };
+  const placed = await placeMarkers(read.markers, targets);
+  if (placed === null || service.paneAt(placed.session, placed.paneId) === null) return { ok: false, error: "not here" };
+  return { ok: false, error: read.reason };
 }
 
 export class WalkyServer {
@@ -230,9 +290,9 @@ export class WalkyServer {
 
   private async route(socket: Socket, line: string): Promise<void> {
     try {
-      const request = parseWalkyRequest(line);
-      if (request === null) return this.reply(socket, { ok: false, error: "bad request" });
-      this.reply(socket, await answerRequest(this.deps.service, request, this.deps.targets()));
+      const read = readWalkyRequest(line);
+      if (!read.ok) return this.reply(socket, await answerUnread(this.deps.service, read, this.deps.targets()));
+      this.reply(socket, await answerRequest(this.deps.service, read.request, this.deps.targets()));
     } catch (err) {
       this.log(`[walky] request failed: ${err instanceof Error ? err.message : String(err)}`);
       this.reply(socket, { ok: false, error: "failed" });

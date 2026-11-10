@@ -33,6 +33,9 @@ describeAdapterConformance(piAdapter, {
     "pi--v130-powerline-editor-two-row-draft-footer--w254.txt",
     "pi--v110-slash-palette.txt",
     "pi--v120-slash-palette-padded.txt",
+    // Issue 638: a half-typed `/s` and `/model haiku` draw the same tall list under the box.
+    "pi--v140-slash-s-fuzzy--w120.txt",
+    "pi--v140-slash-model-arg-list--w120.txt",
     "pi--omo-v5130-panel-draft.txt",
     "pi--omo-v5130-panel-phantom.txt",
     "pi--omo-v5130-panel-running.txt",
@@ -42,7 +45,7 @@ describeAdapterConformance(piAdapter, {
 
 describe("pi adapter routing", () => {
   it("lifts every question screen the corpus proves, and no fewer", () => {
-    expect(lifted).toHaveLength(51);
+    expect(lifted).toHaveLength(65);
   });
 
   it.each([
@@ -211,6 +214,22 @@ describe("pi adapter routing", () => {
     expect(piAdapter.extractStatusLines(lines)).toHaveLength(5);
     const [block] = buildBlocks(lines, { agent: "pi" });
     expect(block?.kind === "raw" ? block.lines.length : 0).toBe(14);
+  });
+
+  // Issue 594, live (2026-10-25): the same editor under a goal widget that ticks its seconds over the
+  // box, idle and in a running turn with five rows under the box, and a fresh session's welcome splash
+  // that the first key clears. Each is a ready composer with no draft and no dialog.
+  it.each([
+    ["pi--v130-powerline-goal-widget-idle--w254.txt", 4],
+    ["pi--v130-powerline-goal-widget-running--w254.txt", 4],
+    ["pi--v130-powerline-welcome-idle--w254.txt", 4],
+    ["pi--v130-powerline-welcome-gone--w254.txt", 4],
+  ] as const)("reads %s as a ready composer with %i status rows (the running one has its prompt widget row too)", (name, under) => {
+    const lines = load(name);
+    expect(piAdapter.composerReady?.(lines)).toBe(true);
+    expect(piAdapter.extractInputDraft(lines)).toBeNull();
+    expect(piAdapter.modalOnScreen?.(lines)).toBe(false);
+    expect(piAdapter.extractStatusLines(lines)).toHaveLength(under);
   });
 
   // Issue 544, live: the same editor with no footer under it, a wrapped draft, and pi's own selector.

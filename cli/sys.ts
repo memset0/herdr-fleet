@@ -3,12 +3,14 @@ import { githubHeaders, type GithubCredential } from "../bridge/update.ts";
 import {
   accessSync,
   closeSync,
+  fstatSync,
   constants,
   existsSync,
   mkdirSync,
   openSync,
   readdirSync,
   readFileSync,
+  readSync,
   readlinkSync,
   lstatSync,
   mkdtempSync,
@@ -115,8 +117,13 @@ export interface Exec {
     envAdd?: Readonly<Record<string, string>>,
     envOverride?: EnvOverride,
   ): ExecResult;
-  /** Run `tool` with our own stdio — for `journalctl`, whose output IS the result. */
-  inherit(tool: string, args: readonly string[]): ExecResult;
+  /**
+   * Run `tool` with our own stdio — for `journalctl`, whose output IS the result.
+   *
+   * `stdout: "stderr"` points the child's stdout at OUR stderr instead, for a run whose own stdout is
+   * machine-readable (`crew invite`, whose stdout is the token alone).
+   */
+  inherit(tool: string, args: readonly string[], stdout?: "stderr"): ExecResult;
   /**
    * Run `tool` in `cwd` with our own stdio — the build steps, whose output IS the operator's
    * progress report and whose working directory is load-bearing (the shell's `( cd … && bun … )`:
@@ -130,8 +137,17 @@ export interface Exec {
    *
    * `envOverride` wins over this `Exec`'s own environment exactly as it does for
    * {@link Exec.capture}, and the git relocators stay filtered after it.
+   *
+   * `stdout: "stderr"` is {@link Exec.inherit}'s: the child's stdout goes to our stderr.
    */
-  runIn(tool: string, args: readonly string[], cwd: string, pathPrefix?: string, envOverride?: EnvOverride): ExecResult;
+  runIn(
+    tool: string,
+    args: readonly string[],
+    cwd: string,
+    pathPrefix?: string,
+    envOverride?: EnvOverride,
+    stdout?: "stderr",
+  ): ExecResult;
   /**
    * Run `command` in `cwd` synchronously with a bound, appending both streams to `logPath`.
    *
@@ -233,6 +249,12 @@ export interface Files {
   /** File contents, or null when missing/unreadable. */
   read(p: string): string | null;
   /**
+   * The last `maxBytes` bytes of a regular file as text (the whole file when it is smaller), or null
+   * when it is not a regular file or cannot be read. One open, one `fstat`, one read: how a hook reads
+   * the end of a transcript that may be many megabytes. The cut may fall inside a line or a character.
+   */
+  tail(p: string, maxBytes: number): string | null;
+  /**
    * The entry's own type, without following a symlink, or null when it cannot be read.
    *
    * Build scratch setup uses this rather than `stat`: the checkout's `bin` must itself be a real
@@ -313,6 +335,13 @@ export interface NetFailure {
   /** The HTTP status, or null when the request never got one (DNS, TLS, timeout). */
   status: number | null;
   message: string;
+  /**
+   * `"stall"` when the answer began and then went quiet: a download whose body stopped moving.
+   * `"slow"` when it kept moving but passed the total cap ({@link DOWNLOAD_TOTAL_MS}). Either way the
+   * host WAS reached, so the caller must not say it was not. `message` then reads on from the
+   * caller's own "downloading <asset>", for example `stalled: no data for 60 s after 12.3 MB`.
+   */
+  kind?: "stall" | "slow";
 }
 
 export type NetJson = { ok: true; value: unknown } | { ok: false; failure: NetFailure };
@@ -369,8 +398,40 @@ export interface Net {
   tlsCertificate(host: string, port: number): Promise<NetCertificate>;
 }
 
-/** Same budget as the bridge's tag check — a hung request must never wedge a verb. */
+/**
+ * Same budget as the bridge's tag check — a hung request must never wedge a verb. It bounds a small
+ * JSON request from start to end, and for a download it bounds only the wait for the response
+ * headers. The body of a download has no total deadline (see {@link DOWNLOAD_STALL_MS}).
+ */
 const NET_TIMEOUT_MS = 20_000;
+/**
+ * A release download aborts when no bytes arrive for this long. The 57 MB asset needs about 23 Mbit/s
+ * to finish inside the 20 s above, and a slower link is slow, not broken (#613): a download that keeps
+ * moving never aborts, however long it takes.
+ */
+const DOWNLOAD_STALL_MS = 60_000;
+/**
+ * The backstop for a trickle: a server that sends one byte every 59 s never trips the stall clock.
+ * 30 minutes is about 32 KB/s for the 57 MB asset, slower than any link worth updating over, and far
+ * past the 20 s that failed #613. It runs from the first body byte's turn, not from the request.
+ */
+const DOWNLOAD_TOTAL_MS = 30 * 60_000;
+
+/** The three clocks of {@link realNet}'s `download`. Production uses the constants; a test injects small ones. */
+export interface NetTiming {
+  /** How long to wait for the response headers, redirects included. */
+  readonly headersMs: number;
+  /** How long a download body may stay silent. */
+  readonly stallMs: number;
+  /** How long a download body may take in all, however steadily it moves. */
+  readonly totalMs: number;
+}
+const DEFAULT_TIMING: NetTiming = { headersMs: NET_TIMEOUT_MS, stallMs: DOWNLOAD_STALL_MS, totalMs: DOWNLOAD_TOTAL_MS };
+
+/** `1800000` as `30 min`, `150` as `0.15 s`: the clock in the words a person reads it in. */
+const spell = (ms: number): string => (ms >= 60_000 ? `${ms / 60_000} min` : `${ms / 1000} s`);
+
+const megabytes = (bytes: number): string => (bytes / 1_000_000).toFixed(1);
 /** One TLS handshake on this machine. The health gate polls, so a hung port must not eat the whole poll budget. */
 const TLS_HANDSHAKE_TIMEOUT_MS = 5_000;
 
@@ -386,7 +447,7 @@ const netFailure = (message: string): NetFailure => ({ status: null, message });
  * and `githubHeaders` sends it to `api.github.com` alone: `download` and `probe` never carry it,
  * because neither ever addresses the API.
  */
-export function realNet(credential: GithubCredential | null = null): Net {
+export function realNet(credential: GithubCredential | null = null, timing: NetTiming = DEFAULT_TIMING): Net {
   return {
     async getJson(url, opts) {
       try {
@@ -452,25 +513,78 @@ export function realNet(credential: GithubCredential | null = null): Net {
       });
     },
     async download(url, dest, opts) {
+      // One controller, three clocks. The headers clock runs until the final response starts (fetch
+      // follows redirects, GitHub's hop to objects.githubusercontent.com among them, inside this one
+      // signal). Then the stall clock restarts on every non-empty chunk, and the total clock runs once.
+      // `why` tells the catch which of them fired.
+      const controller = new AbortController();
+      let why: "stall" | "slow" | null = null;
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      let totalTimer: ReturnType<typeof setTimeout> | undefined;
+      const armStall = (ms: number, reason: "stall" | null): void => {
+        clearTimeout(timer);
+        timer = setTimeout(() => {
+          why = reason;
+          controller.abort();
+        }, ms);
+      };
+      let size = 0;
+      let total: number | null = null;
+      let sink: Bun.FileSink | null = null;
+      let reader: ReadableStreamDefaultReader<Uint8Array> | null = null;
       try {
-        const init: RequestInit = { headers: { "user-agent": "collie-update" }, signal: AbortSignal.timeout(NET_TIMEOUT_MS) };
+        const init: RequestInit = { headers: { "user-agent": "collie-update" }, signal: controller.signal };
         if (opts?.redirect !== undefined) init.redirect = opts.redirect;
+        armStall(timing.headersMs, null);
         const res = await fetch(url, init);
+        clearTimeout(timer); // the final response is here: the headers clock is done
         if (!res.ok) return { ok: false, failure: { status: res.status, message: `HTTP ${res.status}` } };
         if (res.body === null) return { ok: false, failure: { status: res.status, message: "empty response" } };
+        const length = Number(res.headers.get("content-length"));
+        total = Number.isFinite(length) && length > 0 ? length : null;
         mkdirSync(dirname(dest), { recursive: true });
         const hasher = new Bun.CryptoHasher("sha256");
-        const sink = Bun.file(dest).writer();
-        let size = 0;
-        for await (const chunk of res.body) {
-          hasher.update(chunk);
-          size += chunk.byteLength;
-          sink.write(chunk);
+        sink = Bun.file(dest).writer();
+        reader = res.body.getReader();
+        armStall(timing.stallMs, "stall");
+        totalTimer = setTimeout(() => {
+          why = "slow";
+          controller.abort();
+        }, timing.totalMs);
+        for (;;) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          // An empty chunk is not progress: it must not buy another stall window.
+          if (value.byteLength === 0) continue;
+          armStall(timing.stallMs, "stall");
+          hasher.update(value);
+          size += value.byteLength;
+          sink.write(value);
         }
+        clearTimeout(timer);
+        clearTimeout(totalTimer);
         await sink.end();
         return { ok: true, sha256: hasher.digest("hex"), size };
       } catch (err) {
+        clearTimeout(timer);
+        clearTimeout(totalTimer);
+        // The abort has already errored the body; cancelling the reader releases the socket either way.
+        if (reader !== null) await reader.cancel().catch(() => undefined);
+        // Close the sink BEFORE the unlink: Windows cannot delete an open file. Never leave half an
+        // asset where the caller expects a whole one.
+        if (sink !== null) await Promise.resolve(sink.end()).catch(() => undefined);
+        rmSync(dest, { force: true });
+        const of = total === null ? "" : ` of ${megabytes(total)} MB`;
+        if (why === "stall") {
+          return { ok: false, failure: { status: null, kind: "stall", message: `stalled: no data for ${timing.stallMs / 1000} s after ${megabytes(size)} MB${of}` } };
+        }
+        if (why === "slow") {
+          return { ok: false, failure: { status: null, kind: "slow", message: `took longer than ${spell(timing.totalMs)} (${megabytes(size)} MB${of})` } };
+        }
         return { ok: false, failure: netFailure(err instanceof Error ? err.message : String(err)) };
+      } finally {
+        clearTimeout(timer);
+        clearTimeout(totalTimer);
       }
     },
   };
@@ -589,23 +703,23 @@ export function realExec(rawEnv: Environment, home: string): Exec {
       if (!timedOut && r.exitCode === null && r.signalCode) result.signal = r.signalCode;
       return result;
     },
-    inherit(tool, args) {
+    inherit(tool, args, stdout) {
       const bin = resolve(tool);
       if (bin === null) return NOT_FOUND;
       const r = Bun.spawnSync([bin, ...args], {
         env,
-        stdout: "inherit",
+        stdout: stdout === "stderr" ? 2 : "inherit",
         stderr: "inherit",
       });
       return { code: r.exitCode, stdout: "", stderr: "", found: true };
     },
-    runIn(tool, args, cwd, pathPrefix, envOverride) {
+    runIn(tool, args, cwd, pathPrefix, envOverride, stdout) {
       const bin = resolve(tool);
       if (bin === null) return NOT_FOUND;
       const r = Bun.spawnSync([bin, ...args], {
         cwd,
         env: withoutGitRelocators(withEnvOverride(withPathPrefix(env, pathPrefix), envOverride)),
-        stdout: "inherit",
+        stdout: stdout === "stderr" ? 2 : "inherit",
         stderr: "inherit",
       });
       return { code: r.exitCode, stdout: "", stderr: "", found: true };
@@ -779,6 +893,22 @@ export const realFiles: Files = {
       return readFileSync(p, "utf8");
     } catch {
       return null;
+    }
+  },
+  tail(p, maxBytes) {
+    let fd: number | undefined;
+    try {
+      fd = openSync(p, "r");
+      const info = fstatSync(fd);
+      if (!info.isFile()) return null;
+      const length = Math.min(info.size, maxBytes);
+      const buffer = Buffer.alloc(length);
+      const got = readSync(fd, buffer, 0, length, info.size - length);
+      return buffer.toString("utf8", 0, got);
+    } catch {
+      return null;
+    } finally {
+      if (fd !== undefined) closeSync(fd);
     }
   },
   entryType(p) {

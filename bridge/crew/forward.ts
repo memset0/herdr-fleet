@@ -3,7 +3,17 @@ import type { JsonObject, JsonValue } from "../json.ts";
 import { MASK_VERSION } from "../redact.ts";
 import { MAX_UPLOAD_OVERHEAD, uploadTooLarge } from "../uploads.ts";
 import { DEVICE_HEADER, encodeDeviceHeader } from "./admission.ts";
-import { type CrewLink, type PeerFailure, type PeerOutcome, WRITE_BUDGET_MS } from "./peer-client.ts";
+import { LEAD_ROW_HEADER, LEAD_ROW_MARK } from "./launcher-rows.ts";
+import {
+  type CrewLink,
+  type CrewParams,
+  type PeerFailure,
+  type PeerOutcome,
+  PANE_READ_BUDGET_MS,
+  PANE_WRITE_BUDGET_MS,
+  WORKTREE_WRITE_BUDGET_MS,
+  WRITE_BUDGET_MS,
+} from "./peer-client.ts";
 import { forwardWriteBudget } from "../../fleet/send-patience.ts";
 import { HOST_PARAM, type PeerState } from "./registry.ts";
 
@@ -68,9 +78,14 @@ const FORWARDABLE: readonly RegExp[] = [
   // pane, where its receipt lives. Additive-optional (§7.1): a member that predates it answers 404.
   // `send` and `abort` (ADR 0101): a control that names the turn the phone saw, a WRITE to the member
   // that owns the pane, where its receipt lives. Additive-optional the same way.
+  // `clear` (ADR 0116, the Clear paragraph): the same, for the receipt of a Clear of the box on a pane with a screen.
   // `action` (M53 spec 07): a tap on one of the program's belt buttons, a WRITE to the member that owns the
   // pane, where its receipt lives. Additive-optional the same way.
-  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|chat|changes|files|focus|answer|send|abort|action))?$/,
+  // `pins` (M90): the pins of the pane's session live on the machine that owns the pane. A GET lists them
+  // (a read), a POST pins a block and a DELETE drops one (writes). Additive-optional the same way.
+  // `held` (issue 740): the Cancel or Dismiss on a queued row, a WRITE (`DELETE`) to the member whose hold
+  // queue keeps the row. Additive-optional the same way: a member that predates it answers 404.
+  /^pane\/[^/]+(?:\/(?:reply|keys|upload|close|rename|history|chat|changes|files|focus|answer|send|abort|clear|action|pins|held))?$/,
   // One picture under the Files root, as bytes (ADR 0090): off the disk of the member that owns the
   // pane or the space, like the Files read it sits beside. Mirrors `PANE_FILES_IMAGE_ROUTE` and
   // `WORKSPACE_FILES_IMAGE_ROUTE` in bridge/server.ts one-for-one. Additive-optional (§7.1).
@@ -92,6 +107,14 @@ const FORWARDABLE: readonly RegExp[] = [
   // bridge/server.ts. Additive-optional (§7.1): a member that predates it answers 404.
   /^space\/[^/]+\/rename$/,
   /^workspace$/,
+  // A worktree (ADR 0126 point 6): git runs where the checkout lives, so the plan and the create go to
+  // the addressed member like `workspace`, which runs its own `planWorktree` and `createWorktreeAt`. The
+  // plan is a read; the create is a write whose body, `requestId` included, rides through unchanged, so
+  // a retry lands on the member's own receipt and is still one create. Additive-optional (§7.1): a
+  // member that predates them answers 404, and a member whose multiplexer cannot open a space answers
+  // `unsupported` through its own route, as a launch does.
+  /^worktree$/,
+  /^worktree\/plan$/,
   // The Changes view asked by workspace (ADR 0065): read-only git over the folder of a space that
   // lives on ONE member, so a `?host=` call is proxied like `pane/:id/changes`. Mirrors
   // `WORKSPACE_CHANGES_ROUTE` in bridge/server.ts one-for-one.
@@ -104,11 +127,12 @@ const FORWARDABLE: readonly RegExp[] = [
   // lead's. Both ride the crew link exactly like `workspace` does.
   /^launch$/,
   /^launchers$/,
-  // The rows a phone adds, removes and renames (ADR 0094). Each machine keeps its own store, so a
-  // `?host=` write lands in THAT member's `launchers-added.json` and nowhere else; no row is ever
-  // copied between machines. `forget-device` is the lead's own call when it revokes a device; the
-  // lead's browser path refuses it, so only an admitted lead's request reaches a member with it.
-  /^launchers\/added(?:\/(?:remove|rename|forget-device))?$/,
+  // The rows a phone adds, removes and renames (ADR 0094, amended by ADR 0127 point 4) are answered on
+  // the lead whatever `?host=` says, so the three are NOT listed: the row lands in the lead's own
+  // `launchers-added.json` and joins the crew's rows. Only `forget-device` crosses the link. It is the
+  // lead's own call when it revokes a device, and members may still hold rows added through the link
+  // before 0127. The lead's browser path refuses it, so only an admitted lead's request reaches a member.
+  /^launchers\/added\/forget-device$/,
   // The one-off command history (ADR 0095): one per machine, so a `?host=` remove or clear changes
   // THAT member's `commands-recent.json`, and nothing is copied. A run itself rides `launch` above.
   /^launch\/recent\/(?:remove|clear)$/,
@@ -141,6 +165,15 @@ const FORWARDABLE: readonly RegExp[] = [
   // one-for-one. Additive-optional (§7.1): a member that predates them answers 404.
   /^durable\/conversations$/,
   /^durable\/conversation\/[^/]+\/(?:items|reopen)$/,
+  // A session's walky talky off switch (M89 spec 04): the flag lives on the member that owns the pane,
+  // which is the one that enforces it (§21), so a `?host=` set goes there. A WRITE: an idempotent set,
+  // and the pane rides in the body as `pane`. Additive-optional (§7.1): a member that predates it answers 404.
+  /^walky\/off$/,
+  // A tap on the hook hold card of a member's pane (M56 spec 12): one Answer to that member's ask, by id.
+  // A WRITE to the member whose ask book minted the id, which answers it through its own `/api/ask/<id>`
+  // with its own gate, audit and hash check; the pane rides in the body as `pane`. Mirrors `ASK_ROUTE` in
+  // bridge/server.ts one-for-one. Additive-optional (§7.1): a member that predates it answers 404.
+  /^ask\/[^/]+$/,
 ];
 
 /**
@@ -149,7 +182,7 @@ const FORWARDABLE: readonly RegExp[] = [
  * by pane or by space. A picture (`files/image`) and a blob are bytes, never text, and stay byte for
  * byte, and so does every write's answer.
  */
-export type TextAnswer = "pane" | "history" | "chat" | "changes" | "files" | "sent";
+export type TextAnswer = "pane" | "history" | "chat" | "changes" | "files" | "sent" | "pins";
 
 /** Which {@link TextAnswer} a crew route answers with, or `null` for a route whose answer is not text. */
 export function textAnswerOf(route: string): TextAnswer | null {
@@ -162,6 +195,8 @@ export function textAnswerOf(route: string): TextAnswer | null {
   if (/^durable\/conversation\/[^/]+\/items$/.test(route)) return "history";
   // Sent's lines are what a person typed (ADR 0107): masked again on the lead, as every other text.
   if (route === "sent") return "sent";
+  // A pin is a copy of what a session said (M90): its list and its one pin are masked again on the lead.
+  if (/^pane\/[^/]+\/pins$/.test(route)) return "pins";
   return null;
 }
 
@@ -188,11 +223,39 @@ export function apiPathFor(route: string): string | null {
   return FORWARDABLE.some((re) => re.test(route)) ? `/api/${route}` : null;
 }
 
+/**
+ * How the lead merges its own data into one forwarded read before the phone gets it. One route passes one: `GET
+ * /api/launchers`, whose answer for a member carries the lead's rows as well (ADR 0127,
+ * `launcher-rows.ts`). Every other forward stays a proxy.
+ *
+ * `ask` builds the URL the member is asked from the phone's. `answer` takes the member's answer as
+ * plain bytes (the lead asks for them, `accept-encoding` is the lead's, not the phone's) and makes
+ * the answer the phone gets, compressed for the phone's hop by the route's own JSON writer.
+ */
+export interface LeadMerge {
+  ask(url: URL): Promise<URL>;
+  answer(member: Response): Promise<Response>;
+}
+
 /** A forwarded read (proxied byte-for-byte, §9.1) or a forwarded write (§10.3, §12). */
 export type ForwardKind = "read" | "write";
 
 /** A pane's walky talky route: a GET there is the pane's list, a POST is a message (§21). */
 const WALKY_ROUTE = /^pane\/[^/]+\/walky$/;
+
+/** An answer to one ask by id (M56 spec 12): `ask/<id>`, a write whose pane rides in the body. */
+const ASK_ROUTE = /^ask\/[^/]+$/;
+
+/** The largest ask answer body the lead reads for its audit line's pane ({@link askPaneOf}). */
+export const ASK_BODY_READ_MAX = 4096;
+
+/** A pane's pins route: a GET is the list, a POST pins a block and a DELETE drops one (M90). */
+const PINS_ROUTE = /^pane\/[^/]+\/pins$/;
+
+/** Whether a request on `route` is the GET of a pane's pins, the one read on that route. */
+function isPinsList(route: string, method: string | undefined): boolean {
+  return method === "GET" && PINS_ROUTE.test(route);
+}
 
 /** Whether a request on `route` is the GET of a pane's walky talky list, the one read on that route. */
 function isWalkyList(route: string, method: string | undefined): boolean {
@@ -204,13 +267,16 @@ function isWalkyList(route: string, method: string | undefined): boolean {
  * READ despite being an action segment — it only ever reads a log off disk — and everything else with
  * an action segment types into or restructures a terminal.
  *
- * `method` matters for one route only, `pane/<id>/walky`, where a GET is the pane's list and a POST is
- * a message. Absent, the route is judged as the write it was first added as.
+ * `method` matters for two routes, `pane/<id>/walky` and `pane/<id>/pins`, where a GET is the pane's list
+ * and anything else writes. Absent, the route is judged as the write it was first added as.
  */
 export function forwardKind(route: string, method?: string): ForwardKind {
   // A pane's walky list changes nothing on the member (§21): a read like `chat`, on the poll path, so
   // it is attempted against a stale member too and never refused before it is tried (§10.3).
   if (isWalkyList(route, method)) return "read";
+  // A pane's pins list changes nothing on the member (M90): a read, tried against a stale member too.
+  // Pinning and unpinning write that member's pins file, so they stay writes.
+  if (isPinsList(route, method)) return "read";
   // A GET that changes nothing, exactly like `pane/:id/history` — attempted even against a member
   // this lead has not heard from in a while, never refused before it is tried (§10.3's "a READ to a
   // dead member is still attempted").
@@ -228,6 +294,8 @@ export function forwardKind(route: string, method?: string): ForwardKind {
   if (route === "folders/star") return "write";
   // The folder browser reads names off the member's disk and changes nothing: a read, like Files.
   if (route === "folders/browse") return "read";
+  // The worktree plan reads git on the member and creates nothing (ADR 0126): a read, like the browser.
+  if (route === "worktree/plan") return "read";
   // A blob read serves a file off the owning member's disk and changes nothing there — the same
   // shape as `pane/:id/history`, and attempted against a stale member for the same reason (§10.3).
   if (route.startsWith("blobs/")) return "read";
@@ -245,6 +313,22 @@ export function forwardKind(route: string, method?: string): ForwardKind {
   // reads one folder or file under that same root (ADR 0083): a read as well, and so is
   // `files/image`, whose third segment is `files` too (ADR 0090).
   return isPaneRead(action) ? "read" : "write";
+}
+
+/** `pane/<id>`: the read of one pane's screen, the one read whose member-side work can outlast a poll. */
+const PANE_SCREEN_ROUTE = /^pane\/[^/]+$/;
+
+/**
+ * The explicit budget a forwarded request dials on: {@link PANE_WRITE_BUDGET_MS} for a write to a pane (a send on a
+ * herdr-core member costs about 6.4 s), {@link WORKTREE_WRITE_BUDGET_MS} for a worktree create (git and a new
+ * space), {@link WRITE_BUDGET_MS} for every other write, {@link PANE_READ_BUDGET_MS}
+ * for a pane's screen read, none for every other read (the transport's own poll budget and bootstrap credit).
+ */
+export function budgetOf(kind: ForwardKind, route: string): number | undefined {
+  if (kind === "write" && route === "worktree") return WORKTREE_WRITE_BUDGET_MS;
+  // An ask answer may walk a dialog with keys on the member (ASK_LOCK_MS), so it dials on a pane write's budget.
+  if (kind === "write") return route.startsWith("pane/") || ASK_ROUTE.test(route) ? PANE_WRITE_BUDGET_MS : WRITE_BUDGET_MS;
+  return PANE_SCREEN_ROUTE.test(route) ? PANE_READ_BUDGET_MS : undefined;
 }
 
 /** The pane id a route addresses, for the lead's own audit line. `undefined` for tab/workspace. */
@@ -268,8 +352,14 @@ export function forwardPaneId(route: string): string | undefined {
 export function forwardAuditAction(route: string, method?: string): string | null {
   // The pane's walky list is a read, audited on neither side (§21).
   if (isWalkyList(route, method)) return null;
+  // The pins list is a read too (M90). A pin or an unpin is audited `pins` here, and the member writes
+  // `pin.add` or `pin.remove` for the same event: the lead's line names the route, the member's the act.
+  if (isPinsList(route, method)) return null;
   if (route === "tab") return "tab.create";
   if (route === "workspace") return "workspace.create";
+  // The member's own create writes `worktree.create`; its plan is a read.
+  if (route === "worktree") return "worktree.create";
+  if (route === "worktree/plan") return null;
   // `launch` writes either `workspace.launch` or `tab.launch`, decided by the body a route string
   // alone can't see — this generic name is the LEAD's own line about the forward (§12's "plus the
   // target host"), and the peer's own audit line is the accurate record of which one ran.
@@ -288,10 +378,16 @@ export function forwardAuditAction(route: string, method?: string): string | nul
   if (route.startsWith("durable/")) return route.endsWith("/reopen") ? "durable.reopen" : null; // the list and the items are reads
   if (route.startsWith("tab/")) return route.endsWith("/close") ? "tab.close" : "tab.rename";
   if (route.startsWith("space/")) return "space.rename";
+  // The member writes the same name for the switch (bridge/server.ts `walkyOffRoute`).
+  if (route === "walky/off") return "walky.off";
+  // The member writes `ask` for the answer (bridge/server.ts `askRoute`), so the lead's line names the same act.
+  if (ASK_ROUTE.test(route)) return "ask";
+  // The member writes `send-cancel` for the Cancel or Dismiss on a queued row (bridge/server.ts
+  // `heldCancelRoute`, issue 740), so the lead's line names the same act. Only a DELETE is one.
+  if (/^pane\/[^/]+\/held$/.test(route)) return method === undefined || method === "DELETE" ? "send-cancel" : null;
   const action = route.split("/")[2];
   if (isPaneRead(action)) return null; // reads, and a read is audited on neither side
-  // DOWNSTREAM PORT — `focus` namespaces itself on the peer's own handler (`pane.focus`), so the
-  // lead's record of the forward says the same; a bare word made the two logs disagree.
+  // close, rename and focus namespace themselves on the peer's own handler; the rest stay bare.
   if (action === "close" || action === "rename" || action === "focus") return `pane.${action}`;
   // The member writes the same name for the message it takes (bridge/walky/crew.ts).
   if (action === "walky") return "walky.deliver";
@@ -307,10 +403,12 @@ export function forwardAuditAction(route: string, method?: string): string | nul
  * the first step of a hop chain this protocol does not have.
  */
 export function forwardParams(url: URL) {
-  const params: Record<string, string> = {};
-  for (const [k, v] of url.searchParams) {
+  const params: Record<string, string | string[]> = {};
+  for (const k of new Set(url.searchParams.keys())) {
     if (k === HOST_PARAM) continue;
-    params[k] = v;
+    // A key asked once stays a string; a repeated one (ADR 0127's `?cwd=`) keeps every value, in order.
+    const values = url.searchParams.getAll(k);
+    params[k] = values.length === 1 ? values[0]! : values;
   }
   return params;
 }
@@ -354,6 +452,10 @@ export type ForwardAuditEntry = {
  * request — the operator's device as the lead's own `deviceAuth()` resolved it (§12) — and the sweep
  * that polls a peer's snapshot has no phone behind it. Absent when the lead's device gate is off,
  * matching how the audit field is omitted rather than nulled today.
+ *
+ * `X-Collie-Lead-Row` is NOT on the list, and must never be: a member trusts a body `row` only with
+ * it, so it is the lead's own word. {@link forwardToPeer} adds it after this list is built, and only
+ * for a row the lead carried itself (`leadRowCarry`, ADR 0127 point 3).
  */
 export function forwardHeaders(req: Request, device?: string | null): Headers {
   const headers = new Headers();
@@ -548,18 +650,49 @@ export function classifyReadFailure(failure: PeerFailure, memberId: string): Res
   return forwardError(code, `host ${memberId}: ${failure.reason}`, 503, { host: memberId });
 }
 
+/** How many failing (member, pane) reads {@link MemberPaneReads} remembers; the oldest is forgotten first. */
+const MAX_FAILING_READS = 256;
+
+/**
+ * The lead's log line for a member's pane that it could not read for the phone. A failed forwarded
+ * read changed nothing, so the phone only redraws its last mirror; without a line the lead's log
+ * said nothing at all (M78 spec 03, crew case 21: a member pane read answered 503). One line per
+ * (member, pane) when a read starts failing or fails with another status, none per poll while it
+ * keeps failing, and the next answered read clears it.
+ */
+export class MemberPaneReads {
+  private readonly failing = new Map<string, number>();
+
+  constructor(private readonly log: (line: string) => void = (line) => console.log(line)) {}
+
+  /** One forwarded read of `paneId` on `memberId` ended with `status`; `why` says what the lead learned. */
+  record(memberId: string, paneId: string, status: number, why: string): void {
+    const key = `${memberId}\u0000${paneId}`;
+    if (status < 400) {
+      this.failing.delete(key);
+      return;
+    }
+    if (this.failing.get(key) === status) return;
+    this.failing.delete(key);
+    this.failing.set(key, status);
+    if (this.failing.size > MAX_FAILING_READS) this.failing.delete(this.failing.keys().next().value!);
+    this.log(`[crew] ${memberId}: a read of pane ${paneId} through the lead failed, status ${String(status)} (${why})`);
+  }
+}
+
 /**
  * The transport, narrowed to what forwarding needs — {@link CrewLead.forward} in production.
  *
- * `budgetMs` is the deadline for THIS dial, and it is present for exactly one shape of request: a
- * forwarded write, on {@link WRITE_BUDGET_MS} (§10.1). Absent means "the transport's own default",
+ * `budgetMs` is the deadline for THIS dial, and it is present for two shapes of request: a
+ * forwarded write, on {@link WRITE_BUDGET_MS} or {@link PANE_WRITE_BUDGET_MS} (§10.1), and a pane's screen read, on
+ * {@link PANE_READ_BUDGET_MS}. Absent means "the transport's own default",
  * which for `PeerClient.proxy` is the poll budget plus a cold link's bootstrap credit — i.e. every
  * forwarded read keeps the budget it has always had.
  */
 export type ForwardTransport = (
   link: CrewLink,
   route: string,
-  params: Record<string, string>,
+  params: CrewParams,
   init: RequestInit,
   budgetMs?: number,
 ) => Promise<PeerOutcome<Response>>;
@@ -588,6 +721,12 @@ export interface ForwardDeps {
   /** The operator's device, as the LEAD resolved it — forwarded as `X-Crew-Device` (§12). */
   readonly device?: string | null;
   /**
+   * True when the LEAD set `row` on this body itself (`leadRowCarry`, ADR 0127 point 3): the forward
+   * then adds `X-Collie-Lead-Row`, the one sign a member trusts that a `row` is its lead's. Absent or
+   * false, the header is never sent, whatever the phone's request carried.
+   */
+  readonly leadRow?: boolean;
+  /**
    * The LEAD's own upload cap in bytes (`cfg.maxUploadBytes`), for the §13 pre-check below. Passed
    * in rather than imported because it is no longer a constant — it is this host's setting, and a
    * peer with a different one enforces its own when the bytes arrive.
@@ -604,6 +743,8 @@ export interface ForwardDeps {
    * a text submit to this member's reply route before any peer call ({@link REPLY_OLD_MEMBER_TEXT}).
    */
   readonly surfaceVersion?: number | null | undefined;
+  /** Where a pane read that fails is logged ({@link MemberPaneReads}). Absent, nothing is logged. */
+  readonly paneReads?: MemberPaneReads | undefined;
 }
 
 /**
@@ -731,6 +872,51 @@ async function textSubmitId(req: Request): Promise<string | null> {
 }
 
 /**
+ * The pane an ask answer names in its body (`pane`), for the lead's own audit line, or undefined. Read
+ * from a clone like {@link textSubmitId}, so the original still streams to the member.
+ */
+async function askPaneOf(req: Request): Promise<string | undefined> {
+  // An answer is a few hundred bytes. A body that says or turns out to be past the cap is not parsed
+  // here: it still streams on whole, and the member's own parse refuses it, so the lead never holds
+  // more than the cap of it.
+  if (Number(req.headers.get("content-length") ?? 0) > ASK_BODY_READ_MAX) return undefined;
+  const reader = req.clone().body?.getReader();
+  if (reader === undefined) return undefined;
+  try {
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      size += value.byteLength;
+      if (size > ASK_BODY_READ_MAX) return undefined;
+      chunks.push(value);
+    }
+    const body: JsonValue = JSON.parse(new TextDecoder().decode(Buffer.concat(chunks)));
+    if (typeof body !== "object" || body === null || Array.isArray(body)) return undefined;
+    return typeof body.pane === "string" && body.pane !== "" && body.pane.length <= 256 ? body.pane : undefined;
+  } catch {
+    return undefined;
+  } finally {
+    void reader.cancel().catch(() => undefined);
+  }
+}
+
+/**
+ * The ask route's own answer for a forwarded ask answer whose outcome the link cannot tell (§10.3): it
+ * went to the member and no reply came back, so it may have reached the hook. The phone reads
+ * `receipt.outcome: "unknown"` exactly as it reads the member's own unknown, in its own words, and it
+ * does not retry; neither does the lead. A 200 like every answer of the ask route, never a link error.
+ */
+export function askUnknownAnswer(route: string): Response {
+  const receipt: JsonObject = { askId: route.slice("ask/".length), outcome: "unknown", reason: "no_evidence" };
+  return new Response(JSON.stringify({ receipt }), {
+    status: 200,
+    headers: { "content-type": "application/json; charset=utf-8", "cache-control": "no-store" },
+  });
+}
+
+/**
  * Whether this request is a text submit to a pane's reply route: `POST pane/:id/reply` with a body of
  * `submit: true` (or no `submit`, which means true) and non-empty text. The body is read from a clone,
  * so the original still streams to the member. A body that is not JSON is not a text submit here, and
@@ -788,6 +974,9 @@ export async function forwardToPeer(req: Request, url: URL, deps: ForwardDeps): 
     return oldMemberRefusal(await textSubmitId(req));
   }
 
+  // An ask answer names its pane in the body, not the route: read here, before the body streams on.
+  const askPane = ASK_ROUTE.test(route) ? await askPaneOf(req) : undefined;
+
   // §13: the size bound is enforced BEFORE forwarding as well as by the peer. A phone on cellular
   // must not spend its uplink twice — once to the lead, once to a peer that was always going to
   // reject it — and the lead must not become a place where 10 MB of someone else's image is buffered.
@@ -808,6 +997,9 @@ export async function forwardToPeer(req: Request, url: URL, deps: ForwardDeps): 
   // `duplex` is required by the Fetch spec for a stream body; the DOM lib's `RequestInit` predates
   // it, so the streaming half of this init is typed here rather than asserted at the assignment.
   const headers = forwardHeaders(req, deps.device);
+  // The lead's own mark on a row it carried (ADR 0127 point 3). ADDED after the allowlist, like
+  // `X-Crew-Device`, and never copied: `forwardHeaders` does not pass a phone's `X-Collie-Lead-Row`.
+  if (deps.leadRow === true) headers.set(LEAD_ROW_HEADER, LEAD_ROW_MARK);
   // Text the phone will show is masked here, whatever the member's version (§9.1). Every other answer
   // is not read at all. A masked answer's tag carries the mask's version, both ways ({@link saltTag}).
   const answer = deps.mask === undefined ? null : textAnswerOf(route);
@@ -838,11 +1030,10 @@ export async function forwardToPeer(req: Request, url: URL, deps: ForwardDeps): 
     route,
     forwardParams(url),
     init,
-    // Herdr Fleet (fleet-send-patience): a pane's reply route runs a whole send on the member.
-    kind === "write" ? forwardWriteBudget(route, WRITE_BUDGET_MS) : undefined,
+    kind === "write" ? forwardWriteBudget(route, budgetOf(kind, route) ?? WRITE_BUDGET_MS) : budgetOf(kind, route),
   );
   const action = forwardAuditAction(route, req.method);
-  const paneId = forwardPaneId(route);
+  const paneId = forwardPaneId(route) ?? askPane;
   const session = url.searchParams.get("session");
   const record = (result: string): void => {
     if (action === null || deps.audit === undefined) return;
@@ -860,13 +1051,16 @@ export async function forwardToPeer(req: Request, url: URL, deps: ForwardDeps): 
       : classifyReadFailure(outcome, deps.link.memberId);
     // The lead's log records that it forwarded and what it learned — including "unknown", which is
     // the single most important line in this file to be able to find afterwards.
-    record(
+    const learned =
       outcome.state === "incompatible"
         ? "incompatible"
         : outcome.state === "unreachable" && outcome.attempted === false
           ? "refused"
-          : "unknown",
-    );
+          : "unknown";
+    record(learned);
+    // An ask answer that may have landed comes back in the ask route's own shape, which the phone reads.
+    if (kind === "write" && learned === "unknown" && ASK_ROUTE.test(route)) return askUnknownAnswer(route);
+    if (kind === "read" && paneId !== undefined) deps.paneReads?.record(deps.link.memberId, paneId, response.status, `${outcome.state}: ${outcome.reason}`);
     return response;
   }
 
@@ -874,6 +1068,7 @@ export async function forwardToPeer(req: Request, url: URL, deps: ForwardDeps): 
   // `receivedAt` is when the response landed on this lead, not when the phone finished reading it.
   deps.onExchange?.(outcome.receivedAt);
   record(`http ${outcome.value.status}`);
+  if (kind === "read" && paneId !== undefined) deps.paneReads?.record(deps.link.memberId, paneId, outcome.value.status, "the member answered it");
   const answered =
     answer === null || deps.mask === undefined
       ? outcome.value

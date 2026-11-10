@@ -4,6 +4,7 @@ import { fixtureWalkyAgent, fixtureWalkyOperator, fixtureWalkySelf, fixtureWalky
 
 import {
   bareAddress,
+  reasonWord,
   directionOf,
   findWalkyIds,
   parseWalkyCommand,
@@ -216,6 +217,31 @@ describe("the words", () => {
     expect(of("expired")).toBe("expired");
   });
 
+  it("reads a held message as held, with what holds it (M62 spec 02)", () => {
+    expect(stateWord({ ...receipt, state: "accepted", reason: "draft present" })).toBe("held: that session has unsent text");
+    expect(stateWord({ ...receipt, state: "accepted", reason: "turn running" })).toBe("held: that session is busy");
+    expect(stateWord({ ...receipt, state: "accepted", reason: "" })).toBe("queued");
+  });
+
+  it("words the bridge's known reasons for a person and leaves an unknown reason as the bridge wrote it (M80 spec 12)", () => {
+    expect(reasonWord("draft present")).toBe("that session has unsent text");
+    expect(reasonWord("turn running")).toBe("that session is busy");
+    expect(reasonWord("held past 60 minutes")).toBe("held past 60 minutes");
+    expect(stateWord({ ...receipt, state: "accepted", reason: "something new" })).toBe("held: something new");
+    expect(stateWord({ ...receipt, state: "inbox-only", reason: "turn running" })).toBe("waiting in the inbox, not typed: that session is busy");
+    // The lead has the outcome: no hold, a plain sentence.
+    expect(stateWord({ ...receipt, state: "accepted", reason: "outcome known on the lead" })).toBe("on its way, the lead reports the result");
+  });
+
+  it("words the two off refusals for a person (M89 spec 04)", () => {
+    expect(reasonWord("walky talky off")).toBe("the session has its WalkyTalky off");
+    expect(reasonWord("your walky talky is off")).toBe("the sending session has its WalkyTalky off");
+    expect(stateWord({ ...receipt, state: "refused", reason: "walky talky off" })).toBe("not sent: the session has its WalkyTalky off");
+    expect(stateWord({ ...receipt, state: "refused", reason: "your walky talky is off" })).toBe("not sent: the sending session has its WalkyTalky off");
+    // The machine-wide switch keeps the bridge's word.
+    expect(stateWord({ ...receipt, state: "refused", reason: "off" })).toBe("not sent: off");
+  });
+
   it("gives a refusal its reason", () => {
     expect(stateWord({ ...receipt, state: "refused", reason: "rate limit" })).toBe("not sent: rate limit");
     expect(stateWord({ ...receipt, state: "refused" })).toBe("not sent");
@@ -415,6 +441,46 @@ describe("directionOf", () => {
   it("reads a broadcast receipt (`all`) from this pane as sent", () => {
     const broadcast = { ...fixtureWalkySent, receipt: { ...fixtureWalkySent.receipt, target: "all" } };
     expect(directionOf(broadcast, fixtureWalkySelf)).toBe("sent");
+  });
+});
+
+describe("a row a sibling instance on this machine recorded", () => {
+  // The same pane as `fixtureWalkySelf`, as a second Collie on the machine names it: its own member id,
+  // its own token. The row's addresses use those, so only `recordedAs` says which of them is this pane.
+  const theirs = "sibling/w1:p1";
+  const received = {
+    ...fixtureWalkyAgent,
+    from: { ...fixtureWalkyAgent.from, memberId: "sibling", address: "sibling/w6:p3#o3xm" },
+    to: "sibling/w1:p1#wl8b",
+    receipt: { ...fixtureWalkyAgent.receipt, target: theirs, by: "sibling" },
+    recordedBy: "collie",
+    recordedAs: theirs,
+  };
+  const sent = {
+    ...fixtureWalkySent,
+    from: { ...fixtureWalkySent.from, memberId: "sibling", address: "sibling/w1:p1#wl8b" },
+    to: "sibling/w6:p3#o3xm",
+    receipt: { ...fixtureWalkySent.receipt, target: "sibling/w6:p3", by: "sibling" },
+    recordedBy: "collie",
+    recordedAs: theirs,
+  };
+
+  it("reads a message to the pane as received, though its `to` carries the sibling's token", () => {
+    expect(directionOf(received, fixtureWalkySelf)).toBe("received");
+    expect(standingOf(walkyLog([received]), received.id)).toMatchObject({ standing: "held", row: { recordedBy: "collie" } });
+  });
+
+  it("reads a message the pane sent through the sibling as sent", () => {
+    expect(directionOf(sent, fixtureWalkySelf)).toBe("sent");
+    // Without `recordedAs` the sibling's member id hides the pane, and a sent row would read as received.
+    expect(directionOf({ ...sent, recordedAs: undefined }, fixtureWalkySelf)).toBe("received");
+  });
+
+  it("names no other machine for a sender on the sibling's own member id", () => {
+    expect(remoteMachineOf(received, fixtureWalkySelf)).toBeNull();
+    expect(remoteMachineOf({ ...received, recordedAs: undefined }, fixtureWalkySelf)).toBe("sibling");
+    const away = { ...received, from: { ...received.from, memberId: "minibuch", address: "minibuch/w11:p4#8h9h" } };
+    expect(remoteMachineOf(away, fixtureWalkySelf)).toBe("minibuch");
   });
 });
 

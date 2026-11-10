@@ -10,7 +10,8 @@
 // A file lives through three states: `held` (waiting for a free pane), `running` (going out now, as a
 // fresh run of the protocol under the same request id) and `ended` (closed without reaching the agent:
 // expired, the pane gone, or a refusal at release; the text stays for the phone's Resend). A send that
-// went out, and a cancelled one, leave no file. An ended file goes when the person dismisses it, or
+// went out, and a cancelled one, leave no file. An ended file goes when the person dismisses it, when
+// it ended `typed_not_submitted` and two polls read its box empty (protocol.ts `tickTyped`, #739), or
 // after {@link HOLD_ENDED_KEEP_MS}, and a pane keeps at most {@link HOLD_ENDED_PANE_MAX} of them.
 //
 // The text is kept on disk in plain form (the file is 0600): the bridge must type it later. So the
@@ -18,12 +19,17 @@
 // {@link HOLD_BRIDGE_MAX}, and on boot a file it cannot read and a `.tmp` leftover of a write cut short
 // are deleted.
 //
+// A send its caller marks `draftHolds` (a walky talky delivery, M62 spec 02) is also held over a draft,
+// and its caller names the hold's end (`expiresAt`), so one clock runs for it. Every file carries what
+// held it (`cause`, the refusal it came from), so the phone can say why; the poll rewrites it on every
+// held send when the pane's reading changes, so the phone's sentence is true now, not at hold time.
+//
 // No harness name lives here (bridge/surface/no-harness-names.test.ts scans this folder).
 
 import { chmodSync, mkdirSync, readdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { asJsonNumber, asJsonObject, asJsonString, type JsonValue } from "../../web/src/lib/json.ts";
-import { REQUEST_ID, SEND_MODES, SEND_OUTCOMES, SEND_REASONS, type HeldRow, type HeldState, type SendMode, type SendOutcome, type SendReason } from "../../web/src/lib/surface/send.ts";
+import { HELD_CAUSES, REQUEST_ID, SEND_MODES, SEND_OUTCOMES, SEND_REASONS, type HeldCause, type HeldRow, type HeldState, type SendMode, type SendOutcome, type SendReason } from "../../web/src/lib/surface/send.ts";
 
 /** How long a text stays held before it ends `expired` (decision 4). */
 export const HOLD_MS = 30 * 60 * 1000;
@@ -39,6 +45,10 @@ export const HOLD_PANE_MAX = 32;
 export const HOLD_BRIDGE_MAX = 256;
 
 const HELD_STATES = ["held", "running", "ended"] as const satisfies readonly HeldState[];
+
+/** What holds a request: the refusal it was held from ({@link HeldCause}); every poll moves it between a
+ *  turn, something open at the box and a draft, as the pane reads now. */
+export type HoldCause = HeldCause;
 
 /** One held request on disk. */
 export interface HeldEntry {
@@ -62,9 +72,17 @@ export interface HeldEntry {
   readonly endedAt?: number;
   /**
    * A command whose keys could steer a turn (its Enter steers on this harness, or the version was not
-   * read): it goes out only after a poll read a running turn and then a free pane, never on quiet polls.
+   * read): it goes out only once the turn it was held for has ended. Two free polls after a poll read
+   * the turn; two free polls at least two seconds apart when only the hold read it; the quiet rule when
+   * no turn was read since the last release (protocol.ts `tickHolds`).
    */
   readonly waitsForTurn?: true;
+  /** The caller asked for a draft to hold this request, not refuse it (see the header). */
+  readonly draftHolds?: true;
+  /** What holds it: the refusal it was held from, then what the poll reads now. */
+  readonly cause?: HoldCause;
+  /** Held for a turn only because the harness's version could not be read (see {@link HeldRow.versionUnread}). */
+  readonly versionUnread?: true;
 }
 
 export interface HoldInput {
@@ -79,14 +97,25 @@ export interface HoldInput {
   readonly command: boolean;
   /** See {@link HeldEntry.waitsForTurn}. */
   readonly waitsForTurn?: boolean;
+  /** See {@link HeldEntry.draftHolds}. */
+  readonly draftHolds?: boolean;
+  /** See {@link HeldEntry.cause}. */
+  readonly cause?: HoldCause;
+  /** See {@link HeldEntry.versionUnread}. */
+  readonly versionUnread?: boolean;
+  /** The caller's own end of the hold, epoch ms: it replaces {@link HOLD_MS} and {@link HOLD_COMMAND_MS}. */
+  readonly expiresAt?: number;
 }
 
 function pick<const T extends string>(value: JsonValue | undefined, allowed: readonly T[]): T | undefined {
   return allowed.find((word) => word === value);
 }
 
-/** An entry read back from its file, every field checked; null when it is not one this module wrote. */
-function parseEntry(raw: JsonValue | undefined): HeldEntry | null {
+/**
+ * An entry read back from its file, every field checked; null when it is not one this module wrote.
+ * Pure: the store reads its files with it, and `collie doctor` reads them through its own seam (M71 spec 02).
+ */
+export function parseHeldEntry(raw: JsonValue | undefined): HeldEntry | null {
   const node = asJsonObject(raw);
   if (node === undefined) return null;
   const id = asJsonString(node.id);
@@ -111,6 +140,10 @@ function parseEntry(raw: JsonValue | undefined): HeldEntry | null {
   if (reason !== undefined) entry = { ...entry, reason };
   if (endedAt !== undefined) entry = { ...entry, endedAt };
   if (node.waitsForTurn === true) entry = { ...entry, waitsForTurn: true };
+  if (node.draftHolds === true) entry = { ...entry, draftHolds: true };
+  const cause = pick(node.cause, HELD_CAUSES);
+  if (cause !== undefined) entry = { ...entry, cause };
+  if (node.versionUnread === true) entry = { ...entry, versionUnread: true };
   return entry;
 }
 
@@ -119,6 +152,8 @@ export function heldRow(entry: HeldEntry): HeldRow {
   let row: HeldRow = { requestId: entry.id, mode: entry.mode, text: entry.text, heldAt: entry.heldAt, expiresAt: entry.expiresAt, state: entry.state };
   if (entry.outcome !== undefined) row = { ...row, outcome: entry.outcome };
   if (entry.reason !== undefined) row = { ...row, reason: entry.reason };
+  if (entry.cause !== undefined) row = { ...row, cause: entry.cause };
+  if (entry.versionUnread === true) row = { ...row, versionUnread: true };
   return row;
 }
 
@@ -145,8 +180,8 @@ export class HoldStore {
       if (!REQUEST_ID.test(stem)) continue;
       let entry: HeldEntry | null = null;
       try {
-        // SAFETY: `JSON.parse` output IS a JsonValue; `parseEntry` checks every field.
-        entry = parseEntry(JSON.parse(readFileSync(join(dir, name), "utf8")) as JsonValue);
+        // SAFETY: `JSON.parse` output IS a JsonValue; `parseHeldEntry` checks every field.
+        entry = parseHeldEntry(JSON.parse(readFileSync(join(dir, name), "utf8")) as JsonValue);
       } catch {
         entry = null;
       }
@@ -177,9 +212,27 @@ export class HoldStore {
   /** A new request at the end of its pane's queue. */
   add(input: HoldInput): HeldEntry {
     const at = this.now();
-    const { command, waitsForTurn, ...rest } = input;
-    const entry: HeldEntry = { ...rest, heldAt: at, expiresAt: at + (command ? HOLD_COMMAND_MS : HOLD_MS), seq: this.nextSeq++, state: "held", tries: 0 };
-    return this.write(waitsForTurn === true ? { ...entry, waitsForTurn: true } : entry);
+    const { command, waitsForTurn, draftHolds, cause, versionUnread, expiresAt, ...rest } = input;
+    let entry: HeldEntry = { ...rest, heldAt: at, expiresAt: expiresAt ?? at + (command ? HOLD_COMMAND_MS : HOLD_MS), seq: this.nextSeq++, state: "held", tries: 0 };
+    if (waitsForTurn === true) entry = { ...entry, waitsForTurn: true };
+    if (draftHolds === true) entry = { ...entry, draftHolds: true };
+    if (cause !== undefined) entry = { ...entry, cause };
+    if (versionUnread === true) entry = { ...entry, versionUnread: true };
+    return this.write(entry);
+  }
+
+  /** The pane's multiplexer now names the agent of the request's own profile: the release picks the profile by it. Null when it is not held. */
+  setHarness(id: string, harness: string): HeldEntry | null {
+    const known = this.get(id);
+    if (known === null || known.state !== "held") return null;
+    return known.harness === harness ? known : this.write({ ...known, harness });
+  }
+
+  /** What holds a request now: the file is written only when it changed. Null when it is not held. */
+  setCause(id: string, cause: HoldCause): HeldEntry | null {
+    const known = this.get(id);
+    if (known === null || known.state === "ended") return null;
+    return known.cause === cause ? known : this.write({ ...known, cause });
   }
 
   get(id: string): HeldEntry | null {
@@ -222,12 +275,16 @@ export class HoldStore {
     return this.write({ ...known, state: "held", tries: counted ? known.tries + 1 : known.tries });
   }
 
-  /** The request closed without reaching the agent: the text stays for the phone's Resend. */
-  end(id: string, outcome: SendOutcome, reason?: SendReason): HeldEntry | null {
+  /**
+   * The request closed without reaching the agent: the text stays for the phone's Resend. `at` is the
+   * end time when it is not now: a budget that ran out while the bridge was down ended at its own
+   * `expiresAt` (protocol.ts `expireHoldsOnStart`), so the keep window counts from there.
+   */
+  end(id: string, outcome: SendOutcome, reason?: SendReason, at?: number): HeldEntry | null {
     const known = this.get(id);
     if (known === null) return null;
     const { reason: _old, ...rest } = known;
-    const ended: HeldEntry = { ...rest, state: "ended", outcome, endedAt: this.now() };
+    const ended: HeldEntry = { ...rest, state: "ended", outcome, endedAt: at ?? this.now() };
     return this.write(reason === undefined ? ended : { ...ended, reason });
   }
 

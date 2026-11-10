@@ -43,11 +43,17 @@ const METADATA_KEYS: ReadonlySet<string> = new Set([
   "checked",
   "passed",
   "reason",
+  // The state dir name of the sibling instance a walky talky row came from (bridge/walky/siblings.ts):
+  // `collie`, `collie-next`. The bridge reads it off the hook target registry, never a person's text.
+  "recordedBy",
   // A worktree create's id (ADR 0089): a UUID the phone mints, never typed by a person.
   "requestId",
   "saved",
   "sent",
   "size",
+  // Where a launched row came from: `lead` for a row the lead carried over the crew link (ADR 0127
+  // point 3). An enum the bridge writes, never a person's text; no other detail uses the name.
+  "source",
   "styled",
   "submit",
   "submitted",

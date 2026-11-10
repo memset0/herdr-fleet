@@ -55,7 +55,7 @@ describe("copyable reading blocks", () => {
   it("copies the entire command and output separately despite their previews", async () => {
     const command = Array.from({ length: 8 }, (_, i) => `  command ${i}`).join("\n");
     const output = Array.from({ length: 14 }, (_, i) => `  output ${i}`).join("\n") + "\n\n";
-    const { container } = render(<ToolCard tool={{ kind: "execute", command, output }} status="done" />);
+    const { container } = render(<ToolCard callId="call-1" tool={{ kind: "execute", command, output }} status="done" />);
     const commandButton = within(container).getByRole("button", { name: "Copy command" });
     fireEvent.click(commandButton);
     await waitFor(() => expect(writeText).toHaveBeenNthCalledWith(1, command));
@@ -85,7 +85,7 @@ describe("copyable reading blocks", () => {
       { header: "@@ -30 +30 @@", lines: ["-old", "+new"] },
     ];
     const original = hunks.map((hunk) => [hunk.header, ...hunk.lines].join("\n")).join("\n");
-    const { container } = render(<ToolCard tool={{ kind: "edit", path: "/a.txt", added: 21, removed: 1, diff: hunks }} status="done" />);
+    const { container } = render(<ToolCard callId="call-1" tool={{ kind: "edit", path: "/a.txt", added: 21, removed: 1, diff: hunks }} status="done" />);
     expect(container.textContent).not.toContain("line 19");
     const button = within(container).getByRole("button", { name: "Copy" });
     fireEvent.click(button);
@@ -97,7 +97,7 @@ describe("copyable reading blocks", () => {
   });
 
   it("copies unnumbered diff headers without inventing line numbers", async () => {
-    const { container } = render(<ToolCard tool={{ kind: "edit", path: "/a.txt", added: 1, removed: 1, diff: [{ header: "a.txt", lines: ["-old", "+  new"] }] }} status="done" />);
+    const { container } = render(<ToolCard callId="call-1" tool={{ kind: "edit", path: "/a.txt", added: 1, removed: 1, diff: [{ header: "a.txt", lines: ["-old", "+  new"] }] }} status="done" />);
     fireEvent.click(within(container).getByRole("button", { name: "Copy" }));
     await waitFor(() => expect(writeText).toHaveBeenCalledWith("a.txt\n-old\n+  new"));
   });
@@ -123,8 +123,8 @@ describe("copyable reading blocks", () => {
     Object.defineProperty(navigator, "clipboard", { configurable: true, value: undefined });
     const { container } = render(<>
       <MarkdownText text={"```\n  code\n```\n\n| A | B |\n| --- | --- |\n| x | y |"} />
-      <ToolCard tool={{ kind: "execute", command: "run", output: "result" }} status="done" preview />
-      <ToolCard tool={{ kind: "edit", path: "/a.txt", added: 1, removed: 0, diff: [{ header: "a.txt", lines: ["+new"] }] }} status="done" />
+      <ToolCard callId="call-1" tool={{ kind: "execute", command: "run", output: "result" }} status="done" preview />
+      <ToolCard callId="call-1" tool={{ kind: "edit", path: "/a.txt", added: 1, removed: 0, diff: [{ header: "a.txt", lines: ["+new"] }] }} status="done" />
     </>);
     expect(within(container).queryByRole("button", { name: /Copy/ })).toBeNull();
     expect(container.querySelector("table")).not.toBeNull();

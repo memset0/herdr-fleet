@@ -7,10 +7,11 @@
 // one triage dot for two projects, one last-seen time, one tab group. The fix is the key, not a
 // filter — see lib/hosts.ts `spaceKey`, which degrades to a pure prefix (`"\0w1"`) on a solo
 // snapshot where no pane is host-tagged at all.
-import { paneSpaceKey, spaceKey } from "./hosts";
+import { paneGitHead } from "./git-head";
+import { hostKey, paneSpaceKey, spaceKey } from "./hosts";
 import { byPlaceInTab } from "./pane-groups";
 import { bucketOf, TRIAGE_ORDER, type TriageKey } from "./triage";
-import type { AgentView, TabView, WorkspaceView } from "./types";
+import type { AgentView, GitHead, TabView, WorkspaceView } from "./types";
 
 export interface TabGroup {
   tabId: string;
@@ -124,30 +125,75 @@ export function filterSpaces(
 }
 
 /**
- * The spaces the Spaces section lists while the workspace strip isolates one workspace (issue #338).
+ * The key a repo's root is looked up under: the machine plus the repo path. A path alone would fold
+ * two machines' checkouts of `/home/me/app` into one (a crew list is merged, and so are its paths).
+ */
+export function repoRootKey(space: Pick<WorkspaceView, "host" | "repoRoot">): string {
+  return `${hostKey(space)}\u0000${space.repoRoot ?? ""}`;
+}
+
+/**
+ * The one open workspace that is a repo's own checkout, per machine and repo path (issue #743).
  *
- * `isolatedKey` is the device's stored isolate key (`workspacePrefKey`: machine, session and the
+ * A repo has a root only when EXACTLY ONE open non-worktree workspace on that machine holds it.
+ * With two (the same repo opened twice), no worktree can say which one it belongs to, so there is no
+ * root: nothing folds and nothing nests, and every worktree stays its own group, as before 1.24.2.
+ * Every view that folds a worktree (the pane list, the isolate keys, the Spaces rows) asks this one
+ * helper, so they cannot disagree about the root.
+ */
+export function uniqueRootByRepo(
+  workspaces: readonly WorkspaceView[],
+): Map<string, WorkspaceView> {
+  const roots = new Map<string, WorkspaceView>();
+  const doubled = new Set<string>();
+  for (const w of workspaces) {
+    if (w.repoRoot === undefined || w.isWorktree !== false) continue;
+    const key = repoRootKey(w);
+    if (roots.has(key)) {
+      doubled.add(key);
+      continue;
+    }
+    roots.set(key, w);
+  }
+  for (const key of doubled) roots.delete(key);
+  return roots;
+}
+
+/**
+ * The spaces the Spaces section lists while the workspace filter isolates workspaces (issue #338; it
+ * holds several since issue #527).
+ *
+ * `isolatedKeys` are the device's stored isolate keys (`workspacePrefKey`: machine, session and the
  * workspace NAME, separated by NUL). The match is on machine and name, because the id is opaque and
- * can change. The isolated space stays, and so do the linked worktrees of its repo when it is the
+ * can change. Each isolated space stays, and so do the linked worktrees of its repo when it is the
  * repo's own checkout, since those are the same project's spaces. Isolating a worktree keeps just
- * that worktree. A null key, or a key no space here matches (a stale isolate, or one on another
- * machine than the addressed one), returns every space, the same rule the pane list follows.
+ * that worktree. The spaces keep their incoming order. No key, or no key that a space here matches (a
+ * stale isolate, or one on another machine than the addressed one), returns every space, the same
+ * rule the pane list follows; a stale key beside a live one is ignored.
  */
 export function isolateSpaces(
   workspaces: readonly WorkspaceView[],
-  isolatedKey: string | null,
+  isolatedKeys: readonly string[],
 ): WorkspaceView[] {
-  if (isolatedKey === null) return [...workspaces];
-  const parts = isolatedKey.split("\u0000");
-  const label = parts[parts.length - 1];
-  const host = parts[0];
-  const match = workspaces.find((w) => w.label === label && (w.host ?? "") === host);
-  if (match === undefined) return [...workspaces];
-  const ownCheckout = match.repoRoot !== undefined && match.isWorktree === false;
-  return workspaces.filter(
-    (w) =>
-      w === match ||
-      (ownCheckout && w.isWorktree === true && w.repoRoot === match.repoRoot && (w.host ?? "") === host),
+  const matches = isolatedKeys.flatMap((key) => {
+    const parts = key.split("\u0000");
+    const label = parts[parts.length - 1];
+    const host = parts[0];
+    const match = workspaces.find((w) => w.label === label && (w.host ?? "") === host);
+    return match === undefined ? [] : [{ match, host }];
+  });
+  if (matches.length === 0) return [...workspaces];
+  const roots = uniqueRootByRepo(workspaces);
+  return workspaces.filter((w) =>
+    matches.some(
+      ({ match, host }) =>
+        w === match ||
+        (match.repoRoot !== undefined &&
+          w.isWorktree === true &&
+          w.repoRoot === match.repoRoot &&
+          (w.host ?? "") === host &&
+          roots.get(repoRootKey(match)) === match),
+    ),
   );
 }
 
@@ -180,29 +226,25 @@ export interface SpaceRow {
  * every caller today; this function only regroups, never re-sorts.
  */
 export function nestWorktrees(ordered: readonly WorkspaceView[]): SpaceRow[] {
-  // Only a space that IS the repo's own checkout can be a parent (`isWorktree === false`).
-  const parentByRepo = new Map<string, WorkspaceView>();
-  for (const space of ordered) {
-    if (space.repoRoot !== undefined && space.isWorktree === false) {
-      parentByRepo.set(space.repoRoot, space);
-    }
-  }
+  // Only a space that IS the repo's own checkout can be a parent (`isWorktree === false`), and only
+  // when it is the only one on its machine for that repo (issue #743). Keyed by machine and path.
+  const parentByRepo = uniqueRootByRepo(ordered);
 
   const childrenByParent = new Map<string, WorkspaceView[]>();
   for (const space of ordered) {
     if (space.repoRoot === undefined || space.isWorktree !== true) continue;
-    const parent = parentByRepo.get(space.repoRoot);
+    const parent = parentByRepo.get(repoRootKey(space));
     if (parent === undefined) continue; // orphan — rendered flat, below
-    const kin = childrenByParent.get(parent.workspaceId) ?? [];
+    const kin = childrenByParent.get(spaceKey(parent.host, parent.workspaceId)) ?? [];
     kin.push(space);
-    childrenByParent.set(parent.workspaceId, kin);
+    childrenByParent.set(spaceKey(parent.host, parent.workspaceId), kin);
   }
 
   const rows: SpaceRow[] = [];
   const placed = new Set<string>();
   for (const space of ordered) {
     if (placed.has(space.workspaceId)) continue;
-    const kin = childrenByParent.get(space.workspaceId);
+    const kin = childrenByParent.get(spaceKey(space.host, space.workspaceId));
     // A parent reached through its own position, or dragged up here by a child that came first.
     if (kin !== undefined) {
       rows.push({ space, depth: 0 });
@@ -215,11 +257,11 @@ export function nestWorktrees(ordered: readonly WorkspaceView[]): SpaceRow[] {
     }
     // A child met before its parent: emit the whole group HERE, at the child's (fresher) position.
     if (space.repoRoot !== undefined && space.isWorktree === true) {
-      const parent = parentByRepo.get(space.repoRoot);
+      const parent = parentByRepo.get(repoRootKey(space));
       if (parent !== undefined && !placed.has(parent.workspaceId)) {
         rows.push({ space: parent, depth: 0 });
         placed.add(parent.workspaceId);
-        for (const child of childrenByParent.get(parent.workspaceId) ?? []) {
+        for (const child of childrenByParent.get(spaceKey(parent.host, parent.workspaceId)) ?? []) {
           rows.push({ space: child, depth: 1 });
           placed.add(child.workspaceId);
         }
@@ -230,4 +272,54 @@ export function nestWorktrees(ordered: readonly WorkspaceView[]): SpaceRow[] {
     placed.add(space.workspaceId);
   }
   return rows;
+}
+
+/**
+ * The repository's name: the last segment of the space's `repoRoot`, on a posix or a Windows path,
+ * or `null` when the space has no repo root. Display only; the bridge sends no separate name.
+ */
+export function repoNameOf(space: Pick<WorkspaceView, "repoRoot">): string | null {
+  const root = space.repoRoot;
+  if (root === undefined) return null;
+  return root.split(/[\\/]/).findLast((part) => part !== "") ?? null;
+}
+
+/**
+ * The space a pane sits in, joined on `(host, workspaceId)` as `paneInRepo` joins it (a space id is
+ * unique only within one machine), or `undefined` when the snapshot lists no such space.
+ */
+export function paneSpace(
+  pane: Pick<AgentView, "host" | "workspaceId">,
+  workspaces: readonly WorkspaceView[] | undefined,
+): WorkspaceView | undefined {
+  if (workspaces === undefined) return undefined;
+  const key = paneSpaceKey(pane);
+  return workspaces.find((w) => spaceKey(w.host, w.workspaceId) === key);
+}
+
+/** The three parts of a worktree space's second line; `null` is a part left out. */
+export interface WorktreeContext {
+  readonly repo: string | null;
+  readonly head: GitHead | null;
+  readonly base: string | null;
+}
+
+/**
+ * What a worktree space's second line says: its repo, its branch and the base it was cut from
+ * (M81 spec 06). The space's own label is its folder, the branch slug, which on its own names none
+ * of the three.
+ *
+ * Each part is `null` when it is not known, and is then left out, never drawn as a placeholder.
+ * `repo` is `null` too for a NESTED row (`depth: 1`), because the row above already is the repo.
+ * Answers `null` for a space that is not a worktree, and for one with nothing at all to say, so such
+ * a row draws exactly what it drew before. Both fields may come from a crew member, so a head is read
+ * through `paneGitHead` (which drops a malformed one) and an empty base counts as none.
+ */
+export function spaceWorktreeContext(space: WorkspaceView, nested: boolean): WorktreeContext | null {
+  if (space.isWorktree !== true) return null;
+  const repo = nested ? null : repoNameOf(space);
+  const head = paneGitHead(space);
+  const base = space.base === undefined || space.base === "" ? null : space.base;
+  if (repo === null && head === null && base === null) return null;
+  return { repo, head, base };
 }

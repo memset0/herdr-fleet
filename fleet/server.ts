@@ -1,3 +1,4 @@
+import { FLEET_HTTP_IDLE_SECONDS } from "./send-patience.ts";
 import type { FleetLeadConfig } from "./config.ts";
 import { createGatewayHandler, type GatewayOptions, type TerminalUpgrade } from "./gateway.ts";
 import { NOTICE, type BrowserSocket, type TerminalConnection } from "./terminal/connection.ts";
@@ -35,6 +36,7 @@ export function startGateway(options: FleetServerOptions): FleetGatewayServer {
   const config: FleetLeadConfig = options.config;
   const terminal = options.terminal;
   return Bun.serve<TerminalSocketData>({
+    idleTimeout: FLEET_HTTP_IDLE_SECONDS,
     hostname: config.listen.host,
     port: config.listen.port,
     maxRequestBodySize: 10 * 1024 * 1024,

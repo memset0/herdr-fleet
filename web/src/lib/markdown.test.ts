@@ -1,5 +1,6 @@
 import {
   classifyHref,
+  findBareUrls,
   headingAnchors,
   headingSlug,
   MAX_DOCUMENT_IMAGES,
@@ -256,14 +257,73 @@ describe("parseMarkdown", () => {
     expect(blocks[1]).toMatchObject({ ordered: true });
   });
 
+  // An indented bullet under a numbered option ends the list (blocks don't nest), so the next
+  // option opens a new one. It keeps its own number, or every option draws as "1.".
+  it("an ordered list keeps the number its first item was written with", () => {
+    const blocks = parseMarkdown("1. **push** ← recommended\n   - why\n2. fix first\n3) or wait");
+    expect(blocks.map((b) => b.kind)).toEqual(["list", "list", "list"]);
+    expect(blocks[0]).toMatchObject({ ordered: true, start: 1 });
+    expect(blocks[1]).toMatchObject({ ordered: false });
+    expect(blocks[1]).not.toHaveProperty("start");
+    expect(blocks[2]).toMatchObject({ ordered: true, start: 2 });
+    // SAFETY: the line above pinned `blocks[2]` as an ordered list block, which carries `items`.
+    expect((blocks[2] as { items: unknown[] }).items).toHaveLength(2);
+  });
+
   it("reads a rule as a rule, not a bullet", () => {
     expect(parseMarkdown("---")).toEqual([{ kind: "rule" }]);
   });
 
   it("joins a multi-line blockquote", () => {
     expect(parseMarkdown("> one\n> two")).toEqual([
-      { kind: "quote", spans: [{ kind: "text", text: "one two" }] },
+      { kind: "quote", blocks: [{ kind: "paragraph", spans: [{ kind: "text", text: "one two" }] }] },
     ]);
+  });
+
+  it("keeps a list and its paragraphs apart inside a blockquote", () => {
+    // The shape Claude quotes a PR body in: a lead line, a bold label, then bullets.
+    const src = [
+      "> Renames the settings page.",
+      ">",
+      "> **Changes**",
+      "> - `settings-page` added",
+      "> - old route removed",
+    ].join("\n");
+    expect(parseMarkdown(src)).toEqual([
+      {
+        kind: "quote",
+        blocks: [
+          { kind: "paragraph", spans: [{ kind: "text", text: "Renames the settings page." }] },
+          { kind: "paragraph", spans: [{ kind: "bold", spans: [{ kind: "text", text: "Changes" }] }] },
+          {
+            kind: "list",
+            ordered: false,
+            items: [
+              [{ kind: "code", text: "settings-page" }, { kind: "text", text: " added" }],
+              [{ kind: "text", text: "old route removed" }],
+            ],
+          },
+        ],
+      },
+    ]);
+  });
+
+  it("reads a table and a nested quote inside a blockquote", () => {
+    const [quote] = parseMarkdown("> | a | b |\n> |---|---|\n> | 1 | 2 |\n>\n> > inner");
+    expect(quote).toMatchObject({ kind: "quote", blocks: [{ kind: "table" }, { kind: "quote" }] });
+  });
+
+  it("stops nesting quotes at a bound and reads the rest as text", () => {
+    const deep = `${"> ".repeat(100)}bottom`;
+    let block = parseMarkdown(deep)[0];
+    let depth = 0;
+    while (block?.kind === "quote") {
+      depth++;
+      block = block.blocks[0];
+    }
+    expect(depth).toBe(4);
+    expect(block).toMatchObject({ kind: "paragraph" });
+    expect(spansText(block?.kind === "paragraph" ? block.spans : [])).toContain("bottom");
   });
 
   it("handles a realistic agent message end to end", () => {
@@ -716,5 +776,24 @@ describe("image spans, for a screen that asks for them (ADR 0090)", () => {
 
   it("an image's text, for a heading's anchor, is its alt", () => {
     expect(spansText([{ kind: "text", text: "a " }, { kind: "image", alt: "logo", src: "l.png" }])).toBe("a logo");
+  });
+});
+
+describe("findBareUrls", () => {
+  it("finds an address by the prose rule: a dotless host counts, closing punctuation does not", () => {
+    expect(findBareUrls("go http://bluefin:8788, then (https://a.dev/x).")).toEqual([
+      { start: 3, end: 22, href: "http://bluefin:8788" },
+      { start: 30, end: 45, href: "https://a.dev/x" },
+    ]);
+  });
+
+  it("finds nothing in text with no scheme, and no second match inside a word", () => {
+    expect(findBareUrls("www.example.com bluefin:8788 xhttp://a.b")).toEqual([]);
+  });
+
+  it("agrees with the parser on what prose links", () => {
+    const prose = "see http://bluefin:8788/a?b=1.";
+    const linked = parseInline(prose).find((s) => s.kind === "link");
+    expect(linked?.kind === "link" && linked.href).toBe(findBareUrls(prose)[0]!.href);
   });
 });

@@ -4,7 +4,7 @@ import { NO_CURSOR } from "../journal/cursor.ts";
 import { NO_CHANGE, noQueue, noUnknowns } from "../journal/reduce.ts";
 import type { AgentSessionRef, JournalAdapter, TranscriptSource } from "../journal/types.ts";
 import type { AgentView } from "../types.ts";
-import type { CacheProbe, CacheOverride } from "./engine.ts";
+import type { CacheProbe, CacheOverride, ChoiceOnly } from "./engine.ts";
 import { CacheTracker, type CacheRuleSource } from "./tracker.ts";
 
 // The tracker on a FAKE CLOCK and a fake filesystem. Nothing here opens a file: `floorMs` and
@@ -618,6 +618,63 @@ test("a subscription-tier probe takes the longer claude rule", async () => {
 });
 
 describe("the model label", () => {
+  test("a session with no turn names the /model chosen before its first message, with the record's time", async () => {
+    const c = clock();
+    const { adapter, state } = fakeAdapter("claude");
+    // Claude Code writes the `/model` record with no turn in the log (seen on 2.1.310).
+    let choices: ChoiceOnly | null = null;
+    const withChoices: JournalAdapter = { ...adapter, choiceProbe: async () => choices };
+    const tracker = new CacheTracker({ claude: withChoices }, noOverrides, c.now, { floorMs: 1000 });
+    await tracker.refresh([pane("claude", "ses-1")]);
+    expect(tracker.model("ses-1")).toBeUndefined();
+
+    c.advance(2000);
+    state.stat = { size: 20, mtimeMs: 200 };
+    choices = { selectedModel: "Opus 5.5", selectedModelAt: NOW - 5000, effort: "high" };
+    await tracker.refresh([pane("claude", "ses-1")]);
+    expect(tracker.modelReading("ses-1")).toEqual({ model: "Opus 5.5", at: NOW - 5000 });
+    expect(tracker.effort("ses-1")).toBe("high");
+    // It says nothing about the cache.
+    expect(tracker.get("ses-1")).toBeUndefined();
+
+    // The first turn takes over, at the turn's own time.
+    c.advance(2000);
+    state.stat = { size: 30, mtimeMs: 300 };
+    state.probe = probe({ model: "claude-opus-5-5", lastRequestAt: NOW - 1000 });
+    await tracker.refresh([pane("claude", "ses-1")]);
+    expect(tracker.modelReading("ses-1")).toEqual({ model: "claude-opus-5-5", at: NOW - 1000 });
+  });
+
+  test("a /model after the turn is read at the time of its own record", async () => {
+    const { adapter, state } = fakeAdapter("claude");
+    state.probe = probe({ model: "claude-opus-5-5", lastRequestAt: NOW - 9000, selectedModel: "Sonnet 5.5", selectedModelAt: NOW - 3000 });
+    const tracker = new CacheTracker({ claude: adapter }, noOverrides, () => NOW);
+    await tracker.refresh([pane("claude", "ses-1")]);
+    expect(tracker.modelReading("ses-1")).toEqual({ model: "Sonnet 5.5", at: NOW - 3000 });
+  });
+
+  test("a choice probe that fails, or a turn in the window, is not asked or names nothing", async () => {
+    const { adapter, state } = fakeAdapter("claude");
+    let asked = 0;
+    const throwing: JournalAdapter = {
+      ...adapter,
+      choiceProbe: async () => {
+        asked++;
+        throw new Error("unreadable");
+      },
+    };
+    const tracker = new CacheTracker({ claude: throwing }, noOverrides, () => NOW);
+    await tracker.refresh([pane("claude", "ses-1")]);
+    expect(asked).toBe(1);
+    expect(tracker.model("ses-1")).toBeUndefined();
+
+    state.probe = probe({ model: "claude-opus-5-5" });
+    const second = new CacheTracker({ claude: throwing }, noOverrides, () => NOW);
+    await second.refresh([pane("claude", "ses-2")]);
+    expect(asked).toBe(1);
+    expect(second.model("ses-2")).toBe("claude-opus-5-5");
+  });
+
   test("is the /model chosen since the last turn first, else the turn's own model", async () => {
     const c = clock();
     const { adapter, state } = fakeAdapter("claude");
@@ -720,5 +777,110 @@ describe("the model label", () => {
     const tracker = new CacheTracker({ claude: adapter }, noOverrides, () => NOW);
     await tracker.refresh([pane("claude", "ses-1")]);
     expect(tracker.model("ses-1")).toHaveLength(80);
+  });
+});
+
+// The context the probe read (.adr/0115, amended 2026-10-25): kept beside the model, with the same
+// owner and the same reap, for bridge/usage.ts to turn into the context dot.
+describe("the context reading", () => {
+  test("a probe's tokens and window are kept; a read with no turn keeps them", async () => {
+    const c = clock();
+    const { adapter, state } = fakeAdapter("codex");
+    state.probe = probe({ contextTokens: 17_345, contextWindow: 258_400 });
+    const tracker = new CacheTracker({ codex: adapter }, noOverrides, c.now, { floorMs: 1000 });
+    await tracker.refresh([pane("codex", "ses-1")]);
+    expect(tracker.context("ses-1")).toMatchObject({ tokens: 17_345, window: 258_400 });
+
+    c.advance(2000);
+    state.stat = { size: 20, mtimeMs: 200 };
+    state.probe = null;
+    await tracker.refresh([pane("codex", "ses-1")]);
+    expect(tracker.context("ses-1")?.tokens).toBe(17_345);
+  });
+
+  test("a probe that read a turn and named no tokens (a compaction after it) drops the reading", async () => {
+    const c = clock();
+    const { adapter, state } = fakeAdapter("pi");
+    state.probe = probe({ contextTokens: 900 });
+    const tracker = new CacheTracker({ pi: adapter }, noOverrides, c.now, { floorMs: 1000 });
+    await tracker.refresh([pane("pi", "ses-1")]);
+    expect(tracker.context("ses-1")).toMatchObject({ tokens: 900 });
+    expect(tracker.context("ses-1")?.window).toBeUndefined();
+
+    c.advance(2000);
+    state.stat = { size: 20, mtimeMs: 200 };
+    state.probe = probe({ turnId: "turn-1" });
+    await tracker.refresh([pane("pi", "ses-1")]);
+    expect(tracker.context("ses-1")).toBeUndefined();
+  });
+
+  test("a count or window that is not a finite positive number is no reading", async () => {
+    const { adapter, state } = fakeAdapter("codex");
+    state.probe = probe({ contextTokens: 100, contextWindow: Number.NaN });
+    const tracker = new CacheTracker({ codex: adapter }, noOverrides, () => NOW);
+    await tracker.refresh([pane("codex", "ses-1")]);
+    expect(tracker.context("ses-1")?.window).toBeUndefined();
+
+    state.probe = probe({ contextTokens: -5 });
+    const second = new CacheTracker({ codex: adapter }, noOverrides, () => NOW);
+    await second.refresh([pane("codex", "ses-2")]);
+    expect(second.context("ses-2")).toBeUndefined();
+  });
+
+  test("is reaped with the pane, by the poll of the session that owns it", async () => {
+    const { adapter, state } = fakeAdapter("codex");
+    state.probe = probe({ contextTokens: 100, contextWindow: 1000 });
+    const tracker = new CacheTracker({ codex: adapter }, noOverrides, () => NOW);
+    await tracker.refresh([pane("codex", "ses-1")], { session: "main" });
+    await tracker.refresh([], { session: "work" });
+    expect(tracker.context("ses-1")).toBeDefined();
+    await tracker.refresh([], { session: "main" });
+    expect(tracker.context("ses-1")).toBeUndefined();
+  });
+});
+
+// The session cost the probe summed: kept beside the context, same owner and reap, for bridge/usage.ts.
+describe("the cost reading", () => {
+  test("a probe's cost is kept, replaced by a newer sum, and kept when a read names none", async () => {
+    const c = clock();
+    const { adapter, state } = fakeAdapter("pi");
+    state.probe = probe({ costUsd: 0.11 });
+    const tracker = new CacheTracker({ pi: adapter }, noOverrides, c.now, { floorMs: 1000 });
+    await tracker.refresh([pane("pi", "ses-1")]);
+    expect(tracker.cost("ses-1")).toBe(0.11);
+
+    c.advance(2000);
+    state.stat = { size: 20, mtimeMs: 200 };
+    state.probe = probe({ turnId: "turn-1", costUsd: 0.2 });
+    await tracker.refresh([pane("pi", "ses-1")]);
+    expect(tracker.cost("ses-1")).toBe(0.2);
+
+    c.advance(2000);
+    state.stat = { size: 30, mtimeMs: 300 };
+    state.probe = probe({ turnId: "turn-2" });
+    await tracker.refresh([pane("pi", "ses-1")]);
+    expect(tracker.cost("ses-1")).toBe(0.2);
+  });
+
+  test("a harness that states none has none, and a bad number is no reading", async () => {
+    const { adapter, state } = fakeAdapter("codex");
+    state.probe = probe({});
+    const tracker = new CacheTracker({ codex: adapter }, noOverrides, () => NOW);
+    await tracker.refresh([pane("codex", "ses-1")]);
+    expect(tracker.cost("ses-1")).toBeUndefined();
+    state.probe = probe({ costUsd: Number.NaN });
+    await tracker.refresh([pane("codex", "ses-2")]);
+    expect(tracker.cost("ses-2")).toBeUndefined();
+  });
+
+  test("is reaped with the pane, by the poll of the session that owns it", async () => {
+    const { adapter, state } = fakeAdapter("pi");
+    state.probe = probe({ costUsd: 1 });
+    const tracker = new CacheTracker({ pi: adapter }, noOverrides, () => NOW);
+    await tracker.refresh([pane("pi", "ses-1")], { session: "main" });
+    await tracker.refresh([], { session: "work" });
+    expect(tracker.cost("ses-1")).toBe(1);
+    await tracker.refresh([], { session: "main" });
+    expect(tracker.cost("ses-1")).toBeUndefined();
   });
 });

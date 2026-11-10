@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, spyOn, test } from "bun:test";
 
 import { createHash } from "node:crypto";
 import { join } from "node:path";
@@ -7,14 +7,18 @@ import { HOST } from "../bridge/host.ts";
 import { managedSettingsPath } from "./hold-entry.ts";
 
 import { parseBeacon, parseEdge } from "../bridge/beacon/parse.ts";
+import { parseUsageRecord, usageFileName } from "../bridge/usage.ts";
+import { readTail, TAIL_BYTES, windowFromModel } from "./context-reading.ts";
 import { beaconFileName, beaconKey, EDGE_FILE, EDGE_MAX_AGE_MS, EDGE_SPOOL_MAX } from "../bridge/beacon/paths.ts";
 import { hookTargetFileName } from "../bridge/beacon/hook-targets.ts";
 import { BEACON_SCHEMA_VERSION, type EdgeRecord } from "../bridge/beacon/types.ts";
-import { BEACON_HARNESS, BEACON_HOOKS, type BeaconEmitDeps, cmdBeaconEmit, readEnvMarkers, runBeaconEmit, unwrapPrompt } from "./beacon.ts";
+import { parseLstart, PS_LSTART, type StartTimeCommand } from "../bridge/beacon/liveness.ts";
+import { HERDR_CORE_MUX } from "../bridge/mux/herdr-core/adapter.ts";
+import { agentPidOf, BEACON_HARNESS, BEACON_HOOKS, HERDR_CORE_NAMESPACE, type BeaconEmitDeps, cmdBeaconEmit, liveHookTargets, type PidProbeDeps, parsePsProcess, parseProcStatProcess, type ProcessInfo, readEnvMarkers, runBeaconEmit, unwrapPrompt } from "./beacon.ts";
 import { context, fakeFiles, HOME, STATE } from "./fakes.ts";
 import { EXIT } from "./io.ts";
 import type { Environment } from "./context.ts";
-import type { JsonObject } from "../bridge/json.ts";
+import type { JsonObject, JsonValue } from "../bridge/json.ts";
 
 // `collie beacon emit`. Everything here is driven through the two seams (`cli/sys.ts`), so no test
 // reads a real `/proc`, writes a real state dir, or touches stdin.
@@ -44,7 +48,7 @@ function payload(over: JsonObject = {}): string {
 }
 
 function deps(
-  over: { env?: Environment; stdin?: string; proc?: string | null; pid?: number } = {},
+  over: { env?: Environment; stdin?: string; proc?: string | null; pid?: number; pidProbe?: PidProbeDeps } = {},
 ): BeaconEmitDeps & { files: ReturnType<typeof fakeFiles> } {
   const files = fakeFiles(over.proc === null ? {} : { [PROC]: over.proc ?? STAT });
   return {
@@ -54,6 +58,8 @@ function deps(
     agentPid: over.pid ?? AGENT_PID,
     now: () => 1_700_000_000_000,
     uid: 1000,
+    // Linux's probe unless a test names another, so no run of this file forks `ps`, on a Mac either.
+    pidProbe: over.pidProbe ?? { platform: "linux" },
   };
 }
 
@@ -92,6 +98,112 @@ describe("the environment gate", () => {
 
   test("a plain terminal has nothing at all", () => {
     expect(readEnvMarkers({ HOME: "/home/pat" })).toEqual([]);
+  });
+});
+
+// herdr-core (M74 spec 04): the core exports the terminal's address and its own socket into every
+// terminal it runs. Probed 2026-10-29 on hc 0.1.14: HC_TERMINAL_ID=t1 and HC_TERMINAL_SOCKET, which
+// stays the core's own path when HC_SOCKET names another one.
+describe("a herdr-core terminal", () => {
+  const CORE: Environment = { HC_TERMINAL_ID: "t3", HC_TERMINAL_SOCKET: "/run/user/1000/herdr-core/default.sock" };
+
+  test("the namespace is the adapter's registry key", () => {
+    expect(HERDR_CORE_NAMESPACE).toBe(HERDR_CORE_MUX);
+  });
+
+  test("the address is the pane and the core's socket is the scope, raw", () => {
+    expect(readEnvMarkers(CORE)).toEqual([{ namespace: "herdr-core", scope: "/run/user/1000/herdr-core/default.sock", pane: "t3" }]);
+  });
+
+  test("a terminal without the socket variable, or with only HC_SESSION, carries no marker", () => {
+    expect(readEnvMarkers({ HC_TERMINAL_ID: "t3" })).toEqual([]);
+    expect(readEnvMarkers({ HC_SESSION: "work", HC_SOCKET: "/x.sock" })).toEqual([]);
+  });
+
+  test("a core terminal started inside the Herdr TUI carries both markers, each naming its own", () => {
+    const both = readEnvMarkers({ ...CORE, HERDR_PANE_ID: "w6Y:pG", HERDR_SOCKET_PATH: "/home/pat/.config/herdr/herdr.sock" });
+    expect(both.map((m) => m.namespace)).toEqual(["herdr", "herdr-core"]);
+  });
+
+  test("the emitter writes a beacon keyed by the core terminal, with the session id", async () => {
+    const d = deps({ env: CORE });
+    expect(await cmdBeaconEmit(d)).toBe(EXIT.OK);
+    const [text] = [...beacons(d.files).values()];
+    const record = parseBeacon(text ?? "");
+    expect(record?.markers).toEqual([{ namespace: "herdr-core", scope: "/run/user/1000/herdr-core/default.sock", pane: "t3" }]);
+    expect(record?.session).toEqual({ kind: "id", value: SESSION });
+  });
+});
+
+// macOS has no `/proc` (M80 spec 11, issue 647): the start time comes from one `ps -o lstart=` run,
+// injected here, so no test forks a process.
+describe("on macOS, the probe is ps lstart", () => {
+  const CORE: Environment = { HC_TERMINAL_ID: "t3", HC_TERMINAL_SOCKET: "/Users/pat/.local/state/herdr-core/default.sock" };
+  const LSTART = "Mon Nov  2 10:15:33 2026\n";
+
+  /** A `ps` that knows the agent alone; every call is recorded as its argv and its environment. */
+  function fakePs(answers: Record<number, string | null> = { [AGENT_PID]: LSTART }) {
+    const calls: { argv: string[]; env: Readonly<Record<string, string>> }[] = [];
+    const run = (command: StartTimeCommand, pid: number): string | null => {
+      calls.push({ argv: [command.file, ...command.args(pid)], env: command.env });
+      return answers[pid] ?? null;
+    };
+    return { calls, run };
+  }
+
+  test("a herdr-core pane gets its edge and its beacon, carrying the lstart time", async () => {
+    const ps = fakePs();
+    const d = deps({ env: CORE, proc: null, pidProbe: { platform: "darwin", run: ps.run } });
+    expect(await cmdBeaconEmit(d)).toBe(EXIT.OK);
+    const [text, ...more] = [...beacons(d.files).values()];
+    expect(more).toEqual([]);
+    const record = parseBeacon(text ?? "");
+    expect(record?.session).toEqual({ kind: "id", value: SESSION });
+    expect(record?.pid).toBe(AGENT_PID);
+    expect(record?.pidStartTime).toBe(parseLstart(LSTART)!);
+    const edges = [...d.files.entries].filter(([path]) => path.startsWith(`${STATE}/edges/`) && EDGE_FILE.test(path.slice(`${STATE}/edges/`.length)));
+    expect(edges.map(([, entry]) => parseEdge(entry.text)?.pidStartTime)).toEqual([parseLstart(LSTART)!]);
+    expect(ps.calls).toEqual([{ argv: ["/bin/ps", "-o", "lstart=", "-p", String(AGENT_PID)], env: PS_LSTART.env }]);
+    expect(ps.calls[0]?.env.LC_ALL).toBe("C");
+  });
+
+  test("a ps that answers nothing (the agent is gone, or ps failed) writes nothing, and exits 0", async () => {
+    for (const answer of [null, "", "not a date"]) {
+      const d = deps({ env: CORE, proc: null, pidProbe: { platform: "darwin", run: fakePs({ [AGENT_PID]: answer }).run } });
+      expect(await cmdBeaconEmit(d)).toBe(EXIT.OK);
+      expect(d.files.entries.size).toBe(0);
+    }
+  });
+
+  test("a registered bridge is a live target while ps returns its stored start, and dead once it differs", () => {
+    const REGISTRY = `${HOME}/.local/state/collie/hook-targets`;
+    const BRIDGE = 5001;
+    const d = deps({ env: CORE, proc: null, pidProbe: { platform: "darwin", run: fakePs({ [BRIDGE]: LSTART }).run } });
+    const file = `${REGISTRY}/${hookTargetFileName("/srv/a")}`;
+    const register = (start: number) =>
+      d.files.write(file, JSON.stringify({ schemaVersion: 1, stateDir: "/srv/a", pid: BRIDGE, pidStartTime: start, bootedAt: 1 }), 0o600);
+    d.files.mkdirp(REGISTRY, 0o700);
+    register(parseLstart(LSTART)!);
+    expect(liveHookTargets(d).map((t) => t.stateDir)).toEqual(["/srv/a"]);
+    register(parseLstart(LSTART)! - 1);
+    expect(liveHookTargets(d)).toEqual([]);
+    expect(d.files.read(file)).toBeNull();
+  });
+
+  test("Windows has no probe: nothing is written and nothing is run", async () => {
+    const ps = fakePs();
+    const d = deps({ env: CORE, proc: null, pidProbe: { platform: "win32", run: ps.run } });
+    expect(await cmdBeaconEmit(d)).toBe(EXIT.OK);
+    expect(d.files.entries.size).toBe(0);
+    expect(ps.calls).toEqual([]);
+  });
+
+  test("Linux never runs ps: a pid with no stat file has no start time", async () => {
+    const ps = fakePs();
+    const d = deps({ env: CORE, proc: null, pidProbe: { platform: "linux", run: ps.run } });
+    expect(await cmdBeaconEmit(d)).toBe(EXIT.OK);
+    expect(beacons(d.files).size).toBe(0);
+    expect(ps.calls).toEqual([]);
   });
 });
 
@@ -264,6 +376,50 @@ describe("it never fails, and it never speaks", () => {
     const d = { ...deps(), readStdin: () => Promise.reject(new Error("EIO")) };
     expect(await cmdBeaconEmit(d)).toBe(EXIT.OK);
   });
+
+  test("the context reading's failures print nothing and exit 0", async () => {
+    const root = join(HOME, ".claude");
+    const transcript = join(root, "projects", "-x", "y.jsonl");
+    const spoken: string[] = [];
+    const listen = (...args: unknown[]): boolean => {
+      spoken.push(args.map(String).join(" "));
+      return true;
+    };
+    const spies = [
+      spyOn(process.stdout, "write").mockImplementation(listen),
+      spyOn(process.stderr, "write").mockImplementation(listen),
+      ...(["log", "error", "warn", "info", "debug"] as const).map((name) => spyOn(console, name).mockImplementation(listen)),
+    ];
+    try {
+      const boom = (): never => {
+        throw new Error("EIO: i/o error");
+      };
+      type Files = BeaconEmitDeps["files"];
+      const cases: [string, string, (files: Files) => Partial<Files>][] = [
+        ["a relative path", "y.jsonl", () => ({})],
+        ["a path that is not .jsonl", join(root, "projects", "-x", "y.txt"), () => ({})],
+        ["a path outside the config root", "/etc/passwd.jsonl", () => ({})],
+        ["a missing file", join(root, "projects", "-x", "gone.jsonl"), () => ({})],
+        ["an unreadable file", transcript, () => ({ tail: () => null })],
+        ["a read that throws", transcript, () => ({ tail: boom })],
+        ["a realpath that throws", transcript, () => ({ realpath: boom })],
+        ["a type check that throws", transcript, () => ({ entryType: boom })],
+        ["a usage read that throws", transcript, (files) => ({ read: (p: string) => (p.includes("/usage/") ? boom() : files.read(p)) })],
+        ["a usage write that throws", transcript, () => ({ write: boom, rename: boom })],
+      ];
+      for (const [what, path, broken] of cases) {
+        for (const event of ["Stop", "PostToolUse", "SessionStart"]) {
+          const d = deps({ stdin: payload({ hook_event_name: event, transcript_path: path, source: "resume", model: "m[1m]", context_tokens: 5, tool_name: "Bash" }) });
+          d.files.write(transcript, `${JSON.stringify({ type: "assistant", message: { model: "m", usage: { input_tokens: 5 } } })}\n`);
+          const run = { ...d, files: { ...d.files, ...broken(d.files) } };
+          expect(`${what} ${event}: ${await cmdBeaconEmit(run)}`).toBe(`${what} ${event}: ${EXIT.OK}`);
+        }
+      }
+    } finally {
+      for (const spy of spies) spy.mockRestore();
+    }
+    expect(spoken).toEqual([]);
+  });
 });
 
 describe("the hook edges it writes (M56 spec 11)", () => {
@@ -340,6 +496,32 @@ describe("the hook edges it writes (M56 spec 11)", () => {
     expect(await run({ [userFile]: HOLD_ENTRY, [managedSettingsPath(HOST.platform)]: '{"allowManagedHooksOnly":true}' })).toBeUndefined();
     expect(await run({ [userFile]: HOLD_ENTRY, [managedSettingsPath(HOST.platform)]: '{"disableAllHooks":true}' })).toBeUndefined();
     expect(await run({})).toBeUndefined();
+  });
+
+  test("a start edge carries the model the start names, so a fresh pane names it before its first message", async () => {
+    const run = async (event: string, model: JsonValue | undefined): Promise<EdgeRecord | undefined> => {
+      const d = deps({ stdin: payload({ hook_event_name: event, source: "startup", model }) });
+      expect(await cmdBeaconEmit(d)).toBe(EXIT.OK);
+      const [edge, ...rest] = edges(d.files);
+      expect(rest).toEqual([]);
+      return edge;
+    };
+    // As Claude Code 2.1.310 sends it, with and without the 1M window tag.
+    expect((await run("SessionStart", "claude-sonnet-5-5"))?.model).toBe("claude-sonnet-5-5");
+    expect((await run("SessionStart", "claude-opus-5-5[1m]"))?.model).toBe("claude-opus-5-5[1m]");
+    // Absent (`claude -p` sends none): the edge goes out without the field.
+    const absent = await run("SessionStart", undefined);
+    expect(absent?.event).toBe("SessionStart");
+    expect(absent !== undefined && "model" in absent).toBe(false);
+    // Refused whole, never cleaned: too long, a newline (even a trailing one), a control character, not text.
+    for (const bad of ["m".repeat(129), "claude-opus-5-5\n", "opus\n5", "\u001b[1mopus", 7, { id: "opus" }, ""]) {
+      const edge = await run("SessionStart", bad);
+      expect(edge?.event).toBe("SessionStart");
+      expect(edge?.model).toBeUndefined();
+    }
+    expect((await run("SessionStart", "m".repeat(128)))?.model).toHaveLength(128);
+    // Only the start speaks for the model: a prompt edge with one in its payload carries none.
+    expect((await run("UserPromptSubmit", "claude-opus-5-5"))?.model).toBeUndefined();
   });
 
   test("an edge needs no session id: the pid places it", async () => {
@@ -468,6 +650,23 @@ describe("the hook target registry (M56 spec 11)", () => {
     expect(edgesIn(reused.files, STATE)).toHaveLength(1);
   });
 
+  test("records that carry mux, instance and port are read as before: the emitter ignores all three", async () => {
+    const d = withTargets([A, B]);
+    for (const [t, extra] of [[A, { mux: "herdr", instance: "next", port: 8788 }], [B, { mux: "x".repeat(300), instance: 5, port: "no" }]] as const) {
+      d.files.write(`${REGISTRY}/${hookTargetFileName(t.dir)}`, JSON.stringify({ schemaVersion: 1, stateDir: t.dir, pid: t.pid, pidStartTime: t.start, bootedAt: 1, ...extra }), 0o600);
+    }
+    await cmdBeaconEmit(d);
+    expect(edgesIn(d.files, A.dir).map((edge) => edge.promptHash)).toEqual([hash(A.salt)]);
+    expect(edgesIn(d.files, B.dir).map((edge) => edge.promptHash)).toEqual([hash(B.salt)]);
+  });
+
+  test("liveHookTargets returns the live records with their identity, and deletes the dead one's file", () => {
+    const d = withTargets([A, { ...B, alive: false }]);
+    d.files.write(`${REGISTRY}/${hookTargetFileName(A.dir)}`, JSON.stringify({ schemaVersion: 1, stateDir: A.dir, pid: A.pid, pidStartTime: A.start, bootedAt: 1, mux: "tmux", instance: "tmux", port: 8789 }), 0o600);
+    expect(liveHookTargets(d).map((t) => [t.stateDir, t.mux, t.instance, t.port])).toEqual([[A.dir, "tmux", "tmux", 8789]]);
+    expect(d.files.read(`${REGISTRY}/${hookTargetFileName(B.dir)}`)).toBeNull();
+  });
+
   test("no registry: the edge goes to the emitter's own state dir, as before", async () => {
     const d = deps({ stdin: payload({ hook_event_name: "Stop" }) });
     await cmdBeaconEmit(d);
@@ -481,6 +680,48 @@ describe("the hook target registry (M56 spec 11)", () => {
     expect(edgesIn(d.files, STATE)).toHaveLength(1);
   });
 
+  describe("the beacon follows the edge", () => {
+    const beaconsIn = (files: ReturnType<typeof fakeFiles>, dir: string): [string, string][] =>
+      [...files.entries.entries()]
+        .filter(([path]) => path.startsWith(`${dir}/beacons/`) && path.endsWith(".json"))
+        .map(([path, entry]) => [path.slice(`${dir}/beacons/`.length), entry.text]);
+    const sessionOf = (text: string): string | undefined => parseBeacon(text)?.session.value;
+
+    test("two live targets: the beacon lands in both, under one name, carrying the session id", async () => {
+      const d = withTargets([A, B]);
+      await cmdBeaconEmit(d);
+      const inA = beaconsIn(d.files, A.dir);
+      const inB = beaconsIn(d.files, B.dir);
+      expect(inA).toHaveLength(1);
+      expect(inB.map(([name]) => name)).toEqual(inA.map(([name]) => name));
+      expect(inA.map(([, text]) => sessionOf(text))).toEqual([SESSION]);
+      expect(inB.map(([, text]) => sessionOf(text))).toEqual([SESSION]);
+      expect(beaconsIn(d.files, STATE)).toEqual([]);
+    });
+
+    test("no target: the beacon goes to the emitter's own state dir only, as before", async () => {
+      const d = deps();
+      await cmdBeaconEmit(d);
+      expect(beaconsIn(d.files, STATE)).toHaveLength(1);
+      expect(beaconsIn(d.files, A.dir)).toEqual([]);
+    });
+
+    test("one target that cannot be written costs the others neither their beacon nor their edge", async () => {
+      const d = withTargets([A, B]);
+      const mkdirp = d.files.mkdirp.bind(d.files);
+      d.files.mkdirp = (path, mode) => {
+        // The code under test joins with the host separator, so Windows hands this a backslash path.
+        if (path.replaceAll("\\", "/").startsWith(`${A.dir}/beacons`)) throw new Error("EACCES");
+        mkdirp(path, mode);
+      };
+      expect(await cmdBeaconEmit(d)).toBe(EXIT.OK);
+      expect(beaconsIn(d.files, A.dir)).toEqual([]);
+      expect(beaconsIn(d.files, B.dir)).toHaveLength(1);
+      expect(edgesIn(d.files, A.dir)).toHaveLength(1);
+      expect(edgesIn(d.files, B.dir)).toHaveLength(1);
+    });
+  });
+
   test("XDG_STATE_HOME moves the registry", async () => {
     const d = deps({ env: { ...TMUX, XDG_STATE_HOME: "/xdg" }, stdin: payload({ hook_event_name: "Stop" }) });
     d.files.mkdirp("/xdg/collie/hook-targets", 0o700);
@@ -488,5 +729,347 @@ describe("the hook target registry (M56 spec 11)", () => {
     d.files.write(`/proc/${String(A.pid)}/stat`, statOf(A.pid, A.start));
     await cmdBeaconEmit(d);
     expect(edgesIn(d.files, A.dir)).toHaveLength(1);
+  });
+});
+
+describe("the context reading (.adr/0115, amended 2026-10-24)", () => {
+  const ROOT = join(HOME, ".claude");
+  const TRANSCRIPT = join(ROOT, "projects", "-x", "y.jsonl");
+  const USAGE = `${STATE}/usage/${usageFileName(SESSION)}`;
+  const NOW = 1_700_000_000_000;
+
+  const assistant = (usage: JsonObject | string, model = "claude-opus-5-5", extra: JsonObject = {}): string =>
+    JSON.stringify({ type: "assistant", message: { model, usage }, ...extra });
+  const userLine = JSON.stringify({ type: "user", message: { role: "user", content: "hello" } });
+  const tail = JSON.stringify({ type: "system", subtype: "turn_duration", durationMs: 12 });
+  const lines = (...rows: string[]): string => `${rows.join("\n")}\n`;
+
+  /** Run one hook event against a deps whose transcript is `text`, and give back the deps. */
+  async function run(event: string, over: JsonObject = {}, text: string | null = null, setup?: (d: ReturnType<typeof deps>) => void) {
+    const d = deps({ stdin: payload({ hook_event_name: event, transcript_path: TRANSCRIPT, ...over }) });
+    if (text !== null) d.files.write(TRANSCRIPT, text);
+    setup?.(d);
+    expect(await cmdBeaconEmit(d)).toBe(EXIT.OK);
+    return d;
+  }
+  const record = (d: ReturnType<typeof deps>) => {
+    const text = d.files.read(USAGE);
+    return text === null ? null : parseUsageRecord(text);
+  };
+  const seed = (d: ReturnType<typeof deps>, over: JsonObject): void =>
+    d.files.write(USAGE, JSON.stringify({ schemaVersion: 1, harness: "claude", at: NOW - 5000, window: 1_000_000, ...over }));
+  const USED = lines(userLine, assistant({ input_tokens: 10, cache_creation_input_tokens: 20_000, cache_read_input_tokens: 130_000, output_tokens: 900 }), tail);
+
+  describe("the window comes from SessionStart", () => {
+    test("the window of a model: the [1m] suffix is one million tokens, any other model two hundred thousand", async () => {
+      expect(windowFromModel("claude-opus-5-5[1m]")).toBe(1_000_000);
+      expect(windowFromModel("opus[1m]")).toBe(1_000_000);
+      expect(windowFromModel("claude-opus-5-5")).toBe(200_000);
+      expect(windowFromModel(undefined)).toBeUndefined();
+      expect(windowFromModel("")).toBeUndefined();
+      const big = await run("SessionStart", { source: "startup", model: "claude-opus-5-5[1m]" });
+      expect(record(big)).toMatchObject({ window: 1_000_000 });
+      expect(record(big)?.context).toBeUndefined();
+      const small = await run("SessionStart", { source: "startup", model: "claude-opus-5-5" });
+      expect(record(small)).toMatchObject({ window: 200_000 });
+    });
+
+    test("a start that names no model (claude -p) records no window, and the transcript then writes no context", async () => {
+      const d = await run("SessionStart", { source: "startup" });
+      expect(record(d)).toBeNull();
+      const stop = await run("Stop", {}, USED);
+      expect(record(stop)).toBeNull();
+    });
+
+    test("a source it does not know writes nothing", async () => {
+      const d = await run("SessionStart", { source: "teleport", model: "claude-opus-5-5" });
+      expect(record(d)).toBeNull();
+    });
+
+    test("compact and clear drop the context and keep the limits and the window", async () => {
+      const limits = [{ window: "5h" as const, used: 30, resetsAt: NOW + 3_600_000 }];
+      for (const source of ["compact", "clear"]) {
+        const d = await run("SessionStart", { source, model: "claude-opus-5-5[1m]" }, null, (x) => seed(x, { context: 71, limits }));
+        const written = record(d);
+        expect(written?.context).toBeUndefined();
+        expect(written?.window).toBe(1_000_000);
+        expect(written?.limits).toEqual(limits);
+      }
+    });
+
+    test("compact without a model keeps the window already on file", async () => {
+      const d = await run("SessionStart", { source: "compact" }, null, (x) => seed(x, { context: 71, window: 200_000 }));
+      expect(record(d)).toMatchObject({ window: 200_000 });
+      expect(record(d)?.context).toBeUndefined();
+    });
+
+    test("resume and fork with context_tokens write the context at once", async () => {
+      for (const source of ["resume", "fork"]) {
+        const d = await run("SessionStart", { source, model: "claude-opus-5-5[1m]", context_tokens: 250_000 });
+        expect(record(d)).toMatchObject({ window: 1_000_000, context: 25 });
+      }
+      const two = await run("SessionStart", { source: "resume", model: "claude-opus-5-5", context_tokens: 50_000 });
+      expect(record(two)?.context).toBe(25);
+    });
+
+    test("resume with no model and no window on file has no context to write", async () => {
+      const d = await run("SessionStart", { source: "resume", context_tokens: 50_000 });
+      expect(record(d)).toBeNull();
+    });
+  });
+
+  describe("the transcript, on Stop and PostToolUse", () => {
+    test("Stop: input, cache creation and cache read tokens of the last assistant line, over the window", async () => {
+      // 10 + 20_000 + 130_000 = 150_010 of 1_000_000. Output tokens are not context.
+      const d = await run("Stop", {}, USED, (x) => seed(x, {}));
+      expect(record(d)).toMatchObject({ schemaVersion: 1, harness: "claude", window: 1_000_000, context: 15 });
+      expect(d.files.read(USAGE)?.length ?? 0).toBeLessThan(4096);
+      const small = await run("Stop", {}, USED, (x) => seed(x, { window: 200_000 }));
+      expect(record(small)?.context).toBe(75);
+    });
+
+    test("no window on file, no context: honest beats guessed", async () => {
+      expect(record(await run("Stop", {}, USED))).toBeNull();
+    });
+
+    test("PostToolUse reads it too, and still writes its tool edge", async () => {
+      const d = await run("PostToolUse", { tool_name: "Bash", tool_input: { command: "ls" } }, USED, (x) => seed(x, {}));
+      expect(record(d)?.context).toBe(15);
+      expect([...d.files.entries.keys()].filter((path) => path.startsWith(`${STATE}/edges/`))).toHaveLength(1);
+    });
+
+    test("a subagent's tool call is not the session's turn", async () => {
+      const d = await run("PostToolUse", { tool_name: "Bash", agent_id: "sub-1" }, USED, (x) => seed(x, {}));
+      expect(record(d)?.context).toBeUndefined();
+    });
+
+    test("UserPromptSubmit and SessionEnd do not read the transcript", async () => {
+      for (const event of ["UserPromptSubmit", "SessionEnd"]) {
+        expect(record(await run(event, {}, USED, (x) => seed(x, {})))?.context).toBeUndefined();
+      }
+    });
+
+    test("takes the newest assistant line, past a trailing non-assistant line, a subagent line and a synthetic notice", async () => {
+      const text = lines(
+        assistant({ input_tokens: 900_000 }),
+        assistant({ input_tokens: 100_000 }),
+        assistant({ input_tokens: 800_000 }, "claude-opus-5-5", { isSidechain: true }),
+        assistant({ input_tokens: 0, output_tokens: 0 }, "<synthetic>"),
+        userLine,
+        tail,
+      );
+      expect(record(await run("Stop", {}, text, (x) => seed(x, {})))?.context).toBe(10);
+    });
+
+    test("an assistant line with no usage object is skipped; a file with no assistant line writes nothing", async () => {
+      const noUsage = lines(userLine, JSON.stringify({ type: "assistant", message: { model: "m", content: "x" } }), tail);
+      expect(record(await run("Stop", {}, noUsage, (x) => seed(x, {})))?.context).toBeUndefined();
+      const none = await run("Stop", {}, lines(userLine, tail));
+      expect(record(none)).toBeNull();
+      expect(none.files.read(USAGE)).toBeNull();
+    });
+
+    test("a compact boundary after the last assistant line removes the context", async () => {
+      const boundary = JSON.stringify({ type: "system", subtype: "compact_boundary", compactMetadata: { trigger: "auto" } });
+      const text = lines(assistant({ input_tokens: 900_000 }), boundary, userLine);
+      const d = await run("Stop", {}, text, (x) => seed(x, { context: 90 }));
+      expect(record(d)?.context).toBeUndefined();
+      expect(record(d)?.window).toBe(1_000_000);
+      // A response after the boundary measures the new context again.
+      const after = lines(boundary, userLine, assistant({ input_tokens: 40_000 }));
+      expect(record((await run("Stop", {}, after, (x) => seed(x, {}))))?.context).toBe(4);
+    });
+
+    test("reads only the last 256 KiB: an assistant line before that is out of sight, and a cut first line is skipped", async () => {
+      const filler = JSON.stringify({ type: "user", message: { content: "x".repeat(1000) } });
+      const many = Array.from({ length: Math.ceil(TAIL_BYTES / 1000) + 20 }, () => filler);
+      const out = await run("Stop", {}, lines(assistant({ input_tokens: 500_000 }), ...many), (x) => seed(x, {}));
+      expect(record(out)?.context).toBeUndefined();
+      const inside = await run("Stop", {}, lines(...many, assistant({ input_tokens: 500_000 }), tail), (x) => seed(x, {}));
+      expect(record(inside)?.context).toBe(50);
+    });
+
+    test("a cut tail with no deciding line removes the stale context; a whole file with none keeps it", async () => {
+      // One tool result longer than the tail after the last answer: the context grew by that much.
+      const huge = JSON.stringify({ type: "user", message: { content: "x".repeat(TAIL_BYTES + 1000) } });
+      const cut = await run("Stop", {}, lines(assistant({ input_tokens: 200_000 }), huge), (x) => seed(x, { context: 20 }));
+      expect(record(cut)?.context).toBeUndefined();
+      expect(record(cut)?.window).toBe(1_000_000);
+      // A short file before the first answer (a resume whose start wrote context_tokens) keeps its value.
+      const whole = await run("Stop", {}, lines(userLine, tail), (x) => seed(x, { context: 20 }));
+      expect(record(whole)?.context).toBe(20);
+    });
+
+    test("the torn first line of a cut tail is never read, even when its piece would parse", async () => {
+      // The cut falls exactly at the start of a whole assistant object inside a longer line.
+      const piece = assistant({ input_tokens: 900_000 });
+      // The tail is `piece \n filler \n`: the filler takes what is left of TAIL_BYTES.
+      const empty = JSON.stringify({ type: "user", message: { content: "" } }).length;
+      const filler = JSON.stringify({ type: "user", message: { content: "y".repeat(TAIL_BYTES - piece.length - 2 - empty) } });
+      const text = `${"z".repeat(5000)}${piece}\n${filler}\n`;
+      expect(Buffer.byteLength(text) - TAIL_BYTES).toBe(5000);
+      expect(readTail(`${piece}\n${filler}\n`, false)).toEqual({ kind: "used", tokens: 900_000 });
+      expect(readTail(`${piece}\n${filler}\n`, true)).toBeNull();
+      const d = await run("Stop", {}, text, (x) => seed(x, { context: 20 }));
+      expect(record(d)?.context).toBeUndefined();
+    });
+
+    test("an unchanged whole percent writes nothing", async () => {
+      // On file: 15.2. The transcript says 15.0. Both round to 15, so the file is not touched.
+      const d = await run("Stop", {}, USED, (x) => seed(x, { context: 15.2 }));
+      expect(JSON.parse(d.files.read(USAGE) ?? "{}").context).toBe(15.2);
+      expect(JSON.parse(d.files.read(USAGE) ?? "{}").at).toBe(NOW - 5000);
+      const moved = await run("Stop", {}, USED, (x) => seed(x, { context: 17 }));
+      expect(JSON.parse(moved.files.read(USAGE) ?? "{}").context).toBe(15);
+    });
+
+    test("keeps an existing file's running limits and drops the expired ones, and the file's own time", async () => {
+      const limits = [
+        { window: "5h", used: 30, resetsAt: NOW + 3_600_000 },
+        { window: "7d", used: 50, resetsAt: NOW - 1 },
+      ];
+      const d = await run("Stop", {}, USED, (x) => seed(x, { context: 3, limits }));
+      expect(record(d)).toMatchObject({ context: 15, window: 1_000_000, at: NOW - 5000, limits: [limits[0]] });
+      const none = await run("Stop", {}, USED, (x) => seed(x, { context: 3 }));
+      expect(record(none)?.at).toBe(NOW);
+      expect(record(none)?.limits).toBeUndefined();
+    });
+
+    test("goes to every state dir the edges go to", async () => {
+      const A = { dir: "/srv/collie-a", pid: 5001, start: 11 };
+      const d = deps({ stdin: payload({ hook_event_name: "Stop", transcript_path: TRANSCRIPT }) });
+      d.files.write(TRANSCRIPT, USED);
+      d.files.mkdirp("/home/pat/.local/state/collie/hook-targets", 0o700);
+      d.files.write(`${HOME}/.local/state/collie/hook-targets/${hookTargetFileName(A.dir)}`, JSON.stringify({ schemaVersion: 1, stateDir: A.dir, pid: A.pid, pidStartTime: A.start, bootedAt: 1 }));
+      d.files.write(`/proc/${String(A.pid)}/stat`, `${String(A.pid)} (bun) S 1 ${Array.from({ length: 17 }, (_v, i) => i).join(" ")} ${String(A.start)} 0 0`);
+      for (const dir of [A.dir, STATE]) d.files.write(`${dir}/usage/${usageFileName(SESSION)}`, JSON.stringify({ schemaVersion: 1, harness: "claude", at: 1, window: 1_000_000 }));
+      await cmdBeaconEmit(d);
+      for (const dir of [A.dir]) expect(parseUsageRecord(d.files.read(`${dir}/usage/${usageFileName(SESSION)}`) ?? "")?.context).toBe(15);
+    });
+  });
+
+  describe("the path is checked before it is opened", () => {
+    const refused = async (path: string, setup?: (d: ReturnType<typeof deps>) => void) => {
+      const d = await run("Stop", { transcript_path: path }, null, (x) => {
+        seed(x, {});
+        setup?.(x);
+      });
+      expect(record(d)?.context).toBeUndefined();
+    };
+
+    test("a path outside the Claude config root", async () => {
+      await refused("/tmp/elsewhere.jsonl", (d) => d.files.write("/tmp/elsewhere.jsonl", USED));
+    });
+
+    test("a symlink under the root that points out of it", async () => {
+      const link = join(ROOT, "projects", "link.jsonl");
+      await refused(link, (d) => {
+        d.files.write("/etc/secret.jsonl", USED);
+        d.files.write(link, USED);
+        d.files.realPaths.set(link, "/etc/secret.jsonl");
+      });
+    });
+
+    test("a relative path, a path that is not .jsonl, a folder and a missing file", async () => {
+      await refused("projects/-x/y.jsonl", (d) => d.files.write(TRANSCRIPT, USED));
+      await refused(join(ROOT, "projects", "-x", "y.json"), (d) => d.files.write(join(ROOT, "projects", "-x", "y.json"), USED));
+      await refused(join(ROOT, "projects", "-x"), (d) => d.files.write(TRANSCRIPT, USED));
+      await refused(join(ROOT, "projects", "-x", "gone.jsonl"));
+    });
+
+    test("$CLAUDE_CONFIG_DIR moves the root", async () => {
+      const path = "/data/claude/projects/y.jsonl";
+      const d = deps({ env: { ...TMUX, CLAUDE_CONFIG_DIR: "/data/claude" }, stdin: payload({ hook_event_name: "Stop", transcript_path: path }) });
+      d.files.write(path, USED);
+      seed(d, {});
+      await cmdBeaconEmit(d);
+      expect(record(d)?.context).toBe(15);
+      // And the default root no longer counts.
+      const other = deps({ env: { ...TMUX, CLAUDE_CONFIG_DIR: "/data/claude" }, stdin: payload({ hook_event_name: "Stop", transcript_path: TRANSCRIPT }) });
+      other.files.write(TRANSCRIPT, USED);
+      seed(other, {});
+      await cmdBeaconEmit(other);
+      expect(record(other)?.context).toBeUndefined();
+    });
+
+    test("outside a multiplexer nothing is read or written", async () => {
+      const d = deps({ env: { HOME }, stdin: payload({ hook_event_name: "Stop", transcript_path: TRANSCRIPT }) });
+      d.files.write(TRANSCRIPT, USED);
+      seed(d, {});
+      expect(await cmdBeaconEmit(d)).toBe(EXIT.OK);
+      expect(record(d)?.context).toBeUndefined();
+    });
+  });
+});
+
+describe("agentPidOf: the first non-shell ancestor (#689)", () => {
+  /** A fake process table, pid to {comm, ppid}; a pid not in it reads as null. */
+  function table(rows: Record<number, ProcessInfo>): (pid: number) => ProcessInfo | null {
+    return (pid) => rows[pid] ?? null;
+  }
+
+  test("dash as the parent: the grandparent claude is the agent", () => {
+    const read = table({ 100: { comm: "dash", ppid: 50 }, 50: { comm: "claude", ppid: 10 } });
+    expect(agentPidOf(100, read)).toBe(50);
+  });
+
+  test("a parent that already is claude stays as it is (bash, macOS sh)", () => {
+    const read = table({ 50: { comm: "claude", ppid: 10 } });
+    expect(agentPidOf(50, read)).toBe(50);
+  });
+
+  test("sh under sh under claude climbs two hops", () => {
+    const read = table({ 100: { comm: "sh", ppid: 90 }, 90: { comm: "sh", ppid: 50 }, 50: { comm: "claude", ppid: 10 } });
+    expect(agentPidOf(100, read)).toBe(50);
+  });
+
+  test("four shells deep stops after three hops", () => {
+    const read = table({
+      100: { comm: "sh", ppid: 90 },
+      90: { comm: "bash", ppid: 80 },
+      80: { comm: "zsh", ppid: 70 },
+      70: { comm: "sh", ppid: 60 },
+      60: { comm: "claude", ppid: 10 },
+    });
+    expect(agentPidOf(100, read)).toBe(70);
+  });
+
+  test("a shell whose parent is pid 1 or 0 keeps its own pid", () => {
+    expect(agentPidOf(100, table({ 100: { comm: "sh", ppid: 1 } }))).toBe(100);
+    expect(agentPidOf(100, table({ 100: { comm: "sh", ppid: 0 } }))).toBe(100);
+  });
+
+  test("a read that fails keeps the pid reached so far", () => {
+    expect(agentPidOf(100, () => null)).toBe(100);
+    expect(agentPidOf(100, table({ 100: { comm: "dash", ppid: 50 } }))).toBe(50);
+  });
+
+  test("every shell name in the set is climbed, and a name that merely contains one is not", () => {
+    for (const comm of ["sh", "dash", "bash", "zsh", "ksh", "ash", "busybox"]) {
+      expect(agentPidOf(100, table({ 100: { comm, ppid: 50 }, 50: { comm: "claude", ppid: 10 } }))).toBe(50);
+    }
+    expect(agentPidOf(100, table({ 100: { comm: "bash-wrapper", ppid: 50 } }))).toBe(100);
+  });
+});
+
+describe("the process readers behind agentPidOf (#689)", () => {
+  test("a /proc stat line whose comm has spaces and parentheses is split on the last bracket", () => {
+    expect(parseProcStatProcess("12 (my (odd) sh) S 7 12 12 0 -1 4194560")).toEqual({ comm: "my (odd) sh", ppid: 7 });
+    expect(parseProcStatProcess("2688865 (dash) S 2679878 2688865 0 0")).toEqual({ comm: "dash", ppid: 2_679_878 });
+  });
+
+  test("text that is not a stat line is null", () => {
+    expect(parseProcStatProcess("")).toBeNull();
+    expect(parseProcStatProcess("12 dash S 7")).toBeNull();
+    expect(parseProcStatProcess("12 (dash) S x")).toBeNull();
+    expect(parseProcStatProcess("12 (dash)")).toBeNull();
+  });
+
+  test("a ps line gives the parent and the basename of the command", () => {
+    expect(parsePsProcess("  4321 /bin/sh\n")).toEqual({ comm: "sh", ppid: 4321 });
+    expect(parsePsProcess("1 /Applications/Claude Code/claude")).toEqual({ comm: "claude", ppid: 1 });
+    expect(parsePsProcess("77 -zsh")).toEqual({ comm: "-zsh", ppid: 77 });
+    expect(parsePsProcess("")).toBeNull();
+    expect(parsePsProcess("garbage")).toBeNull();
   });
 });

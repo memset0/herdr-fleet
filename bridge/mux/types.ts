@@ -45,7 +45,7 @@ export { canonicalMuxKey, formatMuxKey, isMuxKey, parseMuxKey } from "./keys.ts"
 // ── The one refusal shape ─────────────────────────────────────────────────────
 
 /**
- * Why a call did not happen. Four reasons, and the first one is not a failure at all:
+ * Why a call did not happen, or may not have. Five reasons, and the first one is not a failure at all:
  *
  *  • `unsupported` — this multiplexer has no such thing, and never will while it is this
  *    multiplexer. The route renders an explanation, not an error (M10/06). It names the
@@ -56,6 +56,11 @@ export { canonicalMuxKey, formatMuxKey, isMuxKey, parseMuxKey } from "./keys.ts"
  *    not take). Retrying the same call gets the same answer.
  *  • `unreachable` — the multiplexer did not answer. This is the only one worth retrying, and it is
  *    what drives the connected/disconnected banner.
+ *  • `unconfirmed` — a write left Collie and the multiplexer did not confirm it in time (herdr-core
+ *    holds a terminal's keys behind its slow history reads and delivers them later). The call MAY
+ *    STILL HAPPEN, so it is neither a failure nor worth a retry. THE RULE: a caller never sends the
+ *    same write again on this answer; the next read of the pane decides what happened. A route says
+ *    "not confirmed", never "failed".
  *
  * An adapter MUST return this rather than throw for anything it declared absent — that is checked by
  * conformance (M10/03), because a throw is what forces every route to guess.
@@ -64,7 +69,8 @@ export type MuxRefusal =
   | { readonly reason: "unsupported"; readonly capability: MuxCapability; readonly detail: string }
   | { readonly reason: "gone"; readonly detail: string }
   | { readonly reason: "refused"; readonly detail: string }
-  | { readonly reason: "unreachable"; readonly detail: string };
+  | { readonly reason: "unreachable"; readonly detail: string }
+  | { readonly reason: "unconfirmed"; readonly detail: string };
 
 /** A refusal, as a failed outcome. */
 export type MuxRefusalOutcome = { readonly ok: false } & MuxRefusal;
@@ -150,6 +156,11 @@ export function muxRefused(detail: string): MuxRefusalOutcome {
 /** "The multiplexer did not answer." */
 export function muxUnreachable(detail: string): MuxRefusalOutcome {
   return { ok: false, reason: "unreachable", detail };
+}
+
+/** "Sent, and not confirmed in time: it may still land." Never retried; see {@link MuxRefusal}. */
+export function muxUnconfirmed(detail: string): MuxRefusalOutcome {
+  return { ok: false, reason: "unconfirmed", detail };
 }
 
 /**
@@ -299,6 +310,11 @@ export interface MuxPane extends MuxIdentity {
    * reason: a wrong agent name picks a wrong harness grammar AND a wrong journal adapter, so the
    * port's answer to "which agent runs here" is `agentDetection` or `"shell"` — never a process
    * name, however much this one looks like an identity.
+   *
+   * One exception: a foreground process name is never identity on its own, but an adapter whose agent
+   * report is absent for a pane (herdr-core, when the program sends no OSC 7501) may take an exact,
+   * known program name from its table as a provisional identity, with status `unknown` and never a
+   * status word. No prefix, no path component.
    */
   readonly foregroundCommand?: string;
   /**
@@ -393,6 +409,38 @@ export interface MuxGridRequest {
   readonly scope: "viewport" | "recent";
   readonly lines: number;
   readonly styling: "preserve" | "strip";
+  /** What the bridge knows about the pane that the multiplexer may not. See {@link MuxReadHint}. */
+  readonly hint?: MuxReadHint;
+  /**
+   * Why the bridge reads, for a `recent` read. OPTIONAL, and absent means `poll`.
+   *
+   * - `poll`: the mirror's refresh, every 1.5 s while a phone looks at the pane, and the bridge's own
+   *   checks of a send.
+   * - `older`: a person tapped Load older and asks for the rows above the screen.
+   *
+   * An adapter that reads its scrollback at no cost answers both alike and may ignore the field.
+   * herdr-core reads history only on `older`: its history read can hold the terminal's keys for 25 s
+   * (herdr-core/adapter.ts, `readGrid`), so a `poll` there reads the screen alone, marked `truncated`.
+   */
+  readonly purpose?: MuxReadPurpose;
+}
+
+/** Why the bridge reads a pane's scrollback. See {@link MuxGridRequest.purpose}. */
+export type MuxReadPurpose = "poll" | "older";
+
+/**
+ * What the bridge knows about the pane that the multiplexer may not; an adapter may ignore it.
+ * OPTIONAL on both sides: a caller that knows nothing sends none, and the conformance suite never
+ * requires an adapter to act on it.
+ *
+ * `blocked`: the bridge's state engine reads the pane as waiting on a person (the screen shows an
+ * ask), even when the multiplexer reports the program `working`, as herdr-core does for pi's
+ * dialogs. herdr-core answers an `older` read of such a pane with its screen alone and starts no
+ * history read, because the core holds the terminal's keys behind a history read
+ * (herdr-core/adapter.ts, `readGrid`).
+ */
+export interface MuxReadHint {
+  readonly blocked?: boolean;
 }
 
 /**
@@ -407,6 +455,18 @@ export interface MuxGrid {
   readonly text: string;
   /** The multiplexer truncated the read to fit its own limits. */
   readonly truncated: boolean;
+  /**
+   * The multiplexer says rows may be missing from this read: show it, decide nothing on it. Distinct
+   * from {@link truncated}, which means the scrollback was cut. The Send Protocol takes a partial read
+   * as no read and waits for a whole one. Absent on a whole read, and on every adapter that cannot tell.
+   */
+  readonly partial?: true;
+  /**
+   * A sentence for the person, set only on an `older` read ({@link MuxGridRequest.purpose}) that
+   * answered without the rows above the screen, and saying why: on herdr-core, the agent waits on a
+   * person, or the core still runs an earlier history read. Absent on every other read and adapter.
+   */
+  readonly olderNote?: string;
   /**
    * A number that CHANGES when this pane's content changes and never decreases while the pane lives.
    *
@@ -459,65 +519,6 @@ export interface MuxSpaceRequest {
  */
 export function requestedCwd(cwd: string | undefined): string | undefined {
   return cwd === undefined || cwd.trim().length === 0 ? undefined : cwd;
-}
-
-// ── Worktrees ─────────────────────────────────────────────────────────────────
-//
-// A worktree is Git's, not the multiplexer's — so why is it here? Because the ACT is the
-// multiplexer's: every verb below ends in a space appearing, moving or going away, which is the one
-// thing a mux adapter owns. What a multiplexer may not have is the BOOKKEEPING that ties a checkout
-// to the space showing it; that is what these capabilities declare. See ADR 0032.
-
-/** A Git worktree of the repo a space sits in. */
-export interface MuxWorktree {
-  /** Absolute checkout path. The identity: a branch may be absent, and labels repeat. */
-  readonly path: string;
-  /** The branch checked out there, or `null` for a detached head. */
-  readonly branch: string | null;
-  /** The space showing it, or `null` when it exists on disk and nothing shows it. */
-  readonly openSpaceId: string | null;
-  /** `false` for the repo's own checkout — listed for context, never removable. */
-  readonly linked: boolean;
-  /** The checkout is gone and the administrative files could be pruned. */
-  readonly prunable: boolean;
-}
-
-/** Where a worktree question is asked from — the repo the asking space sits in. */
-export interface MuxWorktreeScope {
-  readonly repoRoot: string;
-}
-
-/** What a new worktree asks for. */
-export interface MuxWorktreeCreateRequest extends MuxWorktreeScope {
-  readonly branch: string;
-  /**
-   * The ref the new branch is cut from. Absent means the multiplexer's own choice, which for Herdr
-   * is the HEAD of `repoRoot`. Already checked by the bridge (bridge/worktree-base.ts); an adapter
-   * that cannot honour it ignores it, as tmux, zellij, tuios and tern do with the whole call.
-   */
-  readonly base?: string;
-  /**
-   * The absolute folder the checkout is made in. Absent means the multiplexer's own place, which for
-   * Herdr is `<worktrees directory>/<repo>/<slug>`. Already checked by the bridge on every use
-   * (bridge/worktree-folder.ts, ADR 0093); an adapter that cannot honour it ignores the whole call.
-   */
-  readonly path?: string;
-}
-
-/** Which existing worktree to show. */
-export interface MuxWorktreeOpenRequest extends MuxWorktreeScope {
-  readonly path: string;
-}
-
-/**
- * Opening one either made a space or found the space already showing it.
- *
- * `alreadyOpen` is not an error and must not be rendered as one: asking for a worktree that is
- * already up is the operator saying "take me there", and the pane below is where to go.
- */
-export interface MuxWorktreeOpened {
-  readonly pane: MuxCreatedPane;
-  readonly alreadyOpen: boolean;
 }
 
 // ── Learning that something changed ───────────────────────────────────────────
@@ -791,12 +792,25 @@ export interface MuxAdapter {
    * The pane's foreground processes, as argv. OPTIONAL by design: a multiplexer without the
    * call simply yields no hint, exactly as today.
    *
-   * Read for ONE purpose — telling live sessions apart when several share a folder. A journal
-   * adapter that can read its session out of its own command line (Muse's `resume <uuid>`)
-   * answers the pane's own session from this; without it, discovery can only guess newest,
-   * and every pane in the folder shows the same transcript.
+   * Read for TWO purposes, and neither makes it the pane's identity:
+   *  • telling live sessions apart when several share a folder. A journal adapter that can read
+   *    its session out of its own command line (Muse's `resume <uuid>`) answers the pane's own
+   *    session from this; without it, discovery can only guess newest, and every pane in the
+   *    folder shows the same transcript.
+   *  • the launch window (`bridge/launch-window.ts`): a send to a pane the multiplexer names no
+   *    agent on reads it once, and a known harness binary there means the agent is starting, so
+   *    the send waits for that harness's input box instead of typing into the shell. It only ever
+   *    holds a send back; {@link MuxPane.agent} stays what the multiplexer said.
    */
   foregroundProcesses?(paneId: string): Promise<MuxOutcome<readonly ForegroundProcess[]>>;
+
+  /**
+   * The pane's terminal labels from the multiplexer's latest snapshot, for journal discovery
+   * (`DiscoverHints.labels`). OPTIONAL: only herdr-core keeps labels the program can set from inside
+   * the terminal (`hc label`). Answers from the last snapshot with no call of its own, and
+   * `undefined` for a pane that snapshot did not list. A label is a hint (ADR 0024), never a ref.
+   */
+  paneLabels?(paneId: string): Record<string, string> | undefined;
 
   /** Type literal text into a pane, submitting nothing. Needs `typeText`. */
   typeText(paneId: string, text: string): Promise<MuxAck>;
@@ -809,6 +823,17 @@ export interface MuxAdapter {
    * only where the harness's profile allows a paste. The text holds no line break.
    */
   pasteText?(paneId: string, text: string): Promise<MuxAck>;
+
+  /**
+   * Paste the WHOLE text into a pane as ONE bracketed paste, line breaks included, submitting nothing.
+   * OPTIONAL: only a multiplexer whose text call writes raw bytes has it (Herdr's `pane.send_text`),
+   * and there the adapter frames the text in `ESC[200~ … ESC[201~` itself, so a line break inside is
+   * pasted content and never a submit. The one exception to {@link pasteText}'s "Collie never writes
+   * the markers" rule, and the same framing `.adr/0010`'s addendum already sends to Claude. One caller:
+   * the Send Protocol, and only where the harness's profile says it takes a bracketed paste. The text
+   * carries no control byte (`sendLines` cut them, the paste markers included).
+   */
+  pasteBlock?(paneId: string, text: string): Promise<MuxAck>;
 
   /**
    * Send keys in the contract's neutral spelling (keys.ts), applied in order. Needs `sendKeys`.
@@ -862,15 +887,6 @@ export interface MuxAdapter {
 
   /** New space, opening a fresh shell. Needs `createSpace`. */
   createSpace(request: MuxSpaceRequest): Promise<MuxOutcome<MuxCreatedPane>>;
-
-  /** The worktrees of the repo a space sits in. Needs `listWorktrees`. */
-  listWorktrees(scope: MuxWorktreeScope): Promise<MuxOutcome<readonly MuxWorktree[]>>;
-
-  /** New worktree on a new branch, opened as a space. Needs `createWorktree`. */
-  createWorktree(request: MuxWorktreeCreateRequest): Promise<MuxOutcome<MuxCreatedPane>>;
-
-  /** Show an existing worktree as a space. Needs `openWorktree`. */
-  openWorktree(request: MuxWorktreeOpenRequest): Promise<MuxOutcome<MuxWorktreeOpened>>;
 
   /**
    * The OTHER instances of this multiplexer on this machine, each with the endpoint to dial it.
@@ -932,7 +948,9 @@ export type MuxOptionalMethod =
   | "paneActions"
   | "controlTurn"
   | "foregroundProcesses"
+  | "paneLabels"
   | "pasteText"
+  | "pasteBlock"
   | "renameSpace"
   | "listConversations"
   | "conversationItems"
@@ -968,8 +986,12 @@ export function muxOptionalMethods(
   if (controlTurn !== undefined) methods.controlTurn = controlTurn;
   const foregroundProcesses = adapter.foregroundProcesses?.bind(adapter);
   if (foregroundProcesses !== undefined) methods.foregroundProcesses = foregroundProcesses;
+  const paneLabels = adapter.paneLabels?.bind(adapter);
+  if (paneLabels !== undefined) methods.paneLabels = paneLabels;
   const pasteText = adapter.pasteText?.bind(adapter);
   if (pasteText !== undefined) methods.pasteText = pasteText;
+  const pasteBlock = adapter.pasteBlock?.bind(adapter);
+  if (pasteBlock !== undefined) methods.pasteBlock = pasteBlock;
   const renameSpace = adapter.renameSpace?.bind(adapter);
   if (renameSpace !== undefined) methods.renameSpace = renameSpace;
   // The program's history (M53 spec 11): the list, the items of one, and a reopen.

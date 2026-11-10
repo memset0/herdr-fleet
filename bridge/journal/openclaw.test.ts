@@ -1,6 +1,6 @@
 import { Database } from "bun:sqlite";
-import { afterEach, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
-import { chmod, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, setDefaultTimeout, test } from "bun:test";
+import { chmod, cp, mkdir, mkdtemp, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -248,11 +248,17 @@ let dbPath = "";
 
 function writeAgentDb(path: string, fx: Fixture, schemaVersion = fx.schemaVersion): void {
   const db = new Database(path, { create: true });
+  // Why the old setup took seconds: every insert was its own transaction, so each one paid an fsync (two
+  // with the rollback journal). On a busy disk that is 0.3 s a row, about 10 s for this fixture. The file is
+  // a throwaway fixture, so skip the syncs and the journal file, and write all rows in one transaction.
+  db.exec("pragma synchronous = off; pragma journal_mode = memory");
   db.exec(SCHEMA);
-  db.query("insert into schema_meta values ('primary', 'agent', ?, 'main', ?, 0, 0)").run(schemaVersion, fx.openclawVersion);
-  db.query("insert into session_nodes values (?, ?, '{}', 0)").run(fx.sessionKey, fx.sessionId);
-  for (const r of fx.rows) insertRow(db, fx.sessionId, r);
-  db.query("insert into session_transcript_index_state values (?, 0, null, 0, 0, 0, 0)").run(fx.sessionId);
+  db.transaction(() => {
+    db.query("insert into schema_meta values ('primary', 'agent', ?, 'main', ?, 0, 0)").run(schemaVersion, fx.openclawVersion);
+    db.query("insert into session_nodes values (?, ?, '{}', 0)").run(fx.sessionKey, fx.sessionId);
+    for (const r of fx.rows) insertRow(db, fx.sessionId, r);
+    db.query("insert into session_transcript_index_state values (?, 0, null, 0, 0, 0, 0)").run(fx.sessionId);
+  })();
   db.close();
 }
 
@@ -266,29 +272,65 @@ function insertRow(db: Database, sessionId: string, r: FixtureRow): void {
   if (r.active !== null) db.query("insert into session_transcript_active_events values (?, ?, ?, null, null)").run(sessionId, r.active, r.seq);
 }
 
-beforeEach(async () => {
-  base = await realpath(await mkdtemp(join(tmpdir(), "collie-openclaw-")));
-  stateDir = join(base, "state");
-  await mkdir(join(stateDir, "agents", "main", "agent"), { recursive: true });
-  dbPath = join(stateDir, "agents", "main", "agent", "openclaw-agent.sqlite");
-  writeAgentDb(dbPath, await fixture("session-2026.10.2.json"));
-  // What sits beside the agent database in a real state folder, and must never be read: the config
-  // file and the state database that holds the gateway's shared secret. Placeholders only.
-  await writeFile(join(stateDir, "openclaw.json"), JSON.stringify({ gateway: { auth: { token: "oc-gateway-token-placeholder" } } }));
-  await mkdir(join(stateDir, "state"), { recursive: true });
-  const secrets = new Database(join(stateDir, "state", "openclaw.sqlite"), { create: true });
+/**
+ * The state folder every database test starts from, written once per file and copied per test.
+ * What sits beside the agent database in a real state folder, and must never be read: the config
+ * file and the state database that holds the gateway's shared secret. Placeholders only.
+ */
+async function writeStateTemplate(root: string): Promise<void> {
+  await mkdir(join(root, "agents", "main", "agent"), { recursive: true });
+  writeAgentDb(join(root, "agents", "main", "agent", "openclaw-agent.sqlite"), await fixture("session-2026.10.2.json"));
+  await writeFile(join(root, "openclaw.json"), JSON.stringify({ gateway: { auth: { token: "oc-gateway-token-placeholder" } } }));
+  await mkdir(join(root, "state"), { recursive: true });
+  const secrets = new Database(join(root, "state", "openclaw.sqlite"), { create: true });
+  secrets.exec("pragma synchronous = off; pragma journal_mode = memory");
   secrets.exec("create table secret_store_entries (name text, value text, deleted_at_ms integer)");
   secrets.query("insert into secret_store_entries values ('OPENCLAW_GATEWAY_TOKEN', 'oc-gateway-token-placeholder', null)").run();
   secrets.close();
+}
+
+let templateRoot = "";
+
+afterAll(async () => {
+  if (templateRoot !== "") await rm(templateRoot, { recursive: true, force: true });
 });
 
-afterEach(async () => {
-  await rm(base, { recursive: true, force: true });
-});
+/**
+ * Gives each test of the calling describe its own copy of the state folder in `base`, `stateDir` and `dbPath`.
+ * The describes that only parse text do not call it, so they pay for no disk at all.
+ */
+function useStateFolder(): void {
+  // The one hook that builds the fixture on disk, so it alone gets a long budget (it runs once per file; a slow
+  // disk or the 6.8 s Windows runner write fits). Describes after the first find the template built.
+  beforeAll(async () => {
+    if (templateRoot !== "") return;
+    const root = await realpath(await mkdtemp(join(tmpdir(), "collie-openclaw-template-")));
+    await writeStateTemplate(root);
+    templateRoot = root;
+  }, 60_000);
+
+  beforeEach(async () => {
+    // Locals first, the shared names only once the copy is complete. A hook that timed out used to keep running
+    // while the next test's hook reassigned `base`, and the afterEach then removed the folder under it: that
+    // is the "unable to open database file" (SQLITE_CANTOPEN) seen under load.
+    const mine = await realpath(await mkdtemp(join(tmpdir(), "collie-openclaw-")));
+    await cp(templateRoot, join(mine, "state"), { recursive: true });
+    base = mine;
+    stateDir = join(mine, "state");
+    dbPath = join(stateDir, "agents", "main", "agent", "openclaw-agent.sqlite");
+  });
+
+  afterEach(async () => {
+    await rm(base, { recursive: true, force: true });
+  });
+}
 
 const REF = { kind: "id" as const, value: "agent:main:main" };
 
 describe("OpenclawTranscriptSource", () => {
+  useStateFolder();
+
+
   test("resolves the footer's key to the agent database and the session's current id", async () => {
     const source = new OpenclawTranscriptSource([stateDir]);
     const key = await source.resolve(REF);
@@ -368,6 +410,9 @@ describe("OpenclawTranscriptSource", () => {
 });
 
 describe("no gateway token is read or stored", () => {
+  useStateFolder();
+
+
   test("the adapter opens the agent database and nothing else, and needs neither neighbour", async () => {
     const opened: string[] = [];
     const adapter = openclawJournal([stateDir], (path) => {
@@ -400,6 +445,9 @@ describe("no gateway token is read or stored", () => {
 });
 
 describe("discover", () => {
+  useStateFolder();
+
+
   test("reads the footer off the pane's screen, and nothing without one", async () => {
     const adapter = openclawJournal([stateDir]);
     const screen = stripAnsi(await readFile(join(FIXTURES, "tui-idle-2026.9.8.raw.txt"), "utf8"));

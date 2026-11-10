@@ -2,6 +2,7 @@
 // duplicate so the web app builds independently of the Bun server's source tree.
 
 import type { ApiErrorCode, ApiErrorDetail } from "@/lib/api-error-codes";
+import type { JsonValue } from "@/lib/json";
 import { t } from "@/lib/i18n";
 import type { HeldRow } from "@/lib/surface/send";
 import type { Surface } from "@/lib/surface/surface";
@@ -20,6 +21,13 @@ export interface AgentView {
    * that session. Absent on a machine that predates it.
    */
   instance?: string;
+  /** True when the session turned its walky talky off (M89). Absent when on, and on an older machine. */
+  walkyOff?: true;
+  /**
+   * How many pinned messages the pane's session holds (M90). Absent at zero, on a machine that predates pins, and on
+   * a pane whose session the bridge has not read yet, so the pane view reads the list once when it opens.
+   */
+  pins?: number;
   workspaceId: string;
   workspaceLabel: string;
   workspaceNumber: number;
@@ -185,6 +193,12 @@ export interface AgentView {
    */
   subagents?: PaneSubagent[];
   /**
+   * The background jobs of this pane's session, running or ended in the last ten minutes. Mirrors
+   * `PaneJob` in bridge/jobs-journal.ts. **Absent, never a placeholder**, when there are none or on
+   * an older bridge. Text only, never markup.
+   */
+  jobs?: PaneJob[];
+  /**
    * The model this pane's agent is on, in the harness's own words. Mirrors `PaneWire.model` in
    * bridge/types.ts. **Absent, never a placeholder**, and text only: read it through `modelLabel`
    * (lib/model-label.ts), which shortens it and drops anything that is not a name.
@@ -196,6 +210,12 @@ export interface AgentView {
    * through `effortLabel` (lib/model-label.ts). Drawn only after a model.
    */
   effort?: string;
+  /**
+   * How full the context is and how much of the subscription's windows is used, as the harness's own
+   * statusLine reported them. Mirrors `PaneWire.usage` in bridge/types.ts. **Absent, never a
+   * placeholder**: drawn as dots beside the model (components/model-tag.tsx), and nothing decides on it.
+   */
+  usage?: PaneUsage;
   /**
    * What the checkout holding this pane's folder is on. Mirrors `PaneWire.gitHead` in bridge/types.ts.
    *
@@ -249,6 +269,20 @@ export interface AgentView {
    * a crew member older than the protocol), and the composer says so (M56 spec 06).
    */
   sendProtocol?: true;
+  /**
+   * Mirrors `PaneWire.canStop` (M68): a Stop has a key to press on this pane, because its profile names an
+   * interrupt key and is not revoked. The belt draws Stop for a pane with a screen only with it, and
+   * only while `surface.turn` is `running` (`stopFor`, lib/harness-bar.ts). The bridge decides from the
+   * profile; the app holds no harness name. Absent means no Stop here, and on an older bridge.
+   */
+  canStop?: boolean;
+  /**
+   * Mirrors `PaneWire.canSteer` (M69): a send on this pane may steer the running turn (`when: "steer"`
+   * on `POST /api/send`). The composer offers Steer on the Send button's long press only when this is
+   * true and the turn reads running. Absent from an older bridge, on a durable pane and on a harness
+   * Collie cannot steer.
+   */
+  canSteer?: boolean;
   /**
    * Mirrors `PaneWire.held` (M56 spec 15): the pane's held sends, oldest first. The composer draws one
    * queued row per entry, with the text and Cancel (Resend on an ended one).
@@ -349,6 +383,26 @@ export interface PaneSubagent {
   /** ISO 8601. */
   startedAt?: string;
   spawnDepth?: number;
+  /**
+   * `false` for a row read from the session's journal (Oh My Pi, Gentle Shell): no transcript route
+   * serves it, so the row is not a tap. Absent on a Claude Code subagent, whose transcript opens.
+   */
+  transcript?: false;
+}
+
+/** One background job of a pane's session. Mirrors `PaneJob` in bridge/jobs-journal.ts. */
+export interface PaneJob {
+  id: string;
+  /** The call's label, one line. Empty when the call named none. */
+  label: string;
+  /** The command it runs, one line, clipped. */
+  command: string;
+  /** ISO 8601. */
+  startedAt: string;
+  /** Absent while it runs, and on an end that named no code. */
+  exitCode?: number;
+  /** ISO 8601. Absent while it runs: a row with it has ended. */
+  endedAt?: string;
 }
 
 /**
@@ -440,6 +494,18 @@ export interface WorkspaceView {
   isWorktree?: boolean;
   /** The space's own folder, when the multiplexer keeps one (herdr worktree, tmux session_path). */
   folder?: string;
+  /**
+   * What the checkout holding {@link folder} is on. Mirrors `WorkspaceView.gitHead` in bridge/types.ts.
+   *
+   * **Absent, never a placeholder**, by the same rule as {@link AgentView.gitHead}, and read through
+   * `spaceWorktreeContext` (lib/spaces.ts), which drops a malformed one from a peer.
+   */
+  gitHead?: GitHead;
+  /**
+   * The ref a worktree space was cut from, as the machine holding it wrote it down. Mirrors
+   * `WorkspaceView.base` in bridge/types.ts: only on a worktree, absent when unknown.
+   */
+  base?: string;
   /**
    * Which member of the crew this space lives on — the same tag a pane and a session carry.
    *
@@ -544,8 +610,14 @@ export type PairFailure =
  * `reachable: false` with zeroed counts and renders greyed-out, non-clickable in the switcher.
  */
 export interface SessionSummary {
-  /** Registry name, e.g. "default", "collie-demo". */
+  /** Registry name, e.g. "default", "collie-demo". The identity: `?s=` and `?session=` carry it. */
   name: string;
+  /**
+   * The operator's display label for this session (`spaces.toml`). Display-only, print it through
+   * `sessionDisplayName` (lib/hosts.ts), never address by it. Absent from an older bridge, and from a
+   * session the operator gave no label.
+   */
+  label?: string;
   /** The `cfg.socketPath` session — all no-`?s=` requests map to it. */
   isPrimary: boolean;
   /** Whether the last poll of this session's socket succeeded. */
@@ -590,6 +662,34 @@ export type SessionWhere = "local" | "remote";
 /** {@link SessionSummary.state}. */
 export type SessionState = "ready" | "starting" | "unreachable";
 
+/** What a pinned message was, as Chat drew it (mirrors `PinKind` in bridge/pins/store.ts). */
+export type PinKind = "user" | "reply" | "thinking" | "notice" | "tool";
+
+/**
+ * One pin as the bridge's list answers it (M90): everything of the pin but its text, with the first 400
+ * characters of it and its length. The whole text is one `GET ?pin=<id>` away ({@link PinFull}).
+ */
+export interface PinRow {
+  id: string;
+  /** The Chat item id the pin was made from (lib/chat-items.ts). */
+  itemId: string;
+  kind: PinKind;
+  excerpt: string;
+  textLength: number;
+  /** The first 80 characters of the text, to find the block again when its id changed. */
+  anchor: string;
+  /** A tool card's name and the one-line gist of its input. */
+  tool?: { name: string; input?: string };
+  /** The block's own time in the log, ISO. */
+  ts?: string;
+  /** Epoch ms the pin was made. */
+  pinnedAt: number;
+}
+
+/** One pin with its whole text: `GET ?pin=<id>`, and the answer of a `POST`. */
+export type PinFull = Omit<PinRow, "excerpt" | "textLength"> & { text: string };
+
+
 /**
  * One member of the crew (CREW_PROTOCOL.md §9.2) — mirrors `ServerSummary` in bridge/types.ts field
  * for field. The lead's own entry is included, so the phone renders one uniform host list instead of
@@ -623,6 +723,17 @@ export interface ServerSummary {
    * keeps a new phone honest in front of an old lead (§7.1).
    */
   linkState?: "reconnecting" | "attention";
+  /**
+   * The registry name of the multiplexer this member drives, for `collie sessions`; mirrors
+   * `ServerSummary.mux` in bridge/types.ts. Absent when the member never said. The Machines sheet
+   * lists it under a machine that runs more than one instance (M77).
+   */
+  mux?: string;
+  /**
+   * The hostname the member reads itself (M77). Two rows with the same `host` are one machine
+   * (lib/machines.ts). Absent on an older member: such a row is a machine of its own.
+   */
+  readonly host?: string;
   /** Epoch ms, stamped by the LEAD on receipt — never the peer's clock (§10.2). `0` = never answered. */
   lastSeenAt: number;
 }
@@ -705,6 +816,10 @@ export interface CrewMemberStatus {
    * the word it always printed.
    */
   linkState?: "reconnecting" | "attention";
+  /** The multiplexer this member drives, by registry name (M76). Absent when it has not said. */
+  mux?: string;
+  /** The hostname the member reads itself (M77), the key the crew page groups by. Absent: its own machine. */
+  readonly host?: string;
 }
 
 /**
@@ -970,6 +1085,51 @@ export interface ReleaseLineReceipt {
   changedAt: number | null;
   requestId: string;
   /** The same request id with the same line was seen before; nothing changed this time. */
+  replay?: true;
+}
+
+/** Which switch decided the anonymous install count (`bridge/telemetry.ts`, a closed set). */
+export type TelemetryDecider =
+  | "do_not_track"
+  | "env"
+  | "config"
+  | "settings"
+  | "ci"
+  | "mirror"
+  | "dev_build"
+  | "url"
+  | "default";
+
+/** The phone's own switch: two words. */
+export type TelemetrySetting = "on" | "off";
+
+/** The exact message the next ping would send. A test on the bridge pins its key set. */
+export interface TelemetryPing {
+  v: number;
+  id: string;
+  day: string;
+  version: string;
+  os: string;
+  arch: string;
+  install: string;
+  line: string;
+}
+
+/** `GET /api/telemetry`: whether the count is on, which switch decided, and the next message. */
+export interface TelemetryView {
+  on: boolean;
+  decidedBy: TelemetryDecider;
+  /** The phone's switch as saved on the machine, or null when it never made one. */
+  setting: TelemetrySetting | null;
+  /** The exact JSON of the next ping; null when the count is off. */
+  next: TelemetryPing | null;
+}
+
+/** The answer of `POST /api/telemetry`: the same view, with the request id it answers. */
+export interface TelemetryReceipt extends TelemetryView {
+  ok: true;
+  requestId: string;
+  /** The same request id with the same setting was seen before; nothing changed this time. */
   replay?: true;
 }
 
@@ -1261,6 +1421,12 @@ export interface PaneReadResponse {
    * URL; absent for every other pane.
    */
   logicalText?: string;
+  /**
+   * Sent only on a Load older read (`?purpose=older`) that came back without the rows above the
+   * screen: one sentence that says why, in the multiplexer's words (herdr-core: the agent waits on
+   * you, or the core still reads them). The mirror shows it under Load older.
+   */
+  olderNote?: string;
   /** Set to true by the client when the server returns 304 Not Modified. Never sent over the wire. */
   notModified?: boolean;
 }
@@ -1285,25 +1451,54 @@ export interface ToolQuestion {
   options: readonly { label: string; description?: string }[];
 }
 
+/** One task of a plan, and where it stands. Other harnesses' words are mapped onto these five by the bridge. */
+export type PlanStatus = "pending" | "in_progress" | "done" | "blocked" | "dropped";
+export interface PlanTask {
+  title: string;
+  status: PlanStatus;
+  note?: string;
+}
+
 /**
  * What a tool call did, in the shape the thing it did suggests. Mirrors
- * `bridge/journal/tool-call.ts`, where the reasoning for the nine kinds lives.
+ * `bridge/journal/tool-call.ts`, where the reasoning for the ten kinds lives (ADR 0119).
  *
  * Every branch's FIRST field is the one a person would name the call by, so a row can be drawn from
- * `kind` plus one field. A tool outside the nine is not an error, it is `other`, which still carries
+ * `kind` plus one field. A tool outside the ten is not an error, it is `other`, which still carries
  * a name and a summary.
  */
 export type ToolCall =
   | { kind: "edit"; path: string; added: number; removed: number; diff?: Hunk[]; created?: boolean }
-  | { kind: "execute"; command: string; description?: string; exitCode?: number }
+  /** `background`: started and returned at once (`bash_background`, `monitor`). `ongoing`: it has not ended yet, though its start result is in. */
+  | {
+      kind: "execute";
+      command: string;
+      description?: string;
+      exitCode?: number;
+      background?: true;
+      ongoing?: true;
+      jobId?: string;
+      /** Epoch ms. */
+      startedAt?: number;
+      /** Epoch ms. */
+      endedAt?: number;
+    }
   | { kind: "read"; path: string; range?: [number, number] }
   | { kind: "search"; query: string; where?: string; hits?: number }
   | { kind: "fetch"; url: string }
   | { kind: "delete" | "move"; path: string; to?: string }
-  | { kind: "task"; agent?: string; summary: string; agentId?: string }
+  /**
+   * `agentId` names the subagent's own log. `jobId`: the harness's name for the background job that
+   * runs it (Oh My Pi), with no transcript behind it. `ongoing`: a background sub-agent that has not
+   * finished, though its start result is in.
+   */
+  | { kind: "task"; agent?: string; summary: string; agentId?: string; jobId?: string; ongoing?: true }
+  /** A task list the agent keeps rewriting (ADR 0119). On pi its updates are folded into the one card. */
+  | { kind: "plan"; name: string; tasks: readonly PlanTask[] }
   /** The agent asked the operator to choose. One entry per question the call carried. `answers[i]` is the list of chosen labels for question `i`, present only once the call completed with answers. */
   | { kind: "question"; name: string; summary: string; questions: readonly ToolQuestion[]; answers?: readonly (readonly string[])[] }
-  | { kind: "other"; name: string; summary: string };
+  /** `quiet`: bookkeeping (memory, phase, job list) drawn as a muted line. */
+  | { kind: "other"; name: string; summary: string; quiet?: true };
 
 /**
  * One renderable piece of a transcript turn. Mirrors `bridge/transcript.ts` (wire types are
@@ -1636,6 +1831,13 @@ export interface ChatWindowBody {
    */
   queued?: string[];
   /**
+   * The pane's queued sends as Collie's receipts know them, oldest first (ADR 0122): STATE like
+   * {@link queued}, whole on every answer. Never repeated in {@link queued}, which stays the journal's.
+   * Absent when there is none and from a bridge one release behind. Mirrors `ChatWindowBody` in
+   * bridge/journal/live.ts.
+   */
+  queuedSends?: QueuedSendRow[];
+  /**
    * The keys that deliver {@link queued} now, in the neutral key spelling, declared by the bridge
    * for this session's harness. Absent for every harness that has no such key and from a bridge one
    * release behind, and both read as "no Send now button". Mirrors `ChatWindowBody` in
@@ -1649,6 +1851,18 @@ export interface ChatWindowBody {
    * `ChatWindowBody` in bridge/journal/live.ts.
    */
   lastPrompt?: ChatPrompt;
+}
+
+/**
+ * One queued card as Collie's receipts know it (ADR 0122): its request id, whether it waits in the
+ * harness (`queued`), Stop gave it back to the input box (`returned`, a run of texts given back
+ * together is one card), or Collie cannot tell where it went (`unconfirmed`), and its text, masked when
+ * the bridge masks. Mirrors `QueuedSendWire` in bridge/journal/receipt-queue.ts.
+ */
+export interface QueuedSendRow {
+  requestId: string;
+  state: "queued" | "returned" | "unconfirmed";
+  text: string;
 }
 
 /** The operator's newest prompt, capped by the bridge. Mirrors `ChatPrompt` in bridge/journal/live.ts. */
@@ -1834,9 +2048,7 @@ export const MUX_CAPABILITIES = [
   "renameTab",
   "closeTab",
   "createSpace",
-  "listWorktrees",
   "createWorktree",
-  "openWorktree",
   "pushTopologyEvents",
   "pushPaneEvents",
   // A durable program's own controls, declared from its `caps` (bridge/mux/capabilities.ts). Unlike
@@ -2018,7 +2230,7 @@ export interface LaunchersAdding {
 }
 
 /** Why an item does not start on that machine now. Mirrors `LauncherItem.reason` in bridge/types.ts. */
-export type LauncherItemReason = "not_found" | "adds_off" | "free_text_off";
+export type LauncherItemReason = "not_found" | "adds_off" | "free_text_off" | "no_folder";
 
 /**
  * One thing the New page may start on ONE machine, with its availability there (ADR 0094). Mirrors
@@ -2044,6 +2256,11 @@ export interface LauncherItem {
   branch: boolean;
   available: boolean;
   reason?: LauncherItemReason;
+  /**
+   * `lead`: one of the lead's rows, offered for this machine (ADR 0127). Mirrors `LauncherItem.from`
+   * in bridge/types.ts: set only in a lead's answer for another host, absent on a machine's own items.
+   */
+  from?: "lead";
   id?: string;
   addedBy?: string;
   addedAt?: number;
@@ -2304,6 +2521,35 @@ export interface SttCapability {
 export type WhistleState = "absent" | "downloading" | "ready" | "failed";
 
 /**
+ * The math pack on the host (ADR 0132), as `GET`, `POST` and `DELETE /api/math` answer it. Mirrors
+ * `MathPackStatus` in bridge/math/store.ts. A status read fetches nothing; only the POST downloads.
+ * `error` is one word for the line under the rows, never an upstream body.
+ */
+export type MathPackStatus =
+  | { state: "absent"; error?: "download-failed" | "low-space" | "hash-mismatch" | "bad-pack" }
+  | { state: "downloading"; received: number; total: number | null }
+  | { state: "ready"; version: string; source: "store" | "build"; bytes: number | null }
+  | { state: "unavailable"; reason: "dev-build" | "no-pack" };
+
+/**
+ * The host's copy of the community theme registry (M59 spec 06), as `GET` and `POST
+ * /api/themes/registry` answer it. Mirrors `RegistryStatus` in bridge/themes/registry.ts. `themes`
+ * is typed as raw JSON on purpose: the phone runs `readRegistryEntry` over every entry before it
+ * draws one, whatever the host checked.
+ */
+export interface ThemeRegistryStatus {
+  fetchedAt: string | null;
+  ageMs: number | null;
+  generated: string | null;
+  themes: JsonValue[];
+  dropped: number;
+  fetching: boolean;
+  error?: "fetch-failed" | "too-big" | "bad-registry";
+  /** The address in use, only when the operator's `COLLIE_THEME_REGISTRY_URL` replaced the default. */
+  address?: string;
+}
+
+/**
  * The Whistle model on the host and the host engine's switch, as `GET /api/stt/whistle` and
  * `/api/config` report them. Mirrors `WhistleStatus` in bridge/types.ts.
  */
@@ -2398,6 +2644,9 @@ export interface NotifyPrefs {
   blocked: boolean;
   /** Push when an agent finishes its task. Default off. */
   done: boolean;
+  /** Send each alert as its own notification, one per agent, instead of one summary per machine.
+   *  Default off. */
+  individual: boolean;
   /** Push when a new Collie version is available (a restart or upgrade is waiting). Default on. */
   updates: boolean;
   /** Push before an agent pane's prompt cache expires. Default off, and it covers EVERY pane — the
@@ -2482,7 +2731,7 @@ export type WorktreePlanResponse =
       currentBranch: string | null;
       remembered?: { base: "default" | "current"; folder: "default" | "parent"; parent?: string };
       branchValid?: boolean;
-      defaultTarget?: { path: string; exists: boolean };
+      defaultTarget?: { path: string; exists: boolean; reason?: string };
       parentTarget?:
         | { ok: true; path: string }
         | { ok: false; error: string; code?: ApiErrorCode; detail?: ApiErrorDetail };
@@ -2516,3 +2765,28 @@ export type PaneProgress =
   | { kind: "percent"; value: number; label?: string };
 
 
+
+/** A subscription window, by the label the phone draws for it. Mirrors `UsageWindow` in bridge/usage.ts. */
+export type UsageWindow = "5h" | "7d";
+
+/** One subscription window's reading. Mirrors `UsageLimit` in bridge/usage.ts. */
+export interface UsageLimit {
+  window: UsageWindow;
+  /** Percent of the window used, 0 to 100. */
+  used: number;
+  /** When the window resets, epoch ms. */
+  resetsAt?: number;
+}
+
+/** A pane's usage numbers. Mirrors `PaneUsage` in bridge/usage.ts; every part absent when unreported. */
+export interface PaneUsage {
+  /** Percent of the context window used, 0 to 100. */
+  context?: number;
+  limits?: UsageLimit[];
+  /**
+   * The session's running cost in US dollars. Claude Code reports it through the wrapped status line;
+   * pi, Oh My Pi and OpenCode write it in their logs and the bridge sums it; Codex reports none.
+   * **Absent, never a placeholder**: no `0` for "unknown". Drawn after the dots (components/model-tag.tsx).
+   */
+  cost?: number;
+}

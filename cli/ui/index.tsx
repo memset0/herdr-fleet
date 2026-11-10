@@ -65,8 +65,12 @@ function Findings({ findings }: { findings: readonly UiFinding[] }): React.React
             <Text bold>{f.check}</Text>
           </Box>
           <Box flexDirection="column" flexGrow={1}>
-            <Text>{f.detail}</Text>
-            {f.remedy === null ? null : <Text color="cyan">→ {f.remedy}</Text>}
+            <Text wrap="wrap">{f.detail}</Text>
+            {f.remedy === null ? null : (
+              <Text color="cyan" wrap="wrap">
+                → {f.remedy}
+              </Text>
+            )}
           </Box>
         </Box>
       ))}
@@ -77,6 +81,7 @@ function Findings({ findings }: { findings: readonly UiFinding[] }): React.React
 export function Doctor({ view }: { view: DoctorView }): React.ReactElement {
   return (
     <Box flexDirection="column" paddingLeft={1}>
+      {view.instance === undefined ? null : <Text>{view.instance}</Text>}
       <Text bold>{view.heading}</Text>
       <Box marginTop={1} flexDirection="column">
         <Text dimColor>local:</Text>

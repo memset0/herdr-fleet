@@ -5,18 +5,19 @@ import { WALKY_REPORT_FIELD } from "../walky/crew.ts";
 import { readWalkyReport } from "../walky/parse.ts";
 import type { WalkyReceipt } from "../walky/types.ts";
 import type { MachineSample, MuxConfig, SessionCard, SnapshotResponse } from "../types.ts";
-import { forwardToPeer, type ForwardDeps, type ForwardTransport } from "./forward.ts";
+import { forwardToPeer, MemberPaneReads, type ForwardDeps, type ForwardTransport } from "./forward.ts";
 import {
   mergeSnapshot,
   narrowPeerBody,
   parsePeerSnapshot,
   SWEEP_VIEW,
+  type MergeContext,
   type PeerContribution,
   type PeerSnapshotBody,
   type SnapshotPlan,
 } from "./merge.ts";
-import { parsePeerVersion, sweepPeers, type CrewLink, type PeerOutcome } from "./peer-client.ts";
-import type { HostResolution, HostSelector, CrewRegistry, PeerState } from "./registry.ts";
+import { parsePeerStatus, parsePeerVersion, sweepPeers, type CrewLink, type LaunchersCopyAnswer, type PeerOutcome } from "./peer-client.ts";
+import type { HostResolution, HostSelector, CrewRegistry, PeerHealth, PeerState } from "./registry.ts";
 import { PAIRING_LABEL_COLLISION } from "./router.ts";
 import {
   pairingPushNeeded,
@@ -24,6 +25,7 @@ import {
   parsePairingReport,
   type PairingSync,
 } from "./standby-devices.ts";
+import { copyPushNeeded, parseCopyReport, type CopiedRow } from "./standby-launchers.ts";
 import type { Warrant } from "./trust-store.ts";
 import { parseWarrantReport, warrantPushNeeded, type WarrantPush } from "./warrant.ts";
 import {
@@ -136,6 +138,9 @@ export const CONTACT_RESET_FLOOR_MS = 10_000;
  */
 export const MAX_CONTACT_RESETS = 5;
 
+/** How often one member's dropped stale replies make a journal line. Every drop still happens. */
+export const STALE_DIAL_LOG_REPEAT_MS = 60_000;
+
 /**
  * `memory` with its incompatible backoff forgotten — pure, and the only shape a reset may take.
  *
@@ -224,6 +229,13 @@ export interface CrewLeadDeps {
   /** This collie's member id and label — the `servers[0]` entry (§9.2). */
   readonly self: { readonly id: string; readonly name: string };
   /**
+   * The registry name of the multiplexer this lead drives, read on every merge (the primary session
+   * can change under a running bridge). The same source `hello` states; `null` or absent when none.
+   */
+  readonly selfMux?: () => string | null;
+  /** This lead's own host name for its `servers` row (M77 spec 01); `null` or absent when the OS gives none. */
+  readonly selfHost?: () => string | null;
+  /**
    * Called with a body **that just parsed on this sweep** — never with a retained last-good one.
    * That distinction is the whole contract: `PeerNotifier` derives transitions by diffing successive
    * bodies, so re-offering the retained body of an unreachable peer would make a peer going down
@@ -281,6 +293,11 @@ export interface CrewLeadDeps {
    * every lead that has never named a deputy and every test that is not about the standby door.
    */
   readonly pairing?: PairingDistribution;
+  /**
+   * The launcher-row copy to the DEPUTY (ADR 0127 point 5, §18.14). Absent ⇒ this lead sends none,
+   * which is every lead that has never named a deputy and every test that is not about the copy.
+   */
+  readonly launchersCopy?: LaunchersCopyDistribution;
   readonly now?: () => number;
   /**
    * Where a `[crew]` line goes. Defaults to `console.log`, which is the bridge's journal.
@@ -321,6 +338,26 @@ export interface PairingDistribution {
    * collision finding raised by silence would be a fact this lead never learned.
    */
   collision?(labels: readonly string[] | null): void;
+}
+
+/**
+ * The lead's half of ADR 0127 point 5: keep the DEPUTY's copy of the crew's launcher rows current.
+ *
+ * The pairing sync's discipline, on the same sweep: the deputy reports the digest of the copy it holds
+ * (`launchersDigest`), and the lead sends only when its own differs. One difference: a deputy that
+ * predates the route answers 404, and the lead then stops sending to it until the next connect.
+ */
+export interface LaunchersCopyDistribution {
+  /** The deputy this lead has designated, or `null`. Read through the store, never captured. */
+  deputy(): string | null;
+  /**
+   * The rows a launch on this lead matches, as they would be sent, with their digest. `null` ⇒ nothing
+   * to send (no crew, or rows this lead cannot read). An EMPTY list is still something to send: a row
+   * removed on the lead has to go from the deputy's copy too.
+   */
+  current(): Promise<{ readonly rows: readonly CopiedRow[]; readonly digest: string } | null>;
+  /** Deliver it. `no_route` is a deputy that predates the route (404). */
+  push(link: CrewLink, rows: readonly CopiedRow[]): Promise<LaunchersCopyAnswer>;
 }
 
 /** What the sweep needs to state a release and hand out a turn (§20, M16/04). */
@@ -439,6 +476,7 @@ export class CrewLead {
    */
   private readonly loggedState = new Map<string, string>();
   private readonly log: (line: string) => void;
+  private readonly paneReads: MemberPaneReads;
   private readonly now: () => number;
   private sweeping = false;
   /** Members with a verdict probe in flight. At most one per member, ever — see {@link probe}. */
@@ -447,6 +485,13 @@ export class CrewLead {
   private readonly pushingWarrant = new Set<string>();
   /** At most one pairing sync in flight. **Nothing about what landed is remembered** — §18.14. */
   private pushingPairing = false;
+  /** At most one launcher copy in flight. What landed is the deputy's own report, not a memory here. */
+  private pushingCopy = false;
+  /**
+   * Deputies that answered the launcher copy with a 404: a build before the route. Nothing is sent to
+   * them until the next connect, which is a failed sweep answer or a new version on one (ADR 0127).
+   */
+  private readonly copyRouteMissing = new Set<string>();
   /** Per member: when its backoff was last cleared by contact, and how many times running (M20/02). */
   private readonly contactResets = new Map<string, { at: number; count: number }>();
   /**
@@ -466,10 +511,13 @@ export class CrewLead {
    * owns that word (`registry.ts`, `warrant.ts`), and these two must never be read as the same thing.
    */
   private readonly dialGenerations = new Map<string, number>();
+  /** Per member: when {@link staleDial} last wrote its line. See {@link STALE_DIAL_LOG_REPEAT_MS}. */
+  private readonly staleLogged = new Map<string, number>();
 
   constructor(private readonly deps: CrewLeadDeps) {
     this.now = deps.now ?? Date.now;
     this.log = deps.log ?? ((line) => console.log(line));
+    this.paneReads = new MemberPaneReads((line) => this.log(line));
   }
 
   /**
@@ -492,6 +540,12 @@ export class CrewLead {
   private staleDial(memberId: string, dialGeneration: number, what: string): boolean {
     const current = this.dialGenerations.get(memberId) ?? 0;
     if (dialGeneration >= current) return false;
+    // A patient hello overtaken by the next sweep is routine under host load, so the LINE is
+    // rate-limited per member. The drop above it is not.
+    const now = this.now();
+    const last = this.staleLogged.get(memberId);
+    if (last !== undefined && now - last < STALE_DIAL_LOG_REPEAT_MS) return true;
+    this.staleLogged.set(memberId, now);
     this.log(`[crew] ${memberId}: dropped a stale ${what} reply, dial ${dialGeneration} of ${current}`);
     return true;
   }
@@ -525,6 +579,7 @@ export class CrewLead {
         this.loggedState.delete(id);
         this.contactResets.delete(id);
         this.dialGenerations.delete(id);
+        this.staleLogged.delete(id);
         this.deps.onPeerGone?.(id);
       }
 
@@ -587,7 +642,7 @@ export class CrewLead {
         // SAFETY: `value` is a peer's HTTP body after `res.json()` — a JsonValue by construction,
         // the same cast and the same reason as `foldPeerMemory`'s below.
         const seen = outcome.ok ? parsePeerVersion(outcome.value as JsonValue) : null;
-        this.deps.registry.record(memberId, outcome, seen === null ? undefined : { version: seen });
+        const recorded = this.deps.registry.record(memberId, outcome, seen === null ? undefined : { version: seen });
         // A sweep that died on its OWN clock has learned nothing about the machine (§10.4). Re-ask on
         // the patient budget, off this tick — never awaited, so the strict budget still bounds the
         // poll exactly as §10.1 requires. A refusal, a reset or a DNS failure is skipped: those are
@@ -603,6 +658,8 @@ export class CrewLead {
         if (seen !== null) this.noteSweptVersion(memberId, seen);
         if (outcome.ok) this.learnCapabilities(link);
         else this.muxAsked.delete(memberId);
+        // A dropped link ends the connect a launcher copy's 404 was learned on: the next one asks again.
+        if (!outcome.ok) this.copyRouteMissing.delete(memberId);
         // §18.10: this member follows somebody else. Handed straight over — a lead that has been
         // deposed stops sweeping, so there is nothing here to back off or remember.
         if (!outcome.ok && outcome.state === "conflicted") {
@@ -617,6 +674,10 @@ export class CrewLead {
           // the same cast and the same reason as `foldPeerMemory`'s. `parsePeerPreflight` re-checks
           // every field, and anything half-formed reads as `null`, which is unknown and blocks.
           this.deps.registry.recordPreflight(memberId, parsePeerPreflight(outcome.value as JsonValue));
+          // M76 spec 04: its multiplexer name and pane count, off the same answer and for the same reason.
+          // SAFETY: the same cast and the same reason as the line above; `parsePeerStatus` re-checks
+          // both fields and answers `null` for anything it cannot trust.
+          this.deps.registry.recordStatus(memberId, parsePeerStatus(outcome.value as JsonValue));
           // ADR 0084: that member's own load, off the same answer, stamped on THIS lead's clock.
           // SAFETY: the same cast and the same reason as the line above; `parsePeerMachineStats`
           // re-checks every field and answers `null` for anything it cannot trust.
@@ -632,7 +693,7 @@ export class CrewLead {
         // The question the reset counter exists to ask is now settled for this member: it answered a
         // real dial. Whatever it took to get here, the ladder starts from zero again (M20/02).
         if (outcome.ok) this.contactResets.delete(memberId);
-        this.logVerdict(memberId, outcome, previous, next);
+        this.logVerdict(memberId, outcome, previous, next, recorded.health);
         // Identity, not equality: `parsePeerSnapshot` mints a fresh object on every success and the
         // fold RETAINS the old one on every failure, so `!==` is exactly "this poll produced a body".
         // An unchanged peer still yields a new object each poll — a diff of nothing, which is what
@@ -663,6 +724,7 @@ export class CrewLead {
       // Neither is the other's precondition, so neither may be the other's single point of failure.
       await this.guarded("warrant distribution", () => this.distributeWarrant(folded, outcomes));
       await this.guarded("pairing sync", async () => this.distributePairing(folded, outcomes));
+      await this.guarded("launcher copy", async () => this.distributeLaunchersCopy(folded, outcomes));
     } catch (err) {
       // Defensive: nothing above is supposed to reject. If something does, the crew degrades to
       // "stale" rather than taking the lead's poll loop down with it.
@@ -750,7 +812,12 @@ export class CrewLead {
     outcome: PeerOutcome<unknown>,
     previous: PeerMemory | undefined,
     next: PeerMemory,
+    health: PeerHealth,
   ): void {
+    // A miss the registry HELD (UNREACHABLE_AFTER_SWEEPS) is not a transition: the verdict is still
+    // `reachable`, so it writes nothing and leaves the key alone. A blip and its recovery are then
+    // silent, and a real outage still writes one pair, on its second miss and on its return.
+    if (!outcome.ok && health === "reachable") return;
     // The runs count is part of the key: each step of the ladder is its own transition, and the
     // operator needs the step it reached, not just that it is on one.
     const key = outcome.ok
@@ -893,6 +960,41 @@ export class CrewLead {
   }
 
   /**
+   * Keep the deputy's copy of the crew's launcher rows current (ADR 0127 point 5, §18.14).
+   *
+   * To the deputy and to nobody else, and only when the deputy's own report differs from what this lead
+   * would send. Off the tick and never awaited, as the pairing sync is: reading the rows may touch the
+   * disk, and a sweep still costs one strict budget (§10.1).
+   */
+  private distributeLaunchersCopy(due: readonly CrewLink[], outcomes: Map<string, PeerOutcome<unknown>>): void {
+    const distribution = this.deps.launchersCopy;
+    if (distribution === undefined || this.pushingCopy) return;
+    const deputy = distribution.deputy();
+    if (deputy === null || this.copyRouteMissing.has(deputy)) return;
+    const link = due.find((l) => l.memberId === deputy);
+    const outcome = outcomes.get(deputy);
+    if (link === undefined || outcome === undefined || !outcome.ok) return;
+    // SAFETY: `value` is that member's HTTP body after `res.json()`, a JsonValue by construction, the
+    // same cast and the same reason as `parsePairingReport`'s; `parseCopyReport` re-checks it.
+    const reported = parseCopyReport(outcome.value as JsonValue);
+    this.pushingCopy = true;
+    void (async () => {
+      try {
+        const payload = await distribution.current();
+        if (payload === null || !copyPushNeeded(payload.digest, reported)) return;
+        const answer = await distribution.push(link, payload.rows);
+        if (answer !== "no_route") return;
+        this.copyRouteMissing.add(deputy);
+        this.log(`[crew] ${deputy}: keeps no copy of the launcher rows (an older Collie), not sent again until it reconnects`);
+      } catch (err) {
+        console.warn(`[crew] launcher copy failed: ${err instanceof Error ? err.message : String(err)}`);
+      } finally {
+        this.pushingCopy = false;
+      }
+    })();
+  }
+
+  /**
    * Deliver one warrant, off the tick and never awaited — the same discipline {@link probe} follows,
    * for the same reason: a sweep must cost one strict budget no matter what else it decided to do.
    *
@@ -1001,6 +1103,8 @@ export class CrewLead {
     this.sweptVersions.set(memberId, version);
     if (before === undefined || before === version) return;
     this.muxAsked.delete(memberId);
+    // A new build may have the launcher-copy route a 404 said it lacked (ADR 0127 point 5).
+    this.copyRouteMissing.delete(memberId);
     this.log(`[crew] ${memberId}: now runs ${version} (was ${before}), asking its hello again`);
   }
 
@@ -1078,6 +1182,7 @@ export class CrewLead {
       readonly audit?: ForwardDeps["audit"];
       readonly device?: string | null;
       readonly mask?: ForwardDeps["mask"];
+      readonly leadRow?: ForwardDeps["leadRow"];
     } = {},
   ): Promise<Response> {
     return forwardToPeer(req, url, {
@@ -1093,6 +1198,8 @@ export class CrewLead {
       // the phone's cadence rather than the sweep's idle one. The registry owns the rules (successes
       // only, reachable members only, monotone) — this class just supplies the member id.
       onExchange: (receivedAt) => void this.deps.registry.recordExchange(resolved.link.memberId, receivedAt),
+      // A member pane the lead could not read for the phone leaves a line, once while it keeps failing.
+      paneReads: this.paneReads,
       ...opts,
     });
   }
@@ -1218,6 +1325,14 @@ export class CrewLead {
     );
   }
 
+  /** This lead's id and label, plus the multiplexer it drives and its host name when it names them. */
+  private selfWithMux(): MergeContext["self"] {
+    const mux = this.deps.selfMux?.() ?? null;
+    const host = this.deps.selfHost?.() ?? null;
+    const withMux = mux === null || mux === "" ? this.deps.self : { ...this.deps.self, mux };
+    return host === null || host === "" ? withMux : { ...withMux, host };
+  }
+
   /**
    * Fold the lead's own body into the merged one. The only re-serialisation on a crew link (§9.2).
    *
@@ -1228,7 +1343,7 @@ export class CrewLead {
    */
   merge(local: SnapshotResponse, plan: SnapshotPlan): SnapshotResponse {
     return mergeSnapshot(local, {
-      self: this.deps.self,
+      self: this.selfWithMux(),
       peers: this.contributions().map((c) =>
         Object.assign({}, c, { body: narrowPeerBody(c.body, plan.peer(c.state.memberId)) }),
       ),

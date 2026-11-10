@@ -1,7 +1,8 @@
 import { useRef, useState } from "react";
-import { TerminalSquare } from "lucide-react";
+import { Icon } from "@/components/icons/icon";
 
 import { cn } from "@/lib/utils";
+import { useTabLook, type TabLook } from "@/lib/tab-look";
 import { LabelledStrip, STRIP_TAP_TARGET } from "@/components/ui/labelled-strip";
 import { StatusDot } from "@/components/status-badge";
 // DOWNSTREAM PORT — one name, and only the name. `FleetPaneActions`/`FleetTabActions` take exactly
@@ -13,6 +14,7 @@ import { FleetPaneActions as PaneActionsSheet } from "@/components/fleet-row-act
 import { useLongPress } from "@/hooks/use-long-press";
 import { paneName } from "@/lib/pane-name";
 import { paneOrdinals } from "@/lib/pane-ordinal";
+import { shownStatus } from "@/lib/triage";
 import type { AgentView } from "@/lib/types";
 import type { Scope } from "@/lib/scope";
 import { t } from "@/lib/i18n";
@@ -52,6 +54,14 @@ interface PaneStripProps {
 // speaks when it has to: a pill carries a small position number when another pill beside it would
 // otherwise read identically (lib/pane-ordinal.ts), and nothing otherwise.
 //
+// THE FOLDER LOOK (theme surface word `tabs: folder`, lib/tab-look.ts) changes this row's paint and
+// nothing else. The row stands on the page colour (`bg-background`) instead of the chrome ground, so
+// it reads as the inside of the open folder tab above it (tab-strip.tsx, whose open tab is filled with
+// the same colour). The open pane is a cell tinted 14 percent with the theme's `tab-active` colour
+// and ringed 1px in it, in full ink and semibold; the inverted pill is gone. The other panes are
+// `secondary` cells in the muted ink. Every size, every hit box and the box itself are the plain
+// look's: the ring is inset, so nothing moves.
+//
 // Mobile deliberately doesn't replicate the desktop's pane tiling — a tab can
 // hold several panes, and this is just a quick way to flip between them. Rendered only when the tab
 // actually holds more than one pane (a lone pane needs no switcher), so it's an optional extra row.
@@ -69,6 +79,7 @@ export function PaneStrip({
   herd,
 }: PaneStripProps) {
   useLocale();
+  const look = useTabLook();
   const [sheetPane, setSheetPane] = useState<AgentView | null>(null);
   // Actions need both callbacks wired (revalidate on rename, navigate on close); without them the
   // pills stay plain tap-to-switch — long-press is inert.
@@ -119,7 +130,7 @@ export function PaneStrip({
           a `pointer-events: auto` child (https://bugs.webkit.org/show_bug.cgi?id=183870). */}
       <LabelledStrip
         label={t("space.paneStrip.title")}
-        className="flow-root bg-chrome"
+        className={cn("flow-root", look === "folder" ? "bg-background" : "bg-chrome")}
         scrollerClassName="px-0 py-0"
         scrollerRef={scrollerRef}
       >
@@ -129,6 +140,7 @@ export function PaneStrip({
           {panes.map((p) => (
             <PanePill
               key={p.paneId}
+              look={look}
               pane={p}
               active={p.paneId === currentPaneId}
               onSelect={onSelect}
@@ -160,6 +172,7 @@ export function PaneStrip({
 }
 
 function PanePill({
+  look,
   pane,
   active,
   ordinal,
@@ -167,6 +180,8 @@ function PanePill({
   onLongPress,
   onTapActive,
 }: {
+  /** The theme's tab look (lib/tab-look.ts). */
+  look: TabLook;
   pane: AgentView;
   active: boolean;
   /** This pane's 1-based place in the row, given only when a neighbour reads the same (pane-ordinal.ts). */
@@ -229,15 +244,20 @@ function PanePill({
         // (see the row's comment in PaneStrip above).
         STRIP_TAP_TARGET,
         "flex h-6 min-w-11 shrink-0 select-none [-webkit-touch-callout:none] items-center justify-center gap-1.5 whitespace-nowrap rounded-md border border-transparent px-2.5 text-[11px] font-medium transition-colors before:-inset-y-[2px] active:scale-95 focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring",
-        active
-          ? "bg-primary text-primary-foreground"
-          : "bg-muted text-muted-foreground hover:bg-muted/70",
+        look === "folder"
+          ? // The folder look: a tinted, ringed cell for the open pane, a `secondary` cell for the rest.
+            active
+            ? "bg-[color-mix(in_oklab,var(--tab-active)_14%,var(--background))] font-semibold text-foreground ring-1 ring-inset ring-tab-active"
+            : "bg-secondary text-muted-foreground hover:bg-secondary/70"
+          : active
+            ? "bg-primary text-primary-foreground"
+            : "bg-muted text-muted-foreground hover:bg-muted/70",
       )}
     >
       {isShell ? (
-        <TerminalSquare className="size-3.5 shrink-0" />
+        <Icon name="shell-pane" className="size-3.5 shrink-0" />
       ) : (
-        <StatusDot status={pane.status} live className="size-2.5" />
+        <StatusDot status={shownStatus(pane)} live className="size-2.5" />
       )}
       <span>{name}</span>
       {/* The number is part of the pill's own text, not a decoration beside it: a screen reader
@@ -246,7 +266,7 @@ function PanePill({
         <span
           className={cn(
             "font-mono text-[10px]",
-            active ? "text-primary-foreground/70" : "text-muted-foreground/60",
+            active ? (look === "folder" ? "text-foreground/70" : "text-primary-foreground/70") : "text-muted-foreground/60",
           )}
         >
           {ordinal}

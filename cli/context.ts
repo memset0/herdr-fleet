@@ -1,9 +1,10 @@
-import { chmodSync, existsSync, readFileSync, statSync } from "node:fs";
+import { chmodSync, existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
 import { DEFAULT_PORT, defaultSocketPath, normaliseBasePath, resolveStateDir } from "../bridge/config.ts";
-import { HOST } from "../bridge/host.ts";
+import { HOST, type Host } from "../bridge/host.ts";
+import { drivesHerdrCore } from "../bridge/mux/herdr-core/pick.ts";
 import {
   configFilePaths,
   hostFilePerms,
@@ -471,6 +472,65 @@ export function resolveInstance(env: Environment): string | null {
   return raw;
 }
 
+/**
+ * The word for the unsuffixed instance. `collie doctor` prints it on its first line, and
+ * `--instance default` (M71/04) names it.
+ */
+export const DEFAULT_INSTANCE = "default";
+
+/**
+ * The ambient environment `collie doctor --instance <name>` resolves from: `env` with the lane chosen
+ * by the flag. The name is set as `COLLIE_INSTANCE` (`default` removes it instead), and the three
+ * values that would pull the run toward another lane are removed, so the lane's own `.env` decides
+ * them: an injected `HERDR_PLUGIN_CONFIG_DIR` out-ranks the instance in {@link resolveConfigDir},
+ * and `COLLIE_STATE_DIR` and `COLLIE_PORT` exported for lane A would otherwise be read as lane B's
+ * until its `.env` happened to override them (the default lane's `.env` sets neither). Pure.
+ */
+export function instanceAmbient(env: Environment, name: string): Environment {
+  const out: Environment = { ...env };
+  delete out.HERDR_PLUGIN_CONFIG_DIR;
+  delete out.COLLIE_STATE_DIR;
+  delete out.COLLIE_PORT;
+  if (name === DEFAULT_INSTANCE) delete out.COLLIE_INSTANCE;
+  else out.COLLIE_INSTANCE = name;
+  return out;
+}
+
+/**
+ * The instances this machine has, read from the CONFIG root and not the state root (which also
+ * holds folders that are not instances): each `herdr.collie-<name>/` with a `.env` is `<name>`, and
+ * the unsuffixed `herdr.collie/.env` or the legacy `~/.config/collie/.env` is `default`, listed first.
+ * Names that do not fit {@link INSTANCE_PATTERN} are skipped. `listDir` returns `[]` for a dir that
+ * is not there.
+ */
+export function listInstances(
+  home: string,
+  fileExists: (path: string) => boolean,
+  listDir: (path: string) => readonly string[],
+): string[] {
+  const root = join(home, ".config", "herdr", "plugins", "config");
+  const prefix = `${PLUGIN_ID}-`;
+  const named = listDir(root)
+    .filter((entry) => entry.startsWith(prefix) && INSTANCE_PATTERN.test(entry.slice(prefix.length)))
+    .map((entry) => entry.slice(prefix.length))
+    .filter((name) => fileExists(join(root, `${prefix}${name}`, ".env")))
+    .toSorted();
+  const hasDefault =
+    fileExists(join(root, PLUGIN_ID, ".env")) || fileExists(join(home, ".config", "collie", ".env"));
+  return [...(hasDefault ? [DEFAULT_INSTANCE] : []), ...named.filter((name) => name !== DEFAULT_INSTANCE)];
+}
+
+/** {@link listInstances} over the real file system; a missing config root is no instances. */
+export function listInstancesOnDisk(home: string): string[] {
+  return listInstances(home, existsSync, (path) => {
+    try {
+      return readdirSync(path);
+    } catch {
+      return [];
+    }
+  });
+}
+
 // ── Assembly ─────────────────────────────────────────────────────────────────
 
 /** The home dir, with no environment to read it from: `$HOME`, else the passwd entry. */
@@ -535,17 +595,26 @@ export function loadContext(
      * the bridge's (`cli/task-scheduler.ts`), whose paths arrive on its command line, not in its env.
      */
     readonly ambient?: Environment;
+    /**
+     * The lane `collie doctor --instance <name>` chose (M71/04), already validated by the caller:
+     * it replaces the lane `ambient` names, through {@link instanceAmbient}. `default` is the
+     * unsuffixed instance.
+     */
+    readonly instance?: string;
   } = {},
 ): CliContext {
   const repairAcl = opts.repairAcl === true;
-  const ambient = opts.ambient ?? process.env;
+  const base = opts.ambient ?? process.env;
+  const ambient = opts.instance === undefined ? base : instanceAmbient(base, opts.instance);
   const root = pluginRoot();
   const home = resolveHome(ambient);
   const { dir: configDir, note } = resolveConfigDir({
     env: ambient,
     home,
     fileExists: existsSync,
-    askHerdr: () => askHerdrConfigDir(ambient, home),
+    // Never on a herdr-core host (M74 spec 04): it has no Herdr plugin registry to ask, and the
+    // config dir is Collie's own, `~/.config/collie`, unless the operator injected another.
+    askHerdr: () => (drivesCore(ambient, home) ? null : askHerdrConfigDir(ambient, home)),
   });
   if (note !== null) warn(note);
 
@@ -589,6 +658,36 @@ export function loadContext(
     stateDir: resolveStateDir(env, home),
     ...deriveSettings(env, home),
   };
+}
+
+/**
+ * Does the ambient environment drive herdr-core? `COLLIE_MUX` first, then a Herdr TUI install on
+ * this host (never the core), and only then the sockets. Windows has no core.
+ *
+ * The ambient environment is all there is here: this answers which config dir to use, so that dir's
+ * `.env` is not read yet. The unit passes `HERDR_PLUGIN_CONFIG_DIR`, so a supervised bridge never
+ * gets this far. A shell run on a TUI host has its install marker, so the socket being briefly gone
+ * (mid-update) does not stop Herdr being asked. Asking Herdr or not never moves a dir that holds a
+ * `.env`: Herdr's answer wins only where its `.env` exists, and that is the conventional dir anyway.
+ */
+export function drivesCore(
+  env: Environment,
+  home: string,
+  exists: (path: string) => boolean = existsSync,
+  host: Host = HOST,
+  list: (dir: string) => readonly string[] = listDirQuietly,
+): boolean {
+  if (host.platform === "win32") return false;
+  const tuiSocket = env.HERDR_SOCKET_PATH?.trim() || defaultSocketPath(host, env, home);
+  return drivesHerdrCore(tuiSocket, env, { home, exists, list });
+}
+
+function listDirQuietly(dir: string): readonly string[] {
+  try {
+    return readdirSync(dir);
+  } catch {
+    return [];
+  }
 }
 
 function askHerdrConfigDir(env: Environment, home: string): string | null {

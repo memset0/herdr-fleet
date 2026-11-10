@@ -8,10 +8,12 @@ import type { Confidence } from "./cache/claims.ts";
 import type { PaneCache } from "./cache/engine.ts";
 import type { ApiErrorDetail, ErrorCode } from "./error-codes.ts";
 import type { GitHead } from "./git-head.ts";
+import type { PaneUsage } from "./usage.ts";
 import type { ChatBody } from "./journal/live.ts";
 import type { AgentSessionRef, TranscriptEntry } from "./journal/types.ts";
 import type { MuxCapability, MuxSpaceCapacity, MuxTopologyLatency } from "./mux/capabilities.ts";
 import type { SttWireIdentity } from "./stt/config.ts";
+import type { PaneJob } from "./jobs-journal.ts";
 import type { PaneSubagent } from "./subagents.ts";
 import type { PaneTodo } from "./todos.ts";
 import type { UpdateRun } from "./update-run.ts";
@@ -26,6 +28,7 @@ export type { Confidence } from "./cache/claims.ts";
 export type { GitHead } from "./git-head.ts";
 export type { PaneTodo, PaneTodoStatus } from "./todos.ts";
 export type { PaneSubagent } from "./subagents.ts";
+export type { PaneJob } from "./jobs-journal.ts";
 
 export type AgentStatus = "idle" | "working" | "blocked" | "done" | "unknown";
 
@@ -60,9 +63,12 @@ export interface AgentView {
   /** User-set pane label (herdr `pane.rename`), when one is set; absent when the pane is unlabelled. */
   paneLabel?: string;
   /**
-   * Claude's OWN session name, set in-agent via `/rename` and read out of the pane's rendered text
-   * (see `extractClaudeSessionName` in state-engine.ts). Claude-only and derived, not a wire field —
-   * absent for unnamed sessions and every non-claude pane. Display priority is `paneLabel` first.
+   * The harness's OWN session name, set in-agent by the operator: Claude's via `/rename`, read
+   * out of the pane's rendered text (see `extractClaudeSessionName` in state-engine.ts), and
+   * Muse's user-given name, read out of its journal's `session.name.changed` rows (see
+   * `museSessionNameReader` in journal/muse.ts) — never Muse's automatic session name, which
+   * every session carries and the operator never chose. Derived, not a wire field — absent for
+   * unnamed sessions and every other harness. Display priority is `paneLabel` first.
    */
   sessionName?: string;
   /**
@@ -190,12 +196,20 @@ export interface AgentView {
    */
   todos?: PaneTodo[];
   /**
-   * The subagents of this pane's session that have not finished yet, read from the session's
-   * subagent meta files by the subagent tracker (bridge/subagents.ts). Claude Code only in this
-   * release. Attached at serialise time and ABSENT, NEVER A PLACEHOLDER: a pane with none running
-   * carries no key at all, never `[]`.
+   * The subagents of this pane's session that have not finished yet. For Claude Code, read from the
+   * session's subagent meta files by the subagent tracker (bridge/subagents.ts). For a harness with no
+   * such files (Oh My Pi, Gentle Shell), the ongoing task cards of the session's live Chat window, from
+   * memory (bridge/subagents-journal.ts); those rows carry `transcript: false`. Attached at serialise
+   * time and ABSENT, NEVER A PLACEHOLDER: a pane with none running carries no key at all, never `[]`.
    */
   subagents?: PaneSubagent[];
+  /**
+   * The background jobs of this pane's session: the commands still running after the call that
+   * started them answered, and those that ended in the last ten minutes. Read from the session's live
+   * Chat window, from memory (bridge/jobs-journal.ts, ADR 0128). Attached at serialise time and
+   * ABSENT, NEVER A PLACEHOLDER: a pane with none carries no key at all, never `[]`.
+   */
+  jobs?: PaneJob[];
   /**
    * The model this pane's agent is on, as its harness names it: a `/model` chosen since the last turn
    * first (Claude), else the model that turn ran on (`claude-opus-5-5`, `provider:model` for opencode
@@ -215,6 +229,15 @@ export interface AgentView {
    */
   effort?: string;
   /**
+   * How full this pane's context is and how much of the subscription's windows the account has used,
+   * as the harness's own statusLine reported them (bridge/usage.ts, .adr/0115). Numbers only; the
+   * phone draws them as dots beside the model and nothing decides on them.
+   *
+   * ABSENT, NEVER A PLACEHOLDER: a harness that reports none, an operator with no statusLine to
+   * wrap, a window that has reset, or an older bridge.
+   */
+  usage?: PaneUsage;
+  /**
    * What the checkout holding this pane's folder is on: a branch, or a detached head at a full
    * object name. Read off disk by `bridge/git-head.ts` (two small files, no git process, no lock) and
    * attached at serialise time exactly as {@link cache} is.
@@ -224,6 +247,12 @@ export interface AgentView {
    * all, and the phone then draws exactly what it drew before the field existed.
    */
   gitHead?: GitHead;
+  /**
+   * How many pins the pane's session holds (M90, bridge/pins/store.ts). Set at snapshot time from the
+   * store, only when above zero, never `0`, so a pane of a session with no pins and every solo body stay
+   * what they were. The phone shows the Pins mark from it. An older bridge never sends it.
+   */
+  pins?: number;
 }
 
 /**
@@ -250,6 +279,13 @@ export type PaneWire = Omit<AgentView, "agentSession" | "sessionAgent"> & {
    * Absent from a bridge built without walky talky, and from an older member (CREW_PROTOCOL §21).
    */
   instance?: string;
+  /**
+   * True when the session turned its walky talky off (M89, bridge/walky/off.ts). Present only then,
+   * never `false`, so an on pane and every solo body stay what they were. The machine that owns the
+   * pane enforces it; everyone else only shows it (CREW_PROTOCOL §21). An older member never sends it,
+   * and its panes read as on.
+   */
+  walkyOff?: true;
   /**
    * Which member of the crew this pane lives on — the `?h=` value completing the `(host, session,
    * paneId)` address (CREW_PROTOCOL.md §4). Present exactly when {@link SnapshotResponse.servers}
@@ -331,6 +367,20 @@ export type PaneWire = Omit<AgentView, "agentSession" | "sessionAgent"> & {
    * Absent otherwise, so a bridge without the flag sends the same bytes as before.
    */
   sendProtocol?: true;
+  /**
+   * Present (and `true`) when a Stop (M68) has a key to press on this pane: it has a screen Surface and
+   * its profile names an interrupt key (`keys.interrupt`) and is not revoked at the binary's version.
+   * The phone draws the belt's Stop only with it, and only while the turn runs. Absent otherwise, on a
+   * program pane and from every older bridge.
+   */
+  canStop?: true;
+  /**
+   * Present (and `true`) when a send on this pane may steer the running turn (M69): the pane carries
+   * `sendProtocol`, its harness's profile names a steer key (`keys.steer`), the binary's version may be
+   * trusted with a turn, and the pane is no program's (a durable pane never steers). The phone offers
+   * Steer on the Send button's long press only then. Absent otherwise, and from an older bridge.
+   */
+  canSteer?: true;
   /**
    * The pane's held sends (M56 spec 15), oldest first: what the harness could not take during its turn
    * and Collie sends once the pane reads free, plus ended ones whose text waits for a Resend. Present
@@ -602,18 +652,23 @@ export function journalAgentOf(pane: AgentView): string {
  * agent's pane still offers no affordance and reads like every other shell pane.
  *
  * `instance` is the pane's walky talky instance token, from the bridge's instance registry; absent,
- * the wire carries no `instance` key.
+ * the wire carries no `instance` key. `walkyOff` true adds `walkyOff: true`; otherwise no such key.
+ * `pins` above zero adds `pins: <count>` (M90); zero or absent, no such key.
  */
 export function toPaneWire(
   pane: AgentView,
   hasJournal: (agent: string) => boolean,
   discoversSessions: (agent: string) => boolean = () => false,
   instance?: string,
+  walkyOff = false,
+  pins = 0,
 ): PaneWire {
   const { agentSession, sessionAgent: _sessionAgent, ...rest } = pane;
   const addressable = agentSession !== undefined || discoversSessions(pane.agent);
   const wire: PaneWire = addressable && hasJournal(pane.agent) ? { ...rest, hasSession: true } : rest;
-  return instance === undefined ? wire : { ...wire, instance };
+  const placed = instance === undefined ? wire : { ...wire, instance };
+  const flagged = walkyOff ? { ...placed, walkyOff: true as const } : placed;
+  return pins > 0 ? { ...flagged, pins } : flagged;
 }
 
 /** A Herdr workspace ("space") — a project-scoped container of tabs. From `workspace.list`. */
@@ -646,6 +701,26 @@ export interface WorkspaceView {
    * (bridge/changes-root.ts); without it the root is the panes' common folder.
    */
   folder?: string;
+  /**
+   * What the checkout holding this space's {@link folder} is on: a branch, or a detached head at a
+   * full object name. Read off disk by `bridge/git-head.ts`, the same reader and the same cache as
+   * {@link AgentView.gitHead}, and attached at serialise time the same way (bridge/space-view.ts).
+   *
+   * ABSENT, NEVER A PLACEHOLDER. A space with no folder, a folder in no checkout, one that is gone or
+   * unreadable, a reading not taken yet (the first snapshot after a space appears) and every older
+   * bridge carry no key at all, and the phone then draws exactly what it drew before the field existed.
+   */
+  gitHead?: GitHead;
+  /**
+   * The ref this worktree was cut from, as the bridge that made it wrote it down
+   * (`bridge/worktree-bases.ts`, keyed by the checkout folder), attached at serialise time on the
+   * machine that holds the space. Only on a space with `isWorktree: true`.
+   *
+   * ABSENT, NEVER A PLACEHOLDER. A worktree made outside Collie, one made with no starting point, one
+   * whose entry aged out of the store, a space that is not a worktree and every older bridge carry no
+   * key at all. A member's value reaches the phone through the lead unchanged (additive-optional).
+   */
+  base?: string;
   /**
    * Which member of the crew this space lives on — the same tag panes and sessions carry.
    *
@@ -699,6 +774,12 @@ export function muxFaultOf(message: string): MuxFault | undefined {
 export interface SessionSummary {
   /** Registry name, e.g. "default" or "collie-demo". Client passes this back as `?session=`. */
   name: string;
+  /**
+   * The operator's display label from `spaces.toml` (bridge/operator-space-labels.ts), already
+   * cleaned of controls and capped. Display-only: {@link name} stays the identity. Absent when the
+   * operator gave this session none, so an install without the file sends the bytes it always did.
+   */
+  label?: string;
   /** The session cfg.socketPath points at — all pre-multi-session behaviour maps to it. */
   isPrimary: boolean;
   /** Whether this session's last poll succeeded (a stale/unreachable socket reads false). */
@@ -835,6 +916,18 @@ export interface ServerSummary {
    */
   linkState?: "reconnecting" | "attention";
   /**
+   * The registry name of the multiplexer this member drives (`herdr`, `herdr-core`, `tmux`, ...), for
+   * `collie sessions`. The lead states its own; a member's comes off its last status answer. Additive
+   * and optional (§7.1): absent when the member never said, or from a lead that predates the field.
+   */
+  mux?: string;
+  /**
+   * The machine's own host name (`os.hostname()`), as the member reported it on its status answer; the
+   * lead states its own. Additive and optional (§7.1): absent when the member never said, which means
+   * "its own machine" to any grouping and never "the same machine as another member".
+   */
+  host?: string;
+  /**
    * Epoch ms, **stamped by the lead on receipt — never the peer's clock** (§10.2). The client
    * derives "stale since …" from it (stale once older than 3 × pollMs or 15 s, whichever is first);
    * `0` means this member has never answered.
@@ -921,6 +1014,20 @@ export interface CrewMemberStatus {
    * does not make the distinction" and the page renders today's single word (§7.1).
    */
   linkState?: "reconnecting" | "attention";
+  /**
+   * The multiplexer this member drives, by registry name (M76 spec 04, 1.25.0). **Omitted** when the
+   * member has not reported one: an older build, or no answer yet. Never an empty string.
+   */
+  mux?: string;
+  /**
+   * The agent panes this member serves, as its own `snapshot` answer counted them (1.25.0). **Omitted**
+   * when it sent no count: an older build, or a bridge still starting. Never `0` for "unknown".
+   */
+  panes?: number;
+  /**
+   * The host name this member's machine reported (M77 spec 01). **Omitted** when it did not say.
+   */
+  host?: string;
 }
 
 // ── Machines: every machine's load, kept by the lead (ADR 0084) ──────────────────
@@ -1229,6 +1336,12 @@ export interface PaneReadResponse {
    * to repair — the payload stays byte-identical to what it was for every other pane.
    */
   logicalText?: string;
+  /**
+   * Set only on a Load older read (`?purpose=older`) the multiplexer answered without the rows above
+   * the screen: one sentence that says why, for the phone to show (mux/types.ts `MuxGrid.olderNote`).
+   * Absent on every other read.
+   */
+  olderNote?: string;
 }
 
 /**
@@ -1605,7 +1718,10 @@ export type WorktreeCreateResponse =
  * `null` when there is none to name. `remembered` is this repo's last choices on this machine.
  * `branchValid`, `defaultTarget` and `parentTarget` answer only when the query named a branch (and a
  * parent): `defaultTarget` is where Herdr will put the folder when no path is sent, a prediction from
- * Herdr's own rule; `parentTarget` is the folder rule's verdict on the parent the phone named.
+ * Herdr's own rule, with `exists` true only when a create would refuse the folder (a folder git lists
+ * as the same finished worktree on this branch reads false, the create then opens it) and `reason`
+ * the state git lists when it names one; `parentTarget` is the folder rule's verdict on the parent
+ * the phone named.
  */
 export type WorktreePlanResponse =
   | {
@@ -1615,7 +1731,7 @@ export type WorktreePlanResponse =
       currentBranch: string | null;
       remembered?: { base: "default" | "current"; folder: "default" | "parent"; parent?: string };
       branchValid?: boolean;
-      defaultTarget?: { path: string; exists: boolean };
+      defaultTarget?: { path: string; exists: boolean; reason?: string };
       parentTarget?:
         | { ok: true; path: string }
         | { ok: false; error: string; code?: ErrorCode; detail?: ApiErrorDetail };
@@ -1824,7 +1940,8 @@ export interface Launcher {
   label: string;
   /**
    * Absolute directory the new Space (or tab) opens in. Absent means "here": from the dashboard,
-   * the operator's home dir; from a pane, that pane's own cwd. Present, it is pinned and wins
+   * the session's `[folders]` entry in spaces.toml, else the operator's home dir; from a pane,
+   * that pane's own cwd. Present, it is pinned and wins
    * either way.
    */
   cwd?: string;
@@ -1925,13 +2042,20 @@ export interface LaunchersResponse {
    * while `[phone] run` is off too, each then unavailable with `run_off`. Absent from an older bridge.
    */
   recentRuns?: RecentRunWire[];
+  /**
+   * Whether each pinned `cwd` the lead asked about is a folder on THIS machine, keyed by the path as
+   * asked, `~` expanded here (ADR 0127). Answered only to the lead over the crew link, for the
+   * `?cwd=` it adds to a forwarded read; the lead uses it for `no_folder` and drops it from the
+   * phone's answer. Absent from a member that predates 0127.
+   */
+  folders?: Record<string, boolean>;
 }
 
 /** One line in this machine's one-off command history (ADR 0095, `bridge/recent-runs.ts`). */
 export interface RecentRunWire {
   /** The line, exactly as it ran. Running it again is `POST /api/launch` with `{ run: line }`. */
   line: string;
-  /** The folder it last ran in, absolute, or `null` for home. */
+  /** The folder it last ran in, absolute, or `null` for "here" (the session's folder, else home). */
   cwd: string | null;
   /** Epoch ms of the last run. */
   at: number;
@@ -1967,7 +2091,7 @@ export interface SentEntry {
   /** Stable per line on its machine: the first 16 hex characters of the line's sha256. */
   id: string;
   line: string;
-  /** Absolute, or `null` for home. */
+  /** Absolute, or `null` for "here" (the session's folder, else home). */
   cwd: string | null;
   /** Epoch ms of the newest record. */
   at: number;
@@ -2042,8 +2166,14 @@ export interface LauncherItem {
   /**
    * Why not, when `available` is false. `not_found`: the binary is not on this machine's login PATH.
    * `adds_off`: the operator turned phone rows off. `free_text_off`: free lines are off.
+   * `no_folder`: a lead row's pinned `cwd` is not a folder on this machine (ADR 0127).
    */
-  reason?: "not_found" | "adds_off" | "free_text_off";
+  reason?: "not_found" | "adds_off" | "free_text_off" | "no_folder";
+  /**
+   * `lead`: the item is one of the lead's rows, offered for this machine (ADR 0127). Set only in a
+   * lead's answer for another host of its crew; absent on a machine's own items and in solo.
+   */
+  from?: "lead";
   /** Added rows: the id (for rename and remove), who added it, when, and how. */
   id?: string;
   addedBy?: string;

@@ -1,4 +1,4 @@
-import { basename, dirname, join } from "node:path";
+import { basename, dirname, isAbsolute, join } from "node:path";
 
 import { BEACON_HOOKS, type HookRegistration } from "./beacon.ts";
 import { cmdCodexHooksInstall, cmdCodexHooksUninstall, codexHooksStatusLine } from "./codex-hooks.ts";
@@ -10,18 +10,21 @@ import { EXIT, type Io } from "./io.ts";
 import { type LinkReader, linkPath, resolveLinkTarget } from "./link.ts";
 import type { Files } from "./sys.ts";
 import { collieBinary } from "./unit.ts";
-import { HOLD_VERB, holdCommandIn } from "./hold-entry.ts";
+import { agentConfigRoot, HOLD_VERB, holdCommandIn } from "./hold-entry.ts";
 import { loadProfiles } from "../web/src/lib/surface/profile.ts";
 import { compareSemver } from "../web/src/lib/semver.ts";
 import { binaryVersion } from "../bridge/surface/binary-version.ts";
+import { HOST } from "../bridge/host.ts";
+import { statusLineBehind, statusLineState, unwrapStatusLine, wrapStatusLine } from "./statusline.ts";
 
 // `collie hooks install claude` / `uninstall claude` / `status` — putting the beacon emitter into the
 // agent's own settings, and taking it back out.
 //
 // ── THE SCOPE IS GLOBAL, AND THAT IS THE MILESTONE'S PREMISE ──────────────────────────────────────
 //
-// The targets are `~/.claude/settings.json` and the same file in every `CLAUDE_CONFIG_DIR` profile
-// the journal registry already knows about (issue #92). PROJECT SETTINGS ARE NEVER WRITTEN — not
+// The targets are `${CLAUDE_CONFIG_DIR:-~/.claude}/settings.json`, which is the file Claude Code reads
+// in this environment, and the same file in every `CLAUDE_CONFIG_DIR` profile the journal registry
+// already knows about (issue #92). PROJECT SETTINGS ARE NEVER WRITTEN — not
 // `.claude/settings.json`, not `.claude/settings.local.json`. The operator adopts panes *anywhere on
 // the host*, so a per-project install would make a pane's identity depend on which directory the
 // agent happened to be started in, which is precisely the fragility beacons exist to remove. The cost
@@ -115,6 +118,9 @@ export interface HookCommand {
  */
 const HOOK_VERB = " beacon emit ";
 
+/** An optional prefix of an installed command: the shell replaces itself with the binary. */
+const HOOK_EXEC = "exec ";
+
 /**
  * The absolute name an installed entry runs, or null when the command is not shaped like ours.
  *
@@ -124,7 +130,12 @@ const HOOK_VERB = " beacon emit ";
  */
 export function hookBinaryOf(command: string): string | null {
   const at = command.indexOf(HOOK_VERB);
-  return at <= 0 ? null : command.slice(0, at);
+  if (at <= 0) return null;
+  const binary = command.slice(0, at);
+  // A hand-added `exec ` (issue 689: dash forks the command unless it execs) is not part of the name.
+  if (!binary.startsWith(HOOK_EXEC)) return binary;
+  const bare = binary.slice(HOOK_EXEC.length);
+  return bare === "" ? null : bare;
 }
 
 /** How many links a chain may follow before {@link realpathVia} gives up. `ELOOP`, without the errno. */
@@ -217,7 +228,9 @@ export const backupPath = (target: HookTarget): string => `${target.path}.collie
 /**
  * Every settings file this install writes to.
  *
- * `~/.claude` always, plus the parent of each configured Claude journal root — the bridge resolves
+ * The config dir of this environment first (`$CLAUDE_CONFIG_DIR` when it is set to an absolute path,
+ * else `~/.claude`: Claude Code reads exactly one of them, so a set variable means `~/.claude` is
+ * not touched), plus the parent of each configured Claude journal root — the bridge resolves
  * those from `COLLIE_TRANSCRIPT_ROOT` (a comma-separated list, because `CLAUDE_CONFIG_DIR` gives each
  * profile its own tree, issue #92), and a profile's `settings.json` sits beside its `projects/`. So
  * the set of homes Collie can already READ a journal from is exactly the set it installs hooks into;
@@ -230,7 +243,9 @@ export const backupPath = (target: HookTarget): string => `${target.path}.collie
  * capability declared over beacons that will never be written.
  */
 export function claudeSettingsTargets(ctx: Pick<CliContext, "home" | "env">): HookTarget[] {
-  const dirs = [join(ctx.home, ".claude")];
+  // A relative value names no folder Collie could find again (the same rule as `claudeProfileDirs`).
+  const own = ctx.env.CLAUDE_CONFIG_DIR?.trim() ?? "";
+  const dirs = [own !== "" && isAbsolute(own) ? agentConfigRoot(ctx.env, ctx.home).replace(/[\\/]+$/u, "") || own : join(ctx.home, ".claude")];
   for (const root of (ctx.env.COLLIE_TRANSCRIPT_ROOT ?? "").split(",")) {
     const trimmed = root.trim();
     if (trimmed !== "") dirs.push(dirname(trimmed));
@@ -334,6 +349,12 @@ function mergeGroups(groups: readonly JsonValue[], ours: JsonObject): JsonValue[
 }
 
 // ── The permission hold (M56 spec 12) ────────────────────────────────────────
+
+/**
+ * The flag that wraps the operator's statusLine: `collie hooks install claude --statusline`. Without
+ * it a plain statusLine is left alone (.adr/0115, amended 2026-10-24).
+ */
+export const STATUSLINE_FLAG = "--statusline";
 
 /** The flag that adds the permission hold: `collie hooks install claude --hold-permissions`. */
 export const HOLD_FLAG = "--hold-permissions";
@@ -443,6 +464,14 @@ export function uninstallDocument(current: JsonValue | null): HookDocument {
   // operator's in it, and an empty section is a leftover, not a setting.
   if (Object.keys(hooks).length === 0) delete document.hooks;
   return { kind: "document", document };
+}
+
+/**
+ * Whether this host wraps the statusLine. Not on Windows: Claude Code runs a statusLine there in a
+ * shell the wrapper's `/bin/sh` is not, so a wrapped command could change what the operator sees.
+ */
+function wrapsStatusLine(): boolean {
+  return HOST.platform !== "win32";
 }
 
 /** How a settings file is serialised. Two-space JSON with a trailing newline, as Claude Code writes it. */
@@ -593,14 +622,19 @@ function readHarness(deps: HooksDeps, args: readonly string[], verb: string): st
 export function cmdHooksInstall(deps: HooksDeps, args: readonly string[]): number {
   const harness = readHarness(deps, args, "install");
   if (harness === null) return EXIT.USAGE;
-  const unknown = args.slice(1).filter((arg) => arg !== HOLD_FLAG);
+  const unknown = args.slice(1).filter((arg) => arg !== HOLD_FLAG && arg !== STATUSLINE_FLAG);
   if (unknown.length > 0) {
-    deps.io.err(`error: unknown option \`${unknown[0]!}\`. The one option is \`${HOLD_FLAG}\`.`);
+    deps.io.err(`error: unknown option \`${unknown[0]!}\`. The options are \`${HOLD_FLAG}\` and \`${STATUSLINE_FLAG}\`.`);
     return EXIT.USAGE;
   }
   const { command, binary, source } = resolveHookCommand(deps.ctx, deps.fs);
   const wantsHold = args.includes(HOLD_FLAG);
+  const wantsStatusLine = args.includes(STATUSLINE_FLAG);
   if (harness === "codex") {
+    if (wantsStatusLine) {
+      deps.io.err(`error: \`codex\` has no statusLine to wrap. Run \`collie hooks install codex\` without \`${STATUSLINE_FLAG}\`.`);
+      return EXIT.USAGE;
+    }
     // Codex has no permission hook to hold: its install writes the notify hook only.
     if (wantsHold) {
       deps.io.err(`error: \`codex\` has no permission hold. Run \`collie hooks install codex\` without \`${HOLD_FLAG}\`.`);
@@ -622,6 +656,9 @@ export function cmdHooksInstall(deps: HooksDeps, args: readonly string[]): numbe
     return EXIT.FAIL;
   }
   let failed = false;
+  let wrappedLines = 0;
+  let plainLines = 0;
+  let noLines = 0;
 
   for (const rawTarget of claudeSettingsTargets(deps.ctx)) {
     const resolved = resolveTarget(deps, rawTarget);
@@ -644,7 +681,17 @@ export function cmdHooksInstall(deps: HooksDeps, args: readonly string[]): numbe
       failed = true;
       continue;
     }
-    const text = serializeSettings(outcome.document);
+    // The operator's own statusLine, wrapped so the 5h and 7d dots can read it (cli/statusline.ts), but
+    // only when asked for (`--statusline`). A statusLine that is already wrapped is re-pointed at this
+    // binary without the flag, so an operator who had the wrap keeps it. None is added where there is
+    // none, and none is wrapped on Windows, where the wrapper's shell is not the one Claude Code runs
+    // the command in.
+    const document = wrapsStatusLine() ? wrapStatusLine(outcome.document, binary, wantsStatusLine) : outcome.document;
+    const line = statusLineState(document).kind;
+    if (line === "wrapped") wrappedLines += 1;
+    if (line === "plain") plainLines += 1;
+    if (line === "absent") noLines += 1;
+    const text = serializeSettings(document);
     if (text === settings.text) {
       deps.io.out(`${target.path} already has them — no bytes changed.`);
       continue;
@@ -662,7 +709,7 @@ export function cmdHooksInstall(deps: HooksDeps, args: readonly string[]): numbe
   if (failed) return EXIT.FAIL;
   deps.io.out(`  ${BEACON_HOOKS.map((r) => r.event).join(", ")} → \`${binary} beacon emit\``);
   deps.io.out(`  ${PINNED_NOTE[source]}`);
-  deps.io.out("  Outside a multiplexer the hook exits at once and writes nothing. In Herdr it writes hook edges only.");
+  deps.io.out("  Outside a multiplexer the hook exits at once and writes nothing. In Herdr it writes hook edges only. In herdr-core it also names the Claude session, which gives the pane History.");
   deps.io.out(`  Hook edges go to each running bridge listed in ${hookTargetsDir(deps.ctx.env, deps.ctx.home)}.`);
   deps.io.out("  With no bridge listed there, they go to the default state dir.");
   deps.io.out("  A running agent reloads its hooks on its own. If no edges come, restart it.");
@@ -672,6 +719,18 @@ export function cmdHooksInstall(deps: HooksDeps, args: readonly string[]): numbe
     deps.io.out("  With no Collie listening, or on any error, the hook prints nothing and the dialog shows as before.");
   } else {
     deps.io.out(`  No permission hold. Add \`${HOLD_FLAG}\` to hold permissions for the phone.`);
+  }
+  if (wrappedLines > 0) {
+    deps.io.out(`  statusLine → \`${binary} beacon statusline\`: your own command still runs and prints as before.`);
+    deps.io.out("  The wrapper passes on the 5h and 7d limits, for the dots above the belt.");
+  } else if (wantsStatusLine) {
+    if (!wrapsStatusLine()) {
+      deps.io.out("  statusLine not wrapped on Windows, so the phone shows no 5h and 7d limits.");
+    } else if (noLines > 0 && plainLines === 0) {
+      deps.io.out("  No statusLine to wrap, so the phone shows no 5h and 7d limits. Collie never adds a statusLine.");
+    } else {
+      deps.io.out("  Your statusLine is not a plain command Collie can wrap, so it was left alone and the phone shows no 5h and 7d limits.");
+    }
   }
   return EXIT.OK;
 }
@@ -696,7 +755,8 @@ export function cmdHooksUninstall(deps: HooksDeps, args: readonly string[]): num
     if (settings === null || settings.text === null) continue;
     const outcome = uninstallDocument(settings.value);
     if (outcome.kind === "refuse") continue;
-    const text = serializeSettings(outcome.document);
+    // The operator's own statusLine command goes back exactly as it was before the wrap.
+    const text = serializeSettings(unwrapStatusLine(outcome.document));
     if (text === settings.text) continue;
     try {
       writeSettings(deps, target, settings.text, text);
@@ -729,6 +789,8 @@ export type HookTargetState =
   | { readonly kind: "partial"; readonly at: string; readonly present: number }
   /** Ours, complete, but written by a build whose marker was a different version. */
   | { readonly kind: "stale"; readonly at: string }
+  /** Ours and complete, but the operator's WRAPPED statusLine names another collie binary, so it prints nothing. */
+  | { readonly kind: "statusline"; readonly at: string }
   | { readonly kind: "installed"; readonly at: string };
 
 function targetState(deps: HooksDeps, target: HookTarget): HookTargetState {
@@ -747,9 +809,10 @@ function targetState(deps: HooksDeps, target: HookTarget): HookTargetState {
   if (present === 0) return { kind: "not-installed" };
   const at = `v${[...versions].join("/")}`;
   if (present < BEACON_HOOKS.length) return { kind: "partial", at, present };
-  return versions.has(String(HOOK_MARKER_VERSION)) && versions.size === 1
-    ? { kind: "installed", at }
-    : { kind: "stale", at };
+  if (!versions.has(String(HOOK_MARKER_VERSION)) || versions.size !== 1) return { kind: "stale", at };
+  const document = asObject(settings.value);
+  const { binary } = resolveHookCommand(deps.ctx, deps.fs);
+  return wrapsStatusLine() && document !== null && statusLineBehind(document, binary) ? { kind: "statusline", at } : { kind: "installed", at };
 }
 
 /**
@@ -764,10 +827,23 @@ function targetState(deps: HooksDeps, target: HookTarget): HookTargetState {
  * {@link BEACON_HOOKS} is compiled in and the old build's copy is exactly the stale thing.
  */
 export function hooksAreBehind(deps: HooksDeps): boolean {
-  return claudeSettingsTargets(deps.ctx)
-    .map((target) => targetState(deps, target))
-    .some((state) => state.kind === "partial" || state.kind === "stale");
+  return behindReason(deps) !== null;
 }
+
+/**
+ * WHAT is behind: the hooks themselves (a missing registration or a stale marker), or only the
+ * statusLine wrap, which counts only when the statusLine IS wrapped and names another binary. An
+ * unwrapped statusLine is never behind: the wrap is opt-in. The hooks win when both are, because their
+ * install re-points a wrapped statusLine as well.
+ */
+export function behindReason(deps: HooksDeps): "hooks" | "statusline" | null {
+  const states = claudeSettingsTargets(deps.ctx).map((target) => targetState(deps, target));
+  if (states.some((state) => state.kind === "partial" || state.kind === "stale")) return "hooks";
+  return states.some((state) => state.kind === "statusline") ? "statusline" : null;
+}
+
+/** The one word `hooks status --check` prints when only the statusLine wrap is behind. */
+export const STATUSLINE_BEHIND_WORD = "statusline";
 
 /**
  * `collie hooks status` — READ-ONLY. It reports; it never repairs.
@@ -778,7 +854,13 @@ export function hooksAreBehind(deps: HooksDeps): boolean {
  * the existing verb means the two answers cannot drift, and it leaves `status`'s own contract alone.
  */
 export function cmdHooksStatus(deps: HooksDeps, args: readonly string[] = []): number {
-  if (args.includes("--check")) return hooksAreBehind(deps) ? EXIT.STATE : EXIT.OK;
+  if (args.includes("--check")) {
+    const reason = behindReason(deps);
+    // One word, and only for the statusLine case, so the updater can say which thing is behind. An
+    // older updater reads the exit code alone, and the code is the same for both.
+    if (reason === "statusline") deps.io.out(STATUSLINE_BEHIND_WORD);
+    return reason === null ? EXIT.OK : EXIT.STATE;
+  }
   const { binary, source } = resolveHookCommand(deps.ctx, deps.fs);
   deps.io.out(`would install: ${binary} beacon emit  (${SOURCE_NAME[source]})`);
   for (const target of claudeSettingsTargets(deps.ctx)) {
@@ -799,7 +881,16 @@ function targetHolds(deps: HooksDeps, target: HookTarget): boolean {
 
 function describeTarget(deps: HooksDeps, target: HookTarget): string {
   const base = describeBeacons(deps, target);
-  return targetHolds(deps, target) ? `${base}, holds permissions` : base;
+  const held = targetHolds(deps, target) ? `${base}, holds permissions` : base;
+  return targetWraps(deps, target) ? `${held}, wraps the statusLine` : held;
+}
+
+/** Whether one settings file's statusLine runs through the wrapper. Read-only, like every status read. */
+function targetWraps(deps: HooksDeps, target: HookTarget): boolean {
+  const resolved = resolveTarget(deps, target);
+  if (resolved.kind === "refused") return false;
+  const document = asObject(readSettings(deps, resolved.target)?.value ?? undefined);
+  return document !== null && statusLineState(document).kind === "wrapped";
 }
 
 function describeBeacons(deps: HooksDeps, target: HookTarget): string {
@@ -819,6 +910,8 @@ function describeBeacons(deps: HooksDeps, target: HookTarget): string {
       return `partly installed (${state.at}, ${state.present}/${BEACON_HOOKS.length} events) — re-run install to add the rest`;
     case "stale":
       return `installed at ${state.at} — re-run install to heal it to v${HOOK_MARKER_VERSION}`;
+    case "statusline":
+      return `installed (${state.at}), wrapped statusLine points at another collie binary — re-run \`install claude --statusline\` to re-point it`;
     case "installed":
       return `installed (${state.at})`;
   }
@@ -843,7 +936,8 @@ export function cmdHooks(deps: HooksDeps, args: readonly string[]): number {
         deps.io.err(`error: unknown hooks subcommand \`${sub}\``);
       }
       deps.io.err(hooksUsage());
-      deps.io.err("  install     register the beacon hooks: `hooks install claude` (add `--hold-permissions` to hold permissions), or `hooks install codex`");
+      deps.io.err("  install     register the beacon hooks: `hooks install claude` (add `--hold-permissions` to hold permissions, and `--statusline` to also wrap your statusLine");
+      deps.io.err("              so the phone shows the 5-hour and 7-day windows; your command still runs and prints as before), or `hooks install codex`");
       deps.io.err("  uninstall   remove only the entries collie owns: `hooks uninstall claude`, or `hooks uninstall codex`");
       deps.io.err("  status      what each settings file carries right now (reads only)");
       return EXIT.USAGE;

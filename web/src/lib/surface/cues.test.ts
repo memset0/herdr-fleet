@@ -2,12 +2,12 @@ import { readdirSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 
 import { lineText, type StyledLine } from "../blocks";
-import { fixtureRows, readScreen, rowsOf, SURFACE_FIXTURES_DIR } from "../../test/surface-corpus";
-import { CLUSTER_GAP_ROWS, CLUSTER_MAX_ROWS, commandListAt, FOOTER_MAX_ROWS, isKeyHintRow, isRunningRow, noticeOver, ownCommandList, readCues, runningSign } from "./cues";
+import { fixtureRows, loadLabels, perturbations, readScreen, rowsOf, SURFACE_FIXTURES_DIR } from "../../test/surface-corpus";
+import { CLUSTER_GAP_ROWS, CLUSTER_MAX_ROWS, commandListAt, FOOTER_MAX_ROWS, isKeyHintRow, isRunningRow, noticeOver, ownCommandList, readCues, readCuesFor, runningSign, withoutPromptEchoes } from "./cues";
 import { isSingleKeyRow } from "./key-row";
-import { findInputFrame, plainRows, rowText } from "./frame";
+import { findInputFrame, plainRows, rowText, type FrameRow, type IdleProfile } from "./frame";
 import { requireProfile } from "./profile";
-import { isFree } from "./surface";
+import { askOf, isFree } from "./surface";
 
 // M56 spec 04: the generic modal cues, and test (c) of the design record: transcripts that quote
 // numbered lists, pointer glyphs and "Enter to confirm" text stay free, because the cues anchor to
@@ -230,6 +230,8 @@ describe("cue shapes", () => {
     expect(isKeyHintRow("Enter to select · ↑/↓ to navigate · Esc to cancel")).toBe(true);
     expect(isKeyHintRow("Use Up/Down or 1/2, then Enter. Esc quits.")).toBe(true);
     expect(isKeyHintRow("󰌑 select · n note · ↑/↓ move")).toBe(true);
+    // omp's `/usage` dashboard: `⏎ details` and `⎋ close` are two hints, the second makes the footer strong.
+    expect(isKeyHintRow("│ r refresh · ⏎ details · ⎋ close │")).toBe(true);
     expect(isKeyHintRow("Enter:send  │  Shift+Enter:newline  │  Shift+Tab:mode")).toBe(false);
     expect(isKeyHintRow("⏵⏵ bypass permissions on (shift+tab to cycle) · esc to interrupt")).toBe(false);
   });
@@ -460,17 +462,21 @@ describe("a list that leaves the lead off, under the box only, over the harness'
 
   it("the pointer on `model` under a box that holds /model is its own typeahead: the lead goes in front", () => {
     expect(read(screen("/model", MODEL))).toMatchObject({ list: { pointed: "/model", side: "under", first: 4, last: 5 }, own: true });
-    // The same list under /mod or /models is no typeahead of the box's text. Its unpainted rows are
-    // no footer either, so the plain rows here find no box at all; the painted capture does (fold.test.ts).
-    expect(read(screen("/mod", MODEL))).toMatchObject({ frame: null, own: false });
-    expect(read(screen("/models", MODEL))).toMatchObject({ frame: null, own: false });
+    // The same list under /mod or /models points at another command. pi names `leadOpens` since issue 638
+    // (pi 1.3.0 and 1.4.0 draw a fuzzy list under any text that starts with `/`), so it is the text's own
+    // popup all the same: the box is found and the pointer stays on `model`. Whether Enter would run what
+    // is typed is `pointsAt`'s question, which the protocol asks.
+    expect(read(screen("/mod", MODEL))).toMatchObject({ frame: { interior: { text: "/mod" } }, list: { pointed: "/model" }, own: true });
+    expect(read(screen("/models", MODEL))).toMatchObject({ frame: { interior: { text: "/models" } }, list: { pointed: "/model" }, own: true });
   });
 
   it("a list taller than the footer bound still finds the box, and only when the list is its own", () => {
     const tall = [...MODEL, "  modelpreset    Presets", "  switch         Switch", "  (1/9)"];
     expect(read(screen("/model", tall))).toMatchObject({ frame: { interior: { text: "/model" } }, own: true });
-    // The same list pointed at another command: the row under the box is no footer, so no box.
-    expect(read(screen("/mod", tall)).frame).toBeNull();
+    // The same list pointed at another command is the text's own popup too (`leadOpens`, issue 638).
+    expect(read(screen("/mod", tall))).toMatchObject({ frame: { interior: { text: "/mod" } }, own: true });
+    // A box whose text does not start with the lead opened no list: the rows under it are no footer, so no box.
+    expect(read(screen("mod", tall)).frame).toBeNull();
   });
 
   it("the footer ends the list: one run to the screen's end, at most six rows, no blank row in it", () => {
@@ -600,4 +606,173 @@ describe("running signs and the prompt row", () => {
     const frame = findInputFrame(rows, idle)!;
     expect(runningSign(rows, frame, idle.runningRows)).toBe(false);
   });
+
+  it("running: Kiro's busy prompt row reads running, also with one more row under the box", () => {
+    // Given: the captured running Kiro screen, whose busy line stands on the prompt row, and the same
+    // screen with one more row under the box, so the prompt row is no longer the box's last row.
+    const idle = requireProfile("kiro").idle;
+    const rows = fixtureRows("kiro--v3-running-w120.txt");
+    const grown = perturbations(rows).find((p) => p.name === "one more status row at the bottom")!.rows;
+    // When: both screens' frames are found.
+    const frame = findInputFrame(rows, idle)!;
+    const grownFrame = findInputFrame(grown, idle)!;
+    // Then: both read running.
+    expect(runningSign(rows, frame, idle.runningRows)).toBe(true);
+    expect(runningSign(grown, grownFrame, idle.runningRows)).toBe(true);
+  });
+});
+
+describe("the transcript's echo of a sent prompt (idle.promptEchoes, Claude Code 2.1.310, live 2026-10-25)", () => {
+  // The bridge's whole-screen read over a found box (protocol.ts `bareCues`): the box's interior cut
+  // out, the rows above and under it read as a frameless cluster. A long prompt's echo wraps into
+  // rows aligned under its `❯`, which that read took for a pointed list, so a send into a running
+  // turn was refused `not_free` and held.
+  const WIDE = "─".repeat(100);
+  const ECHO = [
+    "❯ First reply with a numbered list of 6 colors, each on its own line formatted exactly like this one, and keep",
+    "  every reason short and plain. Then run this exact bash command with your bash tool, and say done when it is",
+    "  finished: for i in $(seq 1 40); do echo $i; sleep 1; done",
+  ];
+  const LIST = ["● 1. red - warns people", "  2. blue - calm", "  3. green - safe", "  4. yellow - caution"];
+  const BOX = ["", "✢ Polishing… (7s · ↓ 443 tokens)", "", WIDE, "❯ ", WIDE, "  model · ctx 3%"];
+
+  /** The whole-screen read the bridge makes over a found box, with or without the echo rule. */
+  const wholeScreen = (texts: readonly string[], idle: IdleProfile = IDLE, echoes = true): string => {
+    const rows = plainRows(texts);
+    const frame = findInputFrame(rows, idle);
+    expect(frame).not.toBeNull();
+    const bare: readonly FrameRow[] = echoes ? withoutPromptEchoes(rows, frame, idle) : rows;
+    return readCues([...bare.slice(0, frame!.interior.first), ...bare.slice(frame!.interior.last + 1)], null, null).strength;
+  };
+
+  it("a wrapped three-row echo over the box is no pointed list: none, where it was strong", () => {
+    const screen = ["", ...ECHO, "", "● Bash(for i in $(seq 1 40); do echo $i; sleep 1; done)", ...BOX];
+    expect(wholeScreen(screen, IDLE, false)).toBe("strong");
+    expect(wholeScreen(screen)).toBe("none");
+  });
+
+  it("with a numbered list in the answer under it: weak (a list alone), where it was strong", () => {
+    const screen = ["", ...ECHO, "", ...LIST, ...BOX];
+    expect(wholeScreen(screen, IDLE, false)).toBe("strong");
+    expect(wholeScreen(screen)).toBe("weak");
+  });
+
+  it("with a numbered list in an earlier answer above it: none, where it was strong", () => {
+    // The echo read as blank is a gap of blank rows that ends the cluster: an earlier turn is not read.
+    const screen = ["", ...LIST, "", ...ECHO, "", "● Done.", ...BOX];
+    expect(wholeScreen(screen, IDLE, false)).toBe("strong");
+    expect(wholeScreen(screen)).toBe("none");
+  });
+
+  it("an echo-shaped run with an option row of its own stays a list: strong", () => {
+    const screen = ["", "❯ 1. Yes, and keep going with the plan as written", "  2. No, and stop here", "  3. Ask me again", ...BOX];
+    expect(wholeScreen(screen)).toBe("strong");
+  });
+
+  it("a run that does not end on a blank row, or a profile without the flag, is left as it is", () => {
+    const glued = ["", ...ECHO, "● Bash(for i in $(seq 1 40); do echo $i; sleep 1; done)", ...BOX];
+    expect(wholeScreen(glued)).toBe("strong");
+    const { promptEchoes: _, ...plain } = IDLE;
+    expect(wholeScreen(["", ...ECHO, "", ...LIST, ...BOX], plain)).toBe("strong");
+  });
+
+  it("leaves the box's own prompt row and everything under the top edge alone", () => {
+    const rows = plainRows(["", ...ECHO, "", ...BOX]);
+    const frame = findInputFrame(rows, IDLE)!;
+    const out = withoutPromptEchoes(rows, frame, IDLE).map(rowText);
+    expect(out.slice(1, 4).every((text) => text === "")).toBe(true);
+    expect(out.slice(frame.top)).toEqual(rows.slice(frame.top).map(rowText));
+    expect(withoutPromptEchoes(rows, null, IDLE)).toBe(rows);
+  });
+
+  // Claude Code draws a message queued during a turn in the echo's shape over the box: `❯ ` and its
+  // text, its later lines and the `ctrl+enter to send now` hint indented under it, a blank row, then
+  // the box with `Press up to edit queued messages`. A walky talky message is two lines, so the block
+  // is three rows, and the framed read took it for a pointed list: the Surface claimed a modal at S2
+  // and the send ended unknown(dialog_after_enter) (browser leg case 16, 2.1.310, 2026-10-26).
+  it("claude--v2-1-310-walky-queued-two-rows--w120.txt: a two-line queued message over the box is no modal", () => {
+    const rows = fixtureRows("claude--v2-1-310-walky-queued-two-rows--w120.txt", SURFACE_FIXTURES_DIR);
+    expect(readScreen(rows, "claude", IDLE).surface).toMatchObject({ turn: "running", modal: "none", composer: "empty" });
+    const frame = findInputFrame(rows, IDLE)!;
+    expect(readCuesFor(rows, frame, IDLE).strength).toBe("none");
+    // The framed read without the echo rule: the block is a pointed list of three rows.
+    const { promptEchoes: _, ...plain } = IDLE;
+    expect(readCuesFor(rows, frame, plain).strength).toBe("strong");
+  });
+
+  it("over the box, the framed read drops an echo-shaped run but keeps one with an option row of its own", () => {
+    const queued = ["", "❯ [walky-talky wt_x] from operator (phone)", "  Walky check: reply with only the word OK.", "  ctrl+enter to send now", "", WIDE, "❯ ", WIDE, "  model · esc to interrupt"];
+    const rows = plainRows(queued);
+    expect(readCuesFor(rows, findInputFrame(rows, IDLE)!, IDLE).strength).toBe("none");
+    const listed = plainRows(["", "❯ 1. Yes, and keep going with the plan as written", "  2. No, and stop here", "  3. Ask me again", "", WIDE, "❯ ", WIDE, "  model"]);
+    expect(readCuesFor(listed, findInputFrame(listed, IDLE)!, IDLE).strength).toBe("strong");
+  });
+
+  // A phone send often holds a list ("Please do these:", "1. reply D", "2. reply E"). Only the pointer
+  // row decides: a list puts its pointer on an option, a text's own list lines stand under its first line.
+  it("over the box, a queued text with numbered lines under its first line is no list; one whose first line is numbered stays one", () => {
+    const body = plainRows(["", "❯ Please do these:", "  1. reply D", "  2. reply E", "  ctrl+enter to send now", "", WIDE, "❯ Press up to edit queued messages", WIDE, "  model · esc to interrupt"]);
+    expect(readCuesFor(body, findInputFrame(body, IDLE)!, IDLE).strength).toBe("none");
+    const first = plainRows(["", "❯ 1. reply H first", "  2. reply I second", "  ctrl+enter to send now", "", WIDE, "❯ Press up to edit queued messages", WIDE, "  model · esc to interrupt"]);
+    expect(readCuesFor(first, findInputFrame(first, IDLE)!, IDLE).strength).toBe("strong");
+  });
+
+  // Real 2.1.310 screens, 2026-10-26 (fixtures README, "Several queued messages"): each queued message is
+  // its own block, a blank row between two blocks, and only the last one carries `ctrl+enter to send now`.
+  const QUEUED: readonly (readonly [string, "none" | "strong"])[] = [
+    ["claude--v2-1-310-queued-three-blocks--w119.txt", "none"],
+    ["claude--v2-1-310-queued-over-spinner--w119.txt", "none"],
+    ["claude--v2-1-310-queued-checkbox-body--w119.txt", "none"],
+    // It read strong (an unreadable modal at S2) before only the pointer row decided.
+    ["claude--v2-1-310-queued-numbered-body--w119.txt", "none"],
+    // The known limit: a text whose first line is a numbered item has a list's pointer row.
+    ["claude--v2-1-310-queued-numbered-first--w119.txt", "strong"],
+  ];
+  for (const [name, strength] of QUEUED) {
+    it(`${name}: running, an empty box, the framed read is ${strength}`, () => {
+      const rows = fixtureRows(name, SURFACE_FIXTURES_DIR);
+      const frame = findInputFrame(rows, IDLE)!;
+      expect(readCuesFor(rows, frame, IDLE).strength).toBe(strength);
+      expect(readScreen(rows, "claude", IDLE).surface).toMatchObject({ turn: "running", modal: strength === "none" ? "none" : "unreadable", composer: "empty" });
+    });
+  }
+
+  // The negative side: the echo rule reads rows over a found box only, and Claude Code draws every
+  // pointer list in the box's place. The 2.1.310 `/resume` picker (two past sessions, an unnumbered
+  // pointer with an indented metadata row) and the rewind list (Escape Escape) have no box.
+  for (const name of ["claude--v2-1-310-resume-two-sessions--w119.txt", "claude--v2-1-310-rewind--w119.txt"]) {
+    it(`${name}: no box, an ask lifted, and the cues alone read strong`, () => {
+      const rows = fixtureRows(name, SURFACE_FIXTURES_DIR);
+      expect(findInputFrame(rows, IDLE)).toBeNull();
+      expect(askOf(readScreen(rows, "claude", IDLE).surface.modal)).not.toBeNull();
+      expect(readScreen(rows, "claude", IDLE, { lift: false }).surface.modal).toBe("unreadable");
+      expect(readCuesFor(rows, null, IDLE).strength).toBe("strong");
+    });
+  }
+
+  it("no Claude dialog fixture reads otherwise without the echo rule", () => {
+    const { promptEchoes: _, ...plain } = IDLE;
+    const dialogs = Object.entries(loadLabels().fixtures).filter(([, label]) => label.harness === "claude" && label.state === "dialog");
+    expect(dialogs.length).toBeGreaterThan(200);
+    for (const [name] of dialogs) {
+      const rows = fixtureRows(name);
+      for (const lift of [true, false]) expect([name, lift, readScreen(rows, "claude", IDLE, { lift }).surface]).toEqual([name, lift, readScreen(rows, "claude", plain, { lift }).surface]);
+    }
+  });
+
+  const CAPTURES: readonly (readonly [string, string])[] = [
+    ["claude--v2-1-310-working-echo-numbered--w120.txt", "weak"],
+    ["claude--v2-1-310-working-echo-bullets--w120.txt", "none"],
+    ["claude--v2-1-310-working-echo-one-line--w120.txt", "none"],
+  ];
+  for (const [name, strength] of CAPTURES) {
+    it(`${name}: running, no modal, an empty box; the whole-screen read is ${strength}`, () => {
+      const rows = fixtureRows(name);
+      const read = readScreen(rows, "claude", IDLE);
+      expect(read.surface).toMatchObject({ turn: "running", modal: "none", composer: "empty" });
+      const frame = findInputFrame(rows, IDLE)!;
+      const bare = withoutPromptEchoes(rows, frame, IDLE);
+      expect(readCues([...bare.slice(0, frame.interior.first), ...bare.slice(frame.interior.last + 1)], null, null).strength).toBe(strength);
+    });
+  }
 });

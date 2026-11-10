@@ -41,6 +41,7 @@ import {
   schemedAddressLines,
   selfAddress,
   WINDOWS_CREW_SENTENCE,
+  refuseCrewOnWindows,
 } from "./crew.ts";
 import {
   type AliasRow,
@@ -112,7 +113,9 @@ function harness(initial: TrustStoreData | null, replies: Reply[] = [], over: Pa
   const ops = fakeOps();
   const auditLines: AuditEntry[] = [];
   const out = capture();
-  const exec = fakeExec({ answers: [["tailscale status --json", { stdout: TAILSCALE_JSON }]] });
+  // `hc` and `herdr` are ABSENT by default, so `crew status` finds no machine list to compare with
+  // (M84/04) and prints what it always printed; the delta's own cases bring their own `Exec`.
+  const exec = fakeExec({ absent: ["hc", "herdr"], answers: [["tailscale status --json", { stdout: TAILSCALE_JSON }]] });
   const files = fakeFiles({ [HERDR_SOCKET]: "" });
   const requests: Harness["requests"] = [];
   const restarts: number[] = [];
@@ -186,6 +189,9 @@ function harness(initial: TrustStoreData | null, replies: Reply[] = [], over: Pa
       unserves.push(requests.length);
       return EXIT.OK;
     },
+    // The bridge answers at once and no real timer runs; `crew invite` tests override both.
+    bridgeAnswers: () => Promise.resolve(true),
+    sleep: () => Promise.resolve(),
     clearNotifications: (tags) => {
       cleared.push([...tags]);
       return Promise.resolve();
@@ -429,6 +435,20 @@ describe("enrollUrl", () => {
     expect(enrollUrl("http://desk.ts.net")).toBe("http://desk.ts.net/crew/v1/enroll");
   });
 
+  // `new URL("https://host:443")` drops the default port, so the old "no port typed" test (`port === ""`)
+  // read a typed :443 as absent and sent the dial to :8787, where nothing answers.
+  test("a typed :443 is kept — the URL parser drops it, the rule must not read that as 'no port'", () => {
+    expect(enrollUrl("desk.ts.net:443")).toBe("https://desk.ts.net/crew/v1/enroll");
+    expect(leadOrigin("desk.ts.net:443")!.port).toBe("");
+    expect(leadOrigin("desk.ts.net:443")!.host).toBe("desk.ts.net");
+    expect(enrollUrl("[fd7a:115c::1]:443")).toBe("https://[fd7a:115c::1]/crew/v1/enroll");
+    expect(enrollUrl("desk.ts.net:8788")).toBe("https://desk.ts.net:8788/crew/v1/enroll");
+    expect(enrollUrl("desk.ts.net")).toBe("https://desk.ts.net:8787/crew/v1/enroll");
+    expect(enrollUrl("[fd7a:115c::1]")).toBe("https://[fd7a:115c::1]:8787/crew/v1/enroll");
+    expect(enrollUrl("https://desk.ts.net")).toBe("https://desk.ts.net/crew/v1/enroll");
+    expect(enrollUrl("http://127.0.0.1:8788")).toBe("http://127.0.0.1:8788/crew/v1/enroll");
+  });
+
   test("an address carrying a path, a query or credentials is refused", () => {
     for (const bad of ["desk.ts.net/api", "desk.ts.net?x=1", "user:pw@desk.ts.net", "", "::::"]) {
       expect(enrollUrl(bad)).toBeNull();
@@ -479,6 +499,16 @@ describe("on a Windows host, the verbs that form a crew refuse and change nothin
     );
   });
 
+  test("COLLIE_CREWS_ON_WINDOWS=1 consents past the refusal; without it the refusal stands", () => {
+    const h = harness(null, [], WIN);
+    const consented = { ...h.deps, ctx: { ...h.deps.ctx, env: { COLLIE_CREWS_ON_WINDOWS: "1" } } };
+    expect(refuseCrewOnWindows(consented)).toBe(false);
+    expect(text(h.io)).not.toContain(WINDOWS_CREW_SENTENCE);
+    // The flag is the whole consent: no flag, no change, and the sentence is still the one printed.
+    expect(refuseCrewOnWindows(h.deps)).toBe(true);
+    expect(text(h.io)).toContain(WINDOWS_CREW_SENTENCE);
+  });
+
   test("the verbs that read or leave a crew are not refused", async () => {
     const status = harness(leadStore(), [], WIN);
     expect(await cmdCrewStatus(status.deps, ["--no-probe"])).toBe(EXIT.OK);
@@ -508,7 +538,7 @@ describe("on a Windows host, the verbs that form a crew refuse and change nothin
   test("off Windows the same invite is minted as before", async () => {
     const h = harness(leadStore(), [], { host: hostFor("linux") });
     expect(await cmdCrewInvite(h.deps, [])).toBe(EXIT.OK);
-    expect(h.io.stdout[0]).toBe(`r1.${fp("desk")}`);
+    expect(h.io.stdout).toContain(`r1.${fp("desk")}`);
     expect(text(h.io)).not.toContain("On Windows");
   });
 });
@@ -519,7 +549,7 @@ describe("collie crew invite", () => {
   test("mints a token, prints `<token>.<lead-fingerprint>` once, and stores only the token's hash", async () => {
     const h = harness(leadStore());
     expect(await cmdCrewInvite(h.deps, [])).toBe(EXIT.OK);
-    const printed = h.io.stdout[0]!;
+    const printed = h.io.stdout.find((l) => l.startsWith("r1."))!;
     // The operator carries the wire token AND this lead's own certificate fingerprint (§8.2), so `join`
     // can authenticate the lead back. `fp("desk")` is `leadStore`'s `self.fingerprint`.
     expect(printed).toBe(`r1.${fp("desk")}`);
@@ -529,6 +559,53 @@ describe("collie crew invite", () => {
     expect(JSON.stringify(h.data()!.invites)).not.toContain("r1");
     expect(text(h.io)).toContain("single-use");
     expect(text(h.io)).toContain("expires");
+  });
+
+  test("stdout is machine-readable: the token is its first line, and the restart notice is on stderr", async () => {
+    const h = harness(leadStore());
+    expect(await cmdCrewInvite(h.deps, [])).toBe(EXIT.OK);
+    expect(h.io.stdout[0]).toBe(`r1.${fp("desk")}`);
+    expect(h.io.stdout).toHaveLength(1);
+    expect(h.io.stderr).toContain("  restarting the bridge so the freshly minted invite takes effect…");
+  });
+
+  test("stdout is exactly the token line, and every restart line and the banner are on stderr", async () => {
+    // The real restart prints through the `Io` it is given; the fake does the same, so a route that
+    // forgot to hand it a stderr `Io` would put these two lines on stdout, before the token.
+    const h = harness(leadStore(), [], {
+      restart: (into) => {
+        const io = into ?? h.deps.io;
+        io.out("bridge stopped (systemd --user: collie.service)");
+        io.out("bridge started (systemd --user: collie.service)");
+        return Promise.resolve(EXIT.OK);
+      },
+    });
+    expect(await cmdCrewInvite(h.deps, [])).toBe(EXIT.OK);
+    expect(h.io.stdout).toEqual([`r1.${fp("desk")}`]);
+    expect(h.io.stderr).toContain("bridge stopped (systemd --user: collie.service)");
+    expect(h.io.stderr).toContain("bridge started (systemd --user: collie.service)");
+    expect(h.io.stderr.join("\n")).toContain("single-use");
+    expect(h.io.stderr.join("\n")).toContain("collie crew join");
+  });
+
+  test("the restart's serve step writes through a child; its stdout is pointed at stderr, so stdout is the token alone", async () => {
+    // The real restart publishes the front door with `tailscale serve`, run with INHERITED stdio:
+    // the mapping lines it prints are the child's own, written to file descriptor 1, and no `Io`
+    // sees them. The fake restart does what `cmdServe` does: it asks the exec for the child, and
+    // names the stream from the `Io` it was given. A restart handed a plain `Io` would leave the
+    // child on stdout, ahead of the token.
+    const h = harness(leadStore(), [], {
+      restart: (into) => {
+        const io = into ?? h.deps.io;
+        h.exec.inherit("tailscale", ["serve", "--bg", "--set-path=/", "8787"], io.childOutToErr === true ? "stderr" : undefined);
+        io.out("tailscale serve (https) → tailnet :443 -> 127.0.0.1:8787");
+        return Promise.resolve(EXIT.OK);
+      },
+    });
+    expect(await cmdCrewInvite(h.deps, [])).toBe(EXIT.OK);
+    expect(h.io.stdout).toEqual([`r1.${fp("desk")}`]);
+    expect(h.exec.stdoutToStderr).toEqual(["tailscale serve --bg --set-path=/ 8787"]);
+    expect(h.io.stderr).toContain("tailscale serve (https) → tailnet :443 -> 127.0.0.1:8787");
   });
 
   test("https mode: the banner prints the front door, the full name, and it is a whole command", async () => {
@@ -576,7 +653,9 @@ describe("collie crew invite", () => {
         ctx: context({ COLLIE_PUBLIC_URL: "https://collie.example.com" }, { serveMode }),
       });
       await cmdCrewInvite(published.deps, []);
-      expect(text(published.io)).toContain("collie crew join collie.example.com:443");
+      // 443 is spelt as the origin: `host:443` once fell back to :8787 in `leadOrigin`.
+      expect(text(published.io)).toContain("collie crew join https://collie.example.com\n");
+      expect(text(published.io)).not.toContain("collie.example.com:443");
     }
   });
 
@@ -603,6 +682,54 @@ describe("collie crew invite", () => {
     const h = harness(leadStore());
     await cmdCrewInvite(h.deps, []);
     expect(h.restarts).toHaveLength(1);
+  });
+
+  test("it waits for the restarted bridge to answer before it prints the token and the join line", async () => {
+    let asked = 0;
+    const slept: number[] = [];
+    const h = harness(leadStore(), [], {
+      // Down for the first four polls, as a bridge still booting is.
+      bridgeAnswers: () => Promise.resolve(++asked > 4),
+      sleep: (ms) => {
+        slept.push(ms);
+        return Promise.resolve();
+      },
+    });
+    expect(await cmdCrewInvite(h.deps, [])).toBe(EXIT.OK);
+    expect(asked).toBe(5);
+    expect(slept).toEqual([500, 500, 500, 500]);
+    // Restarted first, polled after: nothing is printed for a joiner until the poll said yes.
+    expect(h.restarts).toHaveLength(1);
+    const lines = h.io.stdout;
+    expect(lines.findIndex((l) => l.includes("restarting the bridge"))).toBeLessThan(
+      lines.findIndex((l) => l.startsWith("r1.")),
+    );
+    expect(text(h.io)).toContain("collie crew join https://laptop.tail.ts.net");
+  });
+
+  test("a bridge that never answers is said so, and no token or join line is printed for it", async () => {
+    let asked = 0;
+    const h = harness(leadStore(), [], {
+      bridgeAnswers: () => {
+        asked++;
+        return Promise.resolve(false);
+      },
+    });
+    expect(await cmdCrewInvite(h.deps, [])).toBe(EXIT.FAIL);
+    // 30 s at one poll per 500 ms.
+    expect(asked).toBe(60);
+    expect(text(h.io)).toContain("did not answer after its restart");
+    expect(text(h.io)).not.toContain("collie crew join");
+    expect(text(h.io)).not.toContain(`r1.${fp("desk")}`);
+  });
+
+  test("a probe that throws counts as no answer, not as a crash", async () => {
+    let asked = 0;
+    const h = harness(leadStore(), [], {
+      bridgeAnswers: () => (++asked < 3 ? Promise.reject(new Error("ECONNREFUSED")) : Promise.resolve(true)),
+    });
+    expect(await cmdCrewInvite(h.deps, [])).toBe(EXIT.OK);
+    expect(asked).toBe(3);
   });
 });
 
@@ -734,6 +861,30 @@ describe("collie join", () => {
     expect(await cmdJoin(h.deps, joinArgs)).toBe(EXIT.UNREACHABLE);
     expect(text(h.io)).toContain("could not reach desk.ts.net");
     expect(h.data()!.crew).toBeNull();
+  });
+
+  test("the 401 refusal also names a lead that is still restarting after `crew invite`", async () => {
+    const h = harness(null, [new Response(JSON.stringify({ error: "unauthorized" }), { status: 401 })]);
+    expect(await cmdJoin(h.deps, joinArgs)).toBe(EXIT.REFUSED);
+    expect(text(h.io)).toContain("still restarting after `crew invite`");
+  });
+
+  test("`host:443` dials https://host on 443, not :8787; a bare host still dials :8787", async () => {
+    const door = harness(null, [jsonReply(ENROLLED, 200, "desk")]);
+    expect(await cmdJoin(door.deps, ["desk.ts.net:443", "-"])).toBe(EXIT.OK);
+    expect(door.requests[0]!.url).toBe("https://desk.ts.net/crew/v1/enroll");
+    const bare = harness(null, [jsonReply(ENROLLED, 200, "desk")]);
+    expect(await cmdJoin(bare.deps, ["desk.ts.net", "-"])).toBe(EXIT.OK);
+    expect(bare.requests[0]!.url).toBe("https://desk.ts.net:8787/crew/v1/enroll");
+    const moved = harness(null, [jsonReply(ENROLLED, 200, "desk")]);
+    expect(await cmdJoin(moved.deps, ["desk.ts.net:8788", "-"])).toBe(EXIT.OK);
+    expect(moved.requests[0]!.url).toBe("https://desk.ts.net:8788/crew/v1/enroll");
+    const scheme = harness(null, [jsonReply(ENROLLED, 200, "desk")]);
+    expect(await cmdJoin(scheme.deps, ["https://desk.ts.net", "-"])).toBe(EXIT.OK);
+    expect(scheme.requests[0]!.url).toBe("https://desk.ts.net/crew/v1/enroll");
+    const plain = harness(null, [jsonReply(ENROLLED, 200, "desk")]);
+    expect(await cmdJoin(plain.deps, ["http://127.0.0.1:8788", "-", "--insecure"])).toBe(EXIT.OK);
+    expect(plain.requests[0]!.url).toBe("http://127.0.0.1:8788/crew/v1/enroll");
   });
 
   test("an unreachable lead does not hang forever — the dial has a bounded budget", async () => {
@@ -1051,6 +1202,42 @@ describe("collie join", () => {
     expect(await cmdJoin(h.deps, [...joinArgs, "--label", "nas"])).toBe(EXIT.OK);
     // SAFETY: the body is the `EnrollRequest` `cmdJoin` just serialised, whose `label` is the flag.
     expect(JSON.parse(h.requests[0]!.body).label).toBe("nas");
+  });
+
+  test("with no `--label` the unnamed instance joins as the hostname, a named one as `<hostname>-<instance>`", async () => {
+    const plain = harness(null, [jsonReply(ENROLLED, 200, "desk")]);
+    expect(await cmdJoin(plain.deps, joinArgs)).toBe(EXIT.OK);
+    // SAFETY: the body is the `EnrollRequest` `cmdJoin` just serialised.
+    expect(JSON.parse(plain.requests[0]!.body).label).toBe("laptop-box");
+
+    const named = harness(null, [jsonReply(ENROLLED, 200, "desk")], {
+      ctx: context({ COLLIE_INSTANCE: "hc", COLLIE_PORT: "8794" }, { instance: "hc", port: 8794 }),
+    });
+    expect(await cmdJoin(named.deps, joinArgs)).toBe(EXIT.OK);
+    expect(JSON.parse(named.requests[0]!.body).label).toBe("laptop-box-hc");
+
+    const flagged = harness(null, [jsonReply(ENROLLED, 200, "desk")], {
+      ctx: context({}, { instance: "hc", port: 8794 }),
+    });
+    expect(await cmdJoin(flagged.deps, [...joinArgs, "--label", "nas"])).toBe(EXIT.OK);
+    expect(JSON.parse(flagged.requests[0]!.body).label).toBe("nas");
+  });
+
+  test("a name the lead refuses is printed as the lead's reason, exits REFUSED and stores no crew", async () => {
+    const reason = 'the name "laptop-box" is already taken by the lead. Pass --label <another name>.';
+    const h = harness(null, [
+      jsonReply({ error: reason, code: "label_taken", label: "laptop-box", takenBy: "lead" }, 422, "desk"),
+    ]);
+    expect(await cmdJoin(h.deps, joinArgs)).toBe(EXIT.REFUSED);
+    expect(text(h.io)).toContain(`error: the lead refused this machine's name: ${reason}`);
+    expect(text(h.io)).toContain("collie crew invite");
+    expect(h.data()!.crew).toBeNull();
+  });
+
+  test("the `join` usage says what `--label` defaults to", async () => {
+    const h = harness(null);
+    expect(await cmdJoin(h.deps, [])).toBe(EXIT.USAGE);
+    expect(text(h.io)).toContain("<hostname>-<instance>");
   });
 });
 
@@ -1772,6 +1959,33 @@ describe("collie crew status", () => {
     expect(rendered).not.toContain("collie update` here");
   });
 
+  test("one commit stamped at two abbreviation lengths is not skew", async () => {
+    const h = withVersion(
+      harness(leadStore({ peers: [member({ memberId: "nas" })] }), [
+        jsonReply({ protocol: 1, member: "nas", version: "1.25.0-dev+51c0a488" }, 200, "nas"),
+      ]),
+      "1.25.0-dev+51c0a4886",
+    );
+    await cmdCrewStatus(h.deps, []);
+    const rendered = text(h.io);
+    expect(rendered).toContain("version 1.25.0-dev+51c0a488");
+    expect(rendered).not.toContain("warn: this machine runs");
+    expect(rendered).not.toContain("Neither build is the older one.");
+  });
+
+  test("different commits on one semver keep the skew warning", async () => {
+    const h = withVersion(
+      harness(leadStore({ peers: [member({ memberId: "nas" })] }), [
+        jsonReply({ protocol: 1, member: "nas", version: "1.25.0-dev+51c0a488" }, 200, "nas"),
+      ]),
+      "1.25.0-dev+7be1c0d92e",
+    );
+    await cmdCrewStatus(h.deps, []);
+    const rendered = text(h.io);
+    expect(rendered).toContain("version 1.25.0-dev+51c0a488 — warn: this machine runs 1.25.0-dev+7be1c0d92e");
+    expect(rendered).toContain("Neither build is the older one.");
+  });
+
   test("a member answering without the field renders as pre-amendment, never as `unknown`", async () => {
     const h = withVersion(
       harness(leadStore({ peers: [member({ memberId: "nas" })] }), [
@@ -1795,6 +2009,82 @@ describe("collie crew status", () => {
       await cmdCrewStatus(h.deps, []);
       expect(text(h.io)).toContain(line);
     }
+  });
+
+  test("the mux line shows the registry name and the pane count from the snapshot answer (M76 spec 04)", async () => {
+    const h = withVersion(
+      harness(leadStore({ peers: [member({ memberId: "nas" })] }), [
+        jsonReply({ protocol: 2, member: "nas", version: "1.0.0-alpha.12" }, 200, "nas"),
+        jsonReply({ bridge: "connected", agents: [], mux: "herdr", panes: 4 }, 200, "nas"),
+      ]),
+      "1.0.0-alpha.12",
+    );
+    await cmdCrewStatus(h.deps, []);
+    expect(text(h.io)).toContain("    mux     herdr · 4 panes");
+  });
+
+  test("an older member prints dashes, and a member still starting prints a name with no count, never 0", async () => {
+    const older = harness(leadStore({ peers: [member({ memberId: "nas" })] }), [
+      jsonReply({ protocol: 2, member: "nas" }, 200, "nas"),
+      jsonReply({ bridge: "connected", agents: [] }, 200, "nas"),
+    ]);
+    await cmdCrewStatus(older.deps, []);
+    expect(text(older.io)).toContain("    mux     - · -");
+
+    const starting = harness(leadStore({ peers: [member({ memberId: "nas" })] }), [
+      jsonReply({ protocol: 2, member: "nas" }, 200, "nas"),
+      jsonReply({ bridge: "disconnected", agents: [], mux: "tmux" }, 200, "nas"),
+    ]);
+    await cmdCrewStatus(starting.deps, []);
+    expect(text(starting.io)).toContain("    mux     tmux · -");
+    expect(text(starting.io)).not.toContain("0 panes");
+  });
+
+  test("two members on one host print under one host line; a lone host keeps the flat roster (M77)", async () => {
+    const shared = harness(leadStore({ peers: [member({ memberId: "nas" }), member({ memberId: "nas-hc" }), member({ memberId: "attic" })] }), [
+      jsonReply({ protocol: 2, member: "nas", version: "1.25.0" }, 200, "nas"),
+      jsonReply({ protocol: 2, member: "nas-hc", version: "1.25.0" }, 200, "nas-hc"),
+      jsonReply({ protocol: 2, member: "attic", version: "1.25.0" }, 200, "attic"),
+      jsonReply({ bridge: "connected", agents: [], mux: "herdr", panes: 1, host: "nas-box" }, 200, "nas"),
+      jsonReply({ bridge: "connected", agents: [], mux: "herdr-core", panes: 2, host: "nas-box" }, 200, "nas-hc"),
+      jsonReply({ bridge: "connected", agents: [], mux: "tmux", panes: 3, host: "attic-box" }, 200, "attic"),
+    ]);
+    await cmdCrewStatus(shared.deps, []);
+    const lines = text(shared.io).split("\n");
+    const hostLine = lines.indexOf("  nas-box");
+    expect(hostLine).toBeGreaterThan(-1);
+    expect(lines[hostLine + 1]).toMatch(/^ {4}nas {2}\(peer\)/);
+    expect(lines).toContain("      mux     herdr · 1 pane");
+    expect(lines).toContain("      mux     herdr-core · 2 panes");
+    expect(lines.indexOf("  attic-box")).toBeGreaterThan(hostLine);
+
+    const flat = harness(leadStore({ peers: [member({ memberId: "nas" }), member({ memberId: "attic" })] }), [
+      jsonReply({ protocol: 2, member: "nas", version: "1.25.0" }, 200, "nas"),
+      jsonReply({ protocol: 2, member: "attic", version: "1.25.0" }, 200, "attic"),
+      jsonReply({ bridge: "connected", agents: [], mux: "herdr", panes: 1, host: "nas-box" }, 200, "nas"),
+      jsonReply({ bridge: "connected", agents: [], mux: "tmux", panes: 3, host: "attic-box" }, 200, "attic"),
+    ]);
+    await cmdCrewStatus(flat.deps, []);
+    expect(text(flat.io)).not.toContain("  nas-box");
+    expect(text(flat.io)).toContain("    mux     herdr · 1 pane");
+  });
+
+  test("--json is one document with mux and panes per member, and it writes nothing", async () => {
+    const h = harness(leadStore({ peers: [member({ memberId: "nas" }), member({ memberId: "attic" })] }), [
+      // The replies are consumed in call order: both hellos go out first, then each member's snapshot.
+      jsonReply({ protocol: 2, member: "nas", version: "1.25.0" }, 200, "nas"),
+      jsonReply({ protocol: 2, member: "attic", version: "1.24.2" }, 200, "attic"),
+      jsonReply({ bridge: "connected", agents: [], mux: "zellij", panes: 2, host: "nas-box" }, 200, "nas"),
+      jsonReply({ bridge: "connected", agents: [] }, 200, "attic"),
+    ]);
+    expect(await cmdCrewStatus(h.deps, ["--json"])).toBe(0);
+    expect(h.io.stdout).toHaveLength(1);
+    const doc = JSON.parse(h.io.stdout[0]!);
+    const byId = Object.fromEntries(doc.members.map((m: { id: string }) => [m.id, m]));
+    expect(byId.nas).toMatchObject({ link: "reachable", version: "1.25.0", mux: "zellij", panes: 2, host: "nas-box" });
+    // A member that did not say its host is `null`, so a reader never groups it with another.
+    expect(byId.attic).toMatchObject({ link: "reachable", mux: null, panes: null, host: null });
+    expect(doc.mode).toBe("lead");
   });
 
   test("a protocol mismatch is still INCOMPATIBLE, and no version line dresses it up (§7)", async () => {
@@ -2107,6 +2397,20 @@ describe("collie crew remove", () => {
     expect(await cmdCrewRemove(h.deps, ["nas"])).toBe(EXIT.OK);
     expect(text(h.io)).toContain("has no record of how it was reached over ssh");
     expect(text(h.io)).not.toContain("    ssh ");
+  });
+
+  test("it ends with one line telling the operator the machine still runs Collie as a member", async () => {
+    const hint = (host: string): string =>
+      `  ${host} still runs Collie as a member; run \`collie leave\` there before you add it again.`;
+    const reached = harness(leadStore({ peers: [member({ memberId: "nas" })] }), [], {
+      ops: fakeOps({ nas: { sshHost: "op@192.168.77.2", path: null, port: 8787, recordedAt: T0 } }),
+    });
+    expect(await cmdCrewRemove(reached.deps, ["nas"])).toBe(EXIT.OK);
+    expect(reached.io.stdout).toContain(hint("op@192.168.77.2"));
+    // Without an ssh record the member id is the only name this lead has for it.
+    const unknown = harness(leadStore({ peers: [member({ memberId: "nas" })] }));
+    expect(await cmdCrewRemove(unknown.deps, ["nas"])).toBe(EXIT.OK);
+    expect(unknown.io.stdout).toContain(hint("nas"));
   });
 
   test("an unknown member is a state error naming the verb that lists them", async () => {
@@ -2508,5 +2812,94 @@ describe("collie crew", () => {
     expect(text(h.io)).toContain("mode   lead");
     expect(await cmdCrew(h.deps, ["approve-promote", "nas"])).toBe(EXIT.OK);
     expect(h.data()!.pendingHandover).toMatchObject({ memberId: "nas" });
+  });
+});
+
+// ── where a multiplexer's machine list and the crew differ (M84/04) ──────────
+
+describe("collie crew status — the machine list delta", () => {
+  const CORE_LIST = "hc machine ls --json";
+  const list = (...targets: readonly string[]) =>
+    fakeExec({
+      absent: ["herdr", "ssh"],
+      answers: [[CORE_LIST, { stdout: JSON.stringify({ machines: targets.map((target) => ({ target })) }) }]],
+    });
+  const LINE = "herdr-core knows 1 machine that is not in this crew: vps. Add it with `collie crew add`.";
+  const FORGOTTEN =
+    "nas is in this crew, but herdr-core no longer lists it. Keep it, or drop it with `collie crew remove nas`.";
+  const nasFrom = (source: string | null) =>
+    fakeOps({ nas: { sshHost: "nas", path: "/opt/collie", port: 8787, recordedAt: T0, source } });
+  const lead = () => leadStore({ peers: [member({ memberId: "nas" })] });
+
+  test("prints both lines after the members block", async () => {
+    const h = harness(lead(), [], { exec: list("vps"), ops: nasFrom("herdr-core") });
+    expect(await cmdCrewStatus(h.deps, [])).toBe(EXIT.OK);
+    const lines = h.io.stdout;
+    expect(lines).toContain(LINE);
+    expect(lines).toContain(FORGOTTEN);
+    expect(lines.indexOf(LINE)).toBeGreaterThan(lines.indexOf("members:"));
+  });
+
+  test("prints under --no-probe too, and dials nobody", async () => {
+    const h = harness(lead(), [], { exec: list("vps"), ops: nasFrom("herdr-core") });
+    expect(await cmdCrewStatus(h.deps, ["--no-probe"])).toBe(EXIT.OK);
+    expect(h.io.stdout).toContain(LINE);
+    expect(h.requests).toEqual([]);
+  });
+
+  test("is dim on a terminal", async () => {
+    const banked: { text: string; tone: string }[] = [];
+    const h = harness(lead(), [], {
+      exec: list("vps"),
+      ops: nasFrom(null),
+      ui: {
+        doctor: async () => {},
+        status: async () => {},
+        crewMembers: async (lines) => void banked.push(...lines),
+      },
+    });
+    await cmdCrewStatus(h.deps, ["--no-probe"]);
+    expect(banked.find((l) => l.text === LINE)?.tone).toBe("dim");
+  });
+
+  test("is not in --json", async () => {
+    const h = harness(lead(), [], { exec: list("vps"), ops: nasFrom("herdr-core") });
+    expect(await cmdCrewStatus(h.deps, ["--json", "--no-probe"])).toBe(EXIT.OK);
+    expect(h.io.stdout.join("\n")).not.toContain("herdr-core");
+    expect(h.exec.calls).not.toContain(CORE_LIST);
+  });
+
+  test("a lead with no members yet is still told", async () => {
+    const h = harness(leadStore(), [], { exec: list("vps") });
+    await cmdCrewStatus(h.deps, []);
+    expect(h.io.stdout).toContain(LINE);
+  });
+
+  test("a machine in no crew prints its block as before: no line, and nothing spawned", async () => {
+    const h = harness(null, [], { exec: list("vps") });
+    expect(await cmdCrewStatus(h.deps, [])).toBe(EXIT.OK);
+    expect(h.io.stdout.some((l) => l.startsWith("mode: solo"))).toBe(true);
+    expect(h.io.stdout).not.toContain(LINE);
+    expect(h.exec.calls).toEqual([]);
+  });
+
+  test("a peer prints no line and asks nothing", async () => {
+    const h = harness(peerStore(), [], { exec: list("vps") });
+    await cmdCrewStatus(h.deps, ["--no-probe"]);
+    expect(h.io.stdout).not.toContain(LINE);
+    expect(h.exec.calls).not.toContain(CORE_LIST);
+  });
+
+  test("a Windows host prints no line and asks nothing", async () => {
+    const h = harness(lead(), [], { exec: list("vps"), host: hostFor("win32") });
+    await cmdCrewStatus(h.deps, ["--no-probe"]);
+    expect(h.io.stdout).not.toContain(LINE);
+    expect(h.exec.calls).not.toContain(CORE_LIST);
+  });
+
+  test("no machine list means no extra line", async () => {
+    const h = harness(lead(), [], { exec: fakeExec({ absent: ["hc", "herdr", "ssh"] }), ops: nasFrom("herdr-core") });
+    await cmdCrewStatus(h.deps, ["--no-probe"]);
+    expect(h.io.stdout.some((l) => l.includes("no longer lists") || l.includes("not in this crew:"))).toBe(false);
   });
 });

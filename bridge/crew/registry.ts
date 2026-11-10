@@ -108,6 +108,24 @@ export type PeerLinkState = "reconnecting" | "attention";
  */
 export const LINK_BUDGET_SWEEPS = TURN_MISSED_SWEEPS;
 
+/** Silent sweeps in a row before a reachable member reads unreachable: one blip under host load must not refuse the phone's writes or flip the UI. */
+export const UNREACHABLE_AFTER_SWEEPS = 2;
+
+/**
+ * Whether a failed call leaves a reachable member's verdict standing, for now.
+ *
+ * Only SILENCE is held, and only the first of it: a call that reached the transport and heard
+ * nothing, after a member that was answering. An answer the lead cannot use (a 401, a foreign
+ * protocol, another crew) and a call that provably never left this process are verdicts already,
+ * and holding them would only delay the truth by a sweep.
+ */
+function holdsReachable(previous: PeerState, outcome: PeerFailure, failedRuns: number): boolean {
+  if (previous.health !== "reachable") return false;
+  if (failedRuns >= UNREACHABLE_AFTER_SWEEPS) return false;
+  if (outcome.state !== "unreachable") return false;
+  return outcome.authRefused !== true && outcome.attempted !== false;
+}
+
 /**
  * Which reading a failed call earns, given how many failures preceded it. Pure, and the only place
  * the split is decided — a second site would let the chip and the crew page disagree about one
@@ -190,6 +208,23 @@ export interface PeerState {
    * here too, and the stamp beside it is what stops an old answer reading as a fresh one.
    */
   readonly preflight: PeerPreflight | null;
+  /**
+   * The multiplexer that member last reported on its `snapshot` answer (M76 spec 04, CREW_PROTOCOL.md
+   * §19), by registry name. **Omitted** until it reports one, and again once an answer carries none:
+   * a build older than the field never says, and the lead shows `-` for it. In memory only.
+   */
+  readonly mux?: string;
+  /**
+   * The agent panes that member last reported serving. **Omitted** when its last answer carried no
+   * count (a member older than the field, or one whose bridge was still starting): never `0`.
+   */
+  readonly panes?: number;
+  /**
+   * The host name that member last reported for its machine (M77 spec 01, CREW_PROTOCOL.md §19).
+   * **Omitted** until it reports one, and again once an answer carries none: an older build never
+   * says, and a member that did not say is its own machine in every grouping. In memory only.
+   */
+  readonly host?: string;
   /**
    * The presentation split for a member that is not answering (§10.2, M22/05), or **absent when
    * there is nothing to say** — a reachable member, or a state this registry has not folded a
@@ -336,6 +371,22 @@ export class CrewRegistry {
     // This call included. A landed call spends nothing and clears what the silence had run up, which
     // is the same shape `foldPeerMemory` gives the incompatible ladder one level up.
     const failedRuns = outcome.ok ? 0 : (previous?.failedRuns ?? 0) + 1;
+    if (!outcome.ok && previous !== undefined && holdsReachable(previous, outcome, failedRuns)) {
+      // THE FIRST MISS IS HELD (UNREACHABLE_AFTER_SWEEPS). The verdict stays `reachable`, so a write
+      // is still attempted and every surface keyed on health stays put. The miss is not hidden: its
+      // reason and the `reconnecting` split ride the same fields a real outage uses, so the crew
+      // page's member row (status-wire.ts) reads "reachable", "reconnecting" and the reason.
+      const held: PeerState = {
+        ...previous,
+        version,
+        preflight,
+        failedRuns,
+        linkState: linkStateFor(outcome.state, false, failedRuns),
+        reason: outcome.reason,
+      };
+      this.peers.set(memberId, held);
+      return held;
+    }
     const next: PeerState = outcome.ok
       ? {
           memberId,
@@ -469,6 +520,25 @@ export class CrewRegistry {
    */
   recordPreflight(memberId: string, preflight: PeerPreflight | null): PeerState {
     const next: PeerState = { ...this.state(memberId), preflight };
+    this.peers.set(memberId, next);
+    return next;
+  }
+
+  /**
+   * Bank one member's multiplexer name, pane count and host name, as the sweep read them off its `snapshot`
+   * answer (M76 spec 04). The answer is authoritative for both: a field it did not carry is cleared,
+   * because a pane count that was true a sweep ago is a wrong count now, and a member that came back
+   * without a field has told us it has none to give. Only from a successful answer (the caller's rule).
+   */
+  recordStatus(
+    memberId: string,
+    report: { readonly mux: string | null; readonly panes: number | null; readonly host?: string | null },
+  ): PeerState {
+    const { mux: _mux, panes: _panes, host: _host, ...rest } = this.state(memberId);
+    let next: PeerState = rest;
+    if (report.mux !== null) next = { ...next, mux: report.mux };
+    if (report.panes !== null) next = { ...next, panes: report.panes };
+    if (report.host !== undefined && report.host !== null) next = { ...next, host: report.host };
     this.peers.set(memberId, next);
     return next;
   }

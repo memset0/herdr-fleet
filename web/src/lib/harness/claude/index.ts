@@ -9,7 +9,7 @@
 // on it could mis-lift a menu, strip real output as "chrome", or paint a bogus status strip.
 
 import { lineText, trimTrailingBlank, type Block, type StyledLine } from "../../blocks";
-import type { HarnessAdapter } from "../types";
+import type { DialogDetector, HarnessAdapter } from "../types";
 import { detectPreviewSelectRegion } from "./preview-select";
 import { detectWizardRegion } from "./wizard";
 import { detectMultiSelectRegion } from "./multi-select";
@@ -21,6 +21,7 @@ import { detectMarketplacesRegion } from "./marketplaces";
 import { detectMenuRegion } from "./menu";
 import { detectAutocompleteRegion } from "./autocomplete";
 import { detectAbovePromptNotice } from "./above-prompt-notice";
+import { detectAuthBox } from "./auth-box";
 import {
   stripChrome,
   extractStatusLines,
@@ -162,7 +163,7 @@ export function claudeBuildBlocks(input: StyledLine[]): Block[] {
     return blocks;
   }
 
-  // A NOTICE above the live box (above-prompt-notice.ts): the one card on a screen whose box keeps the
+  // A NOTICE above the live box (above-prompt-notice.ts): a card on a screen whose input box keeps the
   // keyboard. Every grammar above needs the box gone or a footer that names keys, so none claims it;
   // the transcript above the notice stays raw, and the box is stripped as on any idle screen.
   const noticeRegion = detectAbovePromptNotice(lines);
@@ -174,7 +175,24 @@ export function claudeBuildBlocks(input: StyledLine[]): Block[] {
     return blocks;
   }
 
-  // The COMPLETION POPUP (autocomplete.ts) — the one non-raw block that is not a dialog. It runs last
+  // The AUTHENTICATION BOX (auth-box.ts) Claude draws over its live input box while `awsAuthRefresh`
+  // runs: a card of the box's text and links, lifted out of the mirror. Like the notice above it, it
+  // leaves the keyboard to the input box, so it owns none; the transcript above it stays raw and the
+  // input box and the status rows under it are stripped as on any idle screen.
+  const authBoxRegion = detectAuthBox(lines);
+  if (authBoxRegion) {
+    const before = trimTrailingBlank(lines.slice(0, authBoxRegion.startLine));
+    const blocks: Block[] = [];
+    if (before.length > 0) blocks.push({ kind: "raw", lines: before });
+    blocks.push({
+      kind: "box-text",
+      boxText: authBoxRegion.model,
+      lines: lines.slice(authBoxRegion.startLine, authBoxRegion.endLine + 1),
+    });
+    return blocks;
+  }
+
+  // The COMPLETION POPUP (autocomplete.ts) — a non-raw block that is not a dialog. It runs last
   // because it is the least specific tail shape, and it is gated on the input box's tail being
   // CLASSIFIED as the popup (chrome.ts), because that is what separates a live composer with a popup
   // under it from a modal, and from popup-shaped rows under a box whose draft is not a slash command.
@@ -204,6 +222,30 @@ export function claudeBuildBlocks(input: StyledLine[]): Block[] {
 }
 
 export { extractStatusLines, extractAgentsFooter, extractInputDraft };
+
+/** A detector over the rows `claudeBuildBlocks` reads: the closing rule and task checklist taken off. */
+function onPrepared(detect: (lines: StyledLine[]) => object | null): DialogDetector["detect"] {
+  return (input) => detect(dropClosingRule(dropTaskChecklist(input)));
+}
+
+/**
+ * The detectors `claudeBuildBlocks` runs, in its order, for the unread-dialog card's report (ADR 0123,
+ * amendment 2026-10-28). The completion popup is gated on the box's tail exactly as it is above.
+ */
+const CLAUDE_DIALOG_DETECTORS: readonly DialogDetector[] = [
+  { name: "preview-select", detect: onPrepared(detectPreviewSelectRegion) },
+  { name: "wizard", detect: onPrepared(detectWizardRegion) },
+  { name: "multi-select", detect: onPrepared(detectMultiSelectRegion) },
+  { name: "prompt-select", detect: onPrepared(detectPromptSelectRegion) },
+  { name: "effort", detect: onPrepared(detectEffortRegion) },
+  { name: "resume-picker", detect: onPrepared(detectResumePickerRegion) },
+  { name: "switch-model", detect: onPrepared(detectSwitchModelRegion) },
+  { name: "marketplaces", detect: onPrepared(detectMarketplacesRegion) },
+  { name: "menu", detect: onPrepared(detectMenuRegion) },
+  { name: "above-prompt-notice", detect: onPrepared(detectAbovePromptNotice) },
+  { name: "auth-box", detect: onPrepared(detectAuthBox) },
+  { name: "autocomplete", detect: onPrepared((lines) => (inputBoxTail(lines) === "autocomplete" ? detectAutocompleteRegion(lines) : null)) },
+];
 
 // How many of the screen's last non-blank rows may carry a modal's mark. A footer wraps onto at most
 // three rows (menu-hints MAX_FOOTER_ROWS), and a hint can sit a row or two above it.
@@ -246,6 +288,7 @@ export const claudeAdapter: HarnessAdapter = {
   // unread-dialog.test.ts), and a missed select still shows its `❯ N.` pointer. The shell prompt
   // under a starting or exiting Claude shows none of these.
   modalOnScreen: tailNamesAKey,
+  dialogDetectors: CLAUDE_DIALOG_DETECTORS,
   // Long sends never appear in the box as themselves — Claude collapses them into `[Pasted text #N
   // +M lines]` — so the reply guard's literal match can't verify them and the send stalls. These two
   // read that token: as send evidence when it's consistent with what we typed (.adr/0010), and as

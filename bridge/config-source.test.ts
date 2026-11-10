@@ -145,10 +145,41 @@ describe("the file's shape", () => {
     expect(layer.env.COLLIE_TRANSCRIPT_ROOT).toBe(join(HOME, ".claude", "projects"));
   });
 
+  test("journal.kiro_root expands home paths and accepts an ordered root list", async () => {
+    const layer = await read({
+      [HOME_FILE]: '[journal]\nkiro_root = ["~/.kiro/sessions", "/srv/kiro/sessions"]\n',
+    });
+    expect(layer.problems).toEqual([]);
+    expect(layer.env.COLLIE_KIRO_ROOT).toBe(`${join(HOME, ".kiro", "sessions")},/srv/kiro/sessions`);
+  });
+
+  test("journal.kiro_root rejects non-string lists and entries with commas", async () => {
+    for (const value of ['["/srv/kiro", 2]', '["/srv/a,/srv/b"]']) {
+      const layer = await read({ [HOME_FILE]: `[journal]\nkiro_root = ${value}\n` });
+      expect(layer.problems).toHaveLength(1);
+      expect(layer.env.COLLIE_KIRO_ROOT).toBeUndefined();
+    }
+  });
+
   test("a bool reaches the env in the spelling envBool already reads", async () => {
     const layer = await read({ [HOME_FILE]: "[bridge]\ntranscript = false\nmulti_session = true\n" });
     expect(layer.env.COLLIE_TRANSCRIPT).toBe("0");
     expect(layer.env.COLLIE_MULTI_SESSION).toBe("1");
+  });
+
+  test("telemetry takes a boolean or the environment's words, and an unknown word passes through to fail closed", async () => {
+    const env = async (value: string) => (await read({ [HOME_FILE]: `[bridge]\ntelemetry = ${value}\n` })).env.COLLIE_TELEMETRY;
+    expect(await env("false")).toBe("0");
+    expect(await env("true")).toBe("1");
+    for (const word of ["off", "no", "false", "on", "yes", "true"]) expect(await env(`"${word}"`)).toBe(word);
+    expect(await env('" Off "')).toBe("Off");
+    // Not dropped as a problem: a dropped key would leave the default, and the default is on.
+    expect(await env('"maybe"')).toBe("maybe");
+    expect((await read({ [HOME_FILE]: '[bridge]\ntelemetry = "maybe"\n' })).problems).toEqual([]);
+    // Another bool still refuses a string.
+    const other = await read({ [HOME_FILE]: '[bridge]\ntranscript = "off"\n' });
+    expect(other.env.COLLIE_TRANSCRIPT).toBeUndefined();
+    expect(other.problems.length).toBe(1);
   });
 
   test("socket_path is the one key whose env name is not a COLLIE_ one", async () => {
@@ -371,5 +402,46 @@ describe("no path is ever named after an instance", () => {
       expect(basename(entry.path)).toBe(CONFIG_FILENAME);
       expect(entry.path).not.toContain("config.next");
     }
+  });
+});
+
+describe("[bridge] account_windows (ADR 0118)", () => {
+  const layerFor = (value: string) => read({ [INSTANCE_FILE]: `[bridge]\naccount_windows = ${value}\n` });
+
+  test("a boolean still works: true is the default set, false is none", async () => {
+    expect((await layerFor("true")).env.COLLIE_ACCOUNT_WINDOWS).toBe("on");
+    expect((await layerFor("false")).env.COLLIE_ACCOUNT_WINDOWS).toBe("off");
+    expect((await layerFor("true")).problems).toEqual([]);
+  });
+
+  test("a string takes the environment's words and a list of ids", async () => {
+    for (const word of ["off", "on", "all", "no", "1"]) {
+      const layer = await layerFor(JSON.stringify(word));
+      expect(layer.problems).toEqual([]);
+      expect(layer.env.COLLIE_ACCOUNT_WINDOWS).toBe(word);
+    }
+    expect((await layerFor('" Claude , grok "')).env.COLLIE_ACCOUNT_WINDOWS).toBe("Claude , grok");
+  });
+
+  test("an array of ids joins into the environment's comma list", async () => {
+    const layer = await layerFor('["claude", " opencode "]');
+    expect(layer.problems).toEqual([]);
+    expect(layer.env.COLLIE_ACCOUNT_WINDOWS).toBe("claude,opencode");
+  });
+
+  test("an array with a word, an empty array and a number are problems and set nothing", async () => {
+    for (const value of ['["off"]', '["all"]', "[]", "3"]) {
+      const layer = await layerFor(value);
+      expect(layer.problems.length, value).toBe(1);
+      expect(layer.problems[0]?.key).toBe("account_windows");
+      expect(layer.env.COLLIE_ACCOUNT_WINDOWS, value).toBeUndefined();
+    }
+  });
+
+  test("an unknown id goes through to the config read, which drops it and keeps the known ids", async () => {
+    // A dropped key would fall back to the default set and turn Claude on for a typo.
+    expect((await layerFor('"opencode,gork"')).env.COLLIE_ACCOUNT_WINDOWS).toBe("opencode,gork");
+    expect((await layerFor('["opencode", "gork"]')).env.COLLIE_ACCOUNT_WINDOWS).toBe("opencode,gork");
+    expect((await layerFor('"opencode,gork"')).problems).toEqual([]);
   });
 });

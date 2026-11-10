@@ -338,7 +338,7 @@ describe("NavTray", () => {
     render(<NavTray onSend={vi.fn()} />);
 
     const alt = () => screen.getByRole("button", { name: "Alt" });
-    const isLocked = () => alt().querySelector(".lucide-lock") !== null;
+    const isLocked = () => alt().querySelector('[data-icon="modifier-lock"]') !== null;
 
     // off
     expect(alt()).toHaveAttribute("aria-pressed", "false");
@@ -394,7 +394,7 @@ describe("NavTray", () => {
     const ctrlBtn = () => screen.getByRole("button", { name: "Ctrl" });
     await user.click(ctrlBtn()); // once
     await user.click(ctrlBtn()); // locked
-    expect(ctrlBtn().querySelector(".lucide-lock")).not.toBeNull();
+    expect(ctrlBtn().querySelector('[data-icon="modifier-lock"]')).not.toBeNull();
 
     // Stage ctrl+Tab and send.
     await user.click(screen.getByRole("button", { name: "Tab" }));
@@ -424,7 +424,7 @@ describe("NavTray", () => {
     await user.click(screen.getByRole("button", { name: "Clear queued keys" }));
     expect(screen.queryByRole("button", { name: "Send" })).toBeNull(); // not composing
     expect(ctrlBtn()).toHaveAttribute("aria-pressed", "false"); // lock released
-    expect(ctrlBtn().querySelector(".lucide-lock")).toBeNull();
+    expect(ctrlBtn().querySelector('[data-icon="modifier-lock"]')).toBeNull();
   });
 
   // ── Ctrl presets: immediate two-tap when idle; plain stage when composing ──
@@ -959,5 +959,32 @@ describe("NavTray — operator preset rows", () => {
     expect(btn).toHaveTextContent("Window");
     await user.click(btn);
     expect(onSend).toHaveBeenCalledExactlyOnceWith(["ctrl+b", "c"]);
+  });
+
+  // ── Clear (ADR 0116): the board's own button, at the chip row's end ──
+
+  it("draws no Clear without the clearBox prop (a playground, a pane with no screen)", () => {
+    render(<NavTray onSend={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Clear the input box" })).toBeNull();
+  });
+
+  it("Clear runs its callback once per tap, and never sends a key itself", async () => {
+    const user = userEvent.setup();
+    const onSend = vi.fn();
+    const onClear = vi.fn(() => Promise.resolve());
+    render(<NavTray onSend={onSend} clearBox={{ available: true, onClear }} />);
+    await user.click(screen.getByRole("button", { name: "Clear the input box" }));
+    expect(onClear).toHaveBeenCalledTimes(1);
+    expect(onSend).not.toHaveBeenCalled();
+  });
+
+  it("Clear is greyed when unavailable or when the tray is disabled", async () => {
+    const user = userEvent.setup();
+    const onClear = vi.fn(() => Promise.resolve());
+    const { rerender } = render(<NavTray onSend={vi.fn()} clearBox={{ available: false, onClear }} />);
+    expect(screen.getByRole("button", { name: "Clear the input box" })).toBeDisabled();
+    rerender(<NavTray onSend={vi.fn()} disabled clearBox={{ available: true, onClear }} />);
+    await user.click(screen.getByRole("button", { name: "Clear the input box" }));
+    expect(onClear).not.toHaveBeenCalled();
   });
 });

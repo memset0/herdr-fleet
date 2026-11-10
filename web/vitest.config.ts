@@ -2,6 +2,8 @@ import { defineConfig } from "vitest/config";
 import react from "@vitejs/plugin-react";
 import { resolve } from "node:path";
 
+import { glyphSetsPlugin } from "./vite-glyphs";
+
 // Vitest runs without the PWA/Tailwind plugins (tests don't need a service worker or compiled CSS).
 // jsdom + Testing Library + MSW cover components and the /api fetch layer; no headless browser.
 //
@@ -53,8 +55,9 @@ const LOGIC = LOGIC_DIRS.map((dir) => `${dir}/**/*.{test,spec}.{ts,tsx}`);
 // and 24 accept the flag too (their web storage is off), so one config serves every node we run.
 const shared = {
   globals: true,
+  testTimeout: 20_000,
   css: false,
-  setupFiles: ["./src/test/msw.ts"],
+  setupFiles: ["./src/test/msw.ts", "./src/lib/fleet-test-policy.ts"],
   execArgv: ["--no-experimental-webstorage"],
 } as const;
 
@@ -69,7 +72,7 @@ export default defineConfig({
       channel: "dev",
     }),
   },
-  plugins: [react()],
+  plugins: [react(), glyphSetsPlugin(import.meta.dirname)],
   resolve: {
     alias: {
       "@": resolve(import.meta.dirname, "src"),
@@ -81,6 +84,12 @@ export default defineConfig({
         extends: true,
         test: { ...shared, name: "logic", environment: "node", include: LOGIC },
       },
+      // The browser leg's model stub (M67): node only, and no MSW, because its tests stand up real
+      // 127.0.0.1 listeners (the stub and a fake OpenRouter) and MSW would answer their fetches.
+      {
+        extends: true,
+        test: { globals: true, testTimeout: 20_000, css: false, name: "rig", environment: "node", include: ["e2e/rig/**/*.test.ts"] },
+      },
       {
         extends: true,
         test: {
@@ -89,7 +98,7 @@ export default defineConfig({
           environment: "jsdom",
           // `msw.ts` first and then the document half, so `setup.ts` can re-export the server it
           // already stood up rather than standing up a second one.
-          setupFiles: [...shared.setupFiles, "./src/test/setup.ts"],
+          setupFiles: [...shared.setupFiles, "./src/test/setup.ts", "./src/lib/fleet-test-dom-policy.ts"],
           include: ["src/**/*.{test,spec}.{ts,tsx}"],
           exclude: LOGIC,
         },

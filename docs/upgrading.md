@@ -161,8 +161,13 @@ and the one case the phone cannot fix, see
 ![The Updates page on a lead, with the preflight per member and one button for the crew.](images/updates/updates-page-crew-available.png)
 
 A band across the top of every screen carries what is standing rather than what is running: the
-release on offer, a peer that could not update, and `New version — tap to update` when the app in
-your hand is behind the bridge. A running update is the sheet's, not the band's.
+release on offer, and a peer that could not update. A running update is the sheet's, not the band's.
+
+When the app in your hand is updating, the Collie mark in the header says so. Every bead turns fast
+and takes the update colour while the new version downloads and until the page reloads onto it.
+The band stays empty while it does.
+Tap the mark to open the dashboard. Its update line says `Downloading the new version…` with how
+far it is, or `New version, tap to update` when the download is done.
 
 ![The band when a new release is ready to install.](images/updates/band-available.png)
 
@@ -247,7 +252,7 @@ A deputy's standby door serves it at `/standby/update` while the main port is do
 If a new beacon hook event is available, `update` prints a notice to re-run `hooks install claude`.
 
 After each successful update, rollback or switch, the new build runs `collie skill sync`. It
-installs the walky talky skill into every agent harness on this machine and updates a copy that is
+installs the WalkyTalky skill into every agent harness on this machine and updates a copy that is
 behind, so your agents know the build you now run. It prints one line per file it changed, and it
 never fails the update: if it cannot run, `update` prints one note and you run `collie skill sync`
 by hand. It leaves out a harness where you ran `collie skill uninstall`. Set `COLLIE_SKILL_SYNC=off`
@@ -278,6 +283,9 @@ is detached and shallow, and it lives in a directory Herdr owns, so there is no 
 beside it, nothing to hand off, and nothing to flip back to. `--rollback` is refused there; the
 recovery path is a reinstall of a named tag
 (`herdr plugin install AltanS/collie --ref vX.Y.Z --yes`).
+
+**A rollback from 1.28 to 1.27 keeps the version 4 themes on each phone.** Adding or removing a theme
+on 1.27 drops them; [Versions](themes.md#versions) has the detail.
 
 **Rolling back from 1.8.0 to 1.7.0 needs two hand edits in the state directory.** 1.8.0 renames the
 three state files on its first start, so `~/.local/state/collie/` now holds `crew-trust.json`,
@@ -328,7 +336,8 @@ Expect the newest tag.
 
 **The phone's own bundle** is a separate thing. The PWA checks for a new build by itself and reloads
 within about a minute, and it holds that reload for the length of an update run. If you are mid-task
-it shows a "tap to update" banner and waits for your tap.
+the header mark turns in the update colour, and the dashboard's update line offers `New version, tap
+to update`. The page reloads on its own once you are done.
 
 ### On Windows
 
@@ -510,10 +519,13 @@ take its own update touches no peer at all. Stopping there is safe, because a cr
 skew ([CREW_PROTOCOL.md §7.1](../CREW_PROTOCOL.md#71-version-skew-inside-a-protocol-version)), so a
 half-updated crew is a supported state and pressing on is not.
 
-**One case the phone cannot fix.** If you roll the lead back by hand after its peers have levelled,
-the peers are left ahead of their lead. Nothing steps a peer down: a lead that could move a peer
-backwards is a lead that could move it anywhere. The skew is harmless, and the remedy is
-`collie crew update <member>` on the lead.
+**One case the phone cannot fix.** If you roll the lead back by hand, with git or by copying files,
+after its peers have levelled, the peers are left ahead of their lead. Collie did not see the
+rollback, so no member steps down. A rollback made with the phone's **Roll back** or with
+`collie update --rollback`, and a switch back to Stable, do step the members down. See "The crew follows the lead" under
+[Release lines](#release-lines). Those two runs are the only ones that move a member to
+a lower version, because a lead that could move a peer backwards at will could move it anywhere. The
+skew from a hand rollback is harmless, and the remedy is `collie crew update <member>` on the lead.
 
 Code reaches a peer over your SSH and never over the crew link
 ([ADR 0016](../.adr/0016-updates-ride-the-operators-ssh.md), addendum 2026-09-04). When a peer
@@ -641,6 +653,12 @@ the normal update screen.
 - On Edge, the push about a new build goes out at the next check, not in the next digest. It still
   waits until 09:00 local time. Stable keeps the digest windows.
 
+**What rhythm to expect on Edge.** Expect about one Edge build a day at most, and each one carries a
+change you can see. The bridge checks for new builds every six hours. You get one push per build, and
+never before 09:00 host local time. When one check finds several new builds, they fold into one push.
+The update strip asks once per build, and you may skip a build: the next update takes the newest
+one. Dismissing the strip counts for that version only, so the next build asks again.
+
 **Back to Stable.** Switch to Stable on a machine that runs an Edge build, and the page shows one of
 three cases:
 
@@ -705,6 +723,46 @@ To return to stable releases:
 herdr plugin install AltanS/collie --yes
 herdr plugin action invoke restart --plugin herdr.collie
 ```
+
+## Launcher rows in a crew
+
+The lead's launcher rows are now the crew's rows, and a row you add from the phone goes to the lead
+([Your own launchers](configure.md#your-own-launchers), [ADR 0127](../.adr/0127-the-leads-launcher-rows-are-the-crews-rows.md)).
+Nothing needs doing on upgrade day. Update the lead first, and the members follow. A member that
+still runs the older Collie lists the lead's rows, but it refuses to start one. The phone says that
+the command is not one of its launchers, and nothing runs. Its own rows still work. Update that
+machine, and the lead's rows start there. A deputy that runs the older Collie keeps no copy of the
+rows, so its New page shows only its own until it updates.
+
+## Upgrading to 1.24.0
+
+Version 1.24.0 adds usage dots, a Stop button and a large-screen layout. If you come from 1.23.4,
+nothing needs doing on upgrade day. What you will notice:
+
+- **Collie leaves your statusLine alone.** Wrapping it is opt-in with
+  `collie hooks install claude --statusline`. If you took the wrap from an Edge build and want it
+  gone, run `collie hooks uninstall claude`, then `collie hooks install claude`
+  ([Collie writes hooks into Claude's own settings](multiplexers.md#collie-writes-hooks-into-claudes-own-settings)).
+- **The context dot needs no new hook.** The hooks that 1.23.4 installed already include
+  `SessionStart`, and they run the same command. The new Collie reads the session file with them.
+  If you never ran `collie hooks install claude`, run it once. A Claude session that is already
+  running shows no dot until it starts again, resumes, clears or compacts, because the window size
+  comes from the session start.
+- **The 5-hour and 7-day dots read your own logins.** For Claude, Collie reads the login file on this
+  machine and asks `api.anthropic.com`. For Codex, it reads Codex's session files and asks nobody.
+  Both are on by default. Set `COLLIE_ACCOUNT_WINDOWS=0` in your `.env`, or `account_windows = false`
+  under `[bridge]`, to turn them off. OpenCode Go and Grok stay off until you name them
+  ([Usage windows](configure.md#usage-windows)).
+- **A Stop button, a Clear button and Steer.** Stop takes two taps and presses the agent's own stop
+  key ([Stop a turn](configure.md#stop-a-turn)). Clear empties the input box, and Restore types the
+  text back for two minutes ([Clear the box](configure.md#clear-the-box)). Hold Send to steer a
+  running turn on pi, Codex and OMP ([Steer or queue](multiplexers.md#steer-or-queue)).
+- **A theme that sets `pane-active` is version 3.** A Collie older than 1.24.0 refuses that file with
+  a message that names the version. The other themes keep their version
+  ([Versions](themes.md#versions)).
+- **A wide screen shows a sidebar.** From 600px wide and 480px tall, the pane screen shows several
+  panes side by side. To keep the phone layout on one device, set **Large-screen layout** to Off in
+  Settings.
 
 ## Upgrading to 1.19.0
 

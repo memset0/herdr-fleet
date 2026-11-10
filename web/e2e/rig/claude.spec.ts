@@ -1,4 +1,5 @@
-// Claude Code in the browser leg: the five scenarios on one session, on Haiku. About 6 model turns.
+// Claude Code in the browser leg: the five scenarios on one session, on Haiku, and case 22 (Model from
+// the belt over a draft), which spends no model turn. About 6 model turns.
 import { existsSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
@@ -15,6 +16,7 @@ import {
   capture,
   captureScreen,
   expect,
+  freeSurface,
   jsonRows,
   message,
   openSession,
@@ -41,6 +43,13 @@ const session: Session = { paneId: null, startNote: "not started" };
 
 /** How long a reply on Haiku may take before the case gives up on it. */
 const REPLY_MS = 120_000;
+
+/** The note case 4 sends while the long reply streams, and its echo in Claude's transcript. */
+const STREAM_NOTE = "Stream note: reply with only the word PINEAPPLE-OK.";
+const STREAM_NOTE_ECHO = /^❯\s+Stream note: reply with only the word PINEAPPLE-OK\./gmu;
+
+/** The draft case 22 puts in Claude's box: one word of letters, typed through the keys route. */
+const BELT_DRAFT = "beltdraft";
 
 /** Prompts the Load older case seeds: the live page holds the last six, so the seventh is the older page. */
 const HISTORY_PROMPTS = 7;
@@ -164,10 +173,31 @@ test.describe("claude", () => {
         if (streaming === null) throw new NotReached("the long reply never started streaming");
         const turn = (await rig.pane(pane))?.surface?.turn ?? "?";
         spendTurn(H, "stream: the note sent mid-stream");
-        const t = await sendFromComposer(page, recorder, "Stream note: reply with only the word PINEAPPLE-OK.", "send while streaming");
+        const t = await sendFromComposer(page, recorder, STREAM_NOTE, "send while streaming");
         log.push(t);
         notes.push(`sent while the Surface read turn=${turn}: ${tapWords(t)}`);
         let sent = t.answers.find((answer) => answer.path === "/api/send");
+        // Claude queues Enter during a turn (profile `enterWhileRunning: "queues"`): the first tap presses
+        // Enter into Claude's own queue, the receipt says `sent` with `queued`, and the Chat draws Claude's
+        // queued row with Send now. A hold here is the 1.24.1 defect (the prompt echo read as a menu), so
+        // it fails the case. Only a turn that already ended before the tap may take the note as a plain send.
+        const firstOutcome = sent?.outcome ?? "none";
+        const queued = firstOutcome === "sent" && /"queued":\s*true/u.test(sent?.receipt ?? "");
+        const idleSend = !queued && (firstOutcome === "sent" || firstOutcome === "effective") && !/"turn":"running"/u.test(sent?.receipt ?? "");
+        if (firstOutcome === "held") notes.push("HELD: the send was kept for the turn's end instead of going into Claude's queue");
+        let queuedRow = false;
+        if (queued) {
+          queuedRow = await page
+            .locator('[data-slot="stream-queued"]')
+            .filter({ hasText: "PINEAPPLE-OK" })
+            .first()
+            .waitFor({ state: "visible", timeout: 20_000 })
+            .then(() => true)
+            .catch(() => false);
+          notes.push(queuedRow ? "the Chat drew Claude's queued row with the note" : "no queued row with the note in the Chat (the queue may have drained first)");
+        } else if (idleSend) {
+          notes.push("the turn had ended before the tap: the note went in as a plain send");
+        }
         const submit = page.getByRole("button", { name: message("composer.protocol.submit"), exact: true });
         if (sent?.outcome === "typed_not_submitted" && (await submit.isVisible().catch(() => false))) {
           // What a person does next: the phone says Enter was not pressed and offers Submit.
@@ -176,22 +206,31 @@ test.describe("claude", () => {
           notes.push(`the phone offered Submit: ${tapWords(again)}`);
           sent = again.answers.find((answer) => answer.path === "/api/send") ?? sent;
         }
-        const held = await page
-          .getByText(message("composer.held.queued"))
+        // Any held-send card on the pane: a send kept back, whatever holds it, or one that ended unsent.
+        const heldCard = await page
+          .locator('[data-slot="held-card"]')
           .isVisible()
           .catch(() => false);
-        if (held) notes.push("the phone showed the queued line");
+        if (heldCard) notes.push("the phone showed the held card (a hold fails this case)");
         const settled = sent?.requestId === null || sent?.requestId === undefined ? null : await settledReceipt(rig, pane, sent.requestId, 180_000);
         notes.push(`receipt settled: ${settled === null ? "no" : `${settled.outcome}${settled.reason === undefined ? "" : ` (${settled.reason})`}`}`);
         // The note itself carries the word, so only Claude's own reply line counts.
         const reply = (await rig.screenUntil(pane, /^\s*(?:⏺|●)\s*PINEAPPLE-OK/m, REPLY_MS, 200)) !== null;
         notes.push(reply ? "Claude answered the note" : "no answer to the note on screen");
         await waitIdle(rig, pane, REPLY_MS);
+        // The note lands once, after the turn: one echo of it in the transcript, never a second.
+        const echoes = (await rig.screen(pane, 400)).match(STREAM_NOTE_ECHO)?.length ?? 0;
+        notes.push(`the note is in the transcript ${String(echoes)} time(s)`);
         const shot = await capture(page, "claude-4-stream-send");
         const screen = await captureScreen(rig, pane, "claude-4-stream-send");
         const wentIn = settled !== null && (settled.outcome === "sent" || settled.outcome === "effective");
-        // The first tap must do it: a send that needed the Submit offer still fails the case.
-        const verdict = t.worked && wentIn && reply ? "pass" : "fail";
+        // The first tap must do it: into Claude's queue, seen as its row in the Chat or, when a fast answer
+        // drained the queue before the check, as the note landed in the transcript after the turn; or a
+        // plain send on a turn that had ended. A send that needed the Submit offer, or a hold, fails the case.
+        const drained = queued && !queuedRow && echoes >= 1;
+        if (drained) notes.push("the queue drained before the Chat check: the note landed after the turn");
+        const firstTap = (queued && (queuedRow || drained)) || idleSend;
+        const verdict = t.worked && firstTap && !heldCard && wentIn && reply && echoes === 1 ? "pass" : "fail";
         return { verdict, taps: log.length, minTaps: 2, note: notes.join("; "), taps_log: log, captures: [shot, screen] };
       } finally {
         await context.close();
@@ -287,6 +326,72 @@ test.describe("claude", () => {
         const shotAfter = await capture(page, "claude-5-load-older-after");
         const verdict = !covered && !coveredAfter && hit.includes(message("chat.scrollback.loadOlder")) && olderReads.includes(200) && grew ? "pass" : "fail";
         return { verdict, taps: 1, minTaps: 1, note: notes.join("; "), taps_log: log, captures: [shotBefore, shotAfter] };
+      } finally {
+        await context.close();
+      }
+    });
+  });
+
+  test("22 Model from the belt over a draft: Replace empties the box and opens the picker", async ({ browser, rig }) => {
+    await runScenario(H, "belt-model-draft", session, async (pane, trail) => {
+      const { context, page, recorder } = await phoneOn(browser, rig, pane, PHONE);
+      recorder.watchAsks(pane);
+      const log = trail.log;
+      const notes = trail.notes;
+      try {
+        // A draft sits in Claude's box, typed outside the phone (the keys route), as walky case 9 types
+        // one. One word of letters, so it is easy to find on the screen and needs no space key.
+        await rig.keys(pane, [...BELT_DRAFT]);
+        const drafted = await rig.until(() => rig.pane(pane), (p) => p?.surface?.composer === "draft", 8000);
+        if (drafted === null) throw new NotReached("the draft did not show in Claude's box");
+        // The field case: the belt's Model pill onto that draft. The bridge refuses it draft_present
+        // before any key and offers Replace and Cancel, never Add ("draft/model" is no message).
+        const model = await tap(recorder, page.getByRole("group", { name: "Harness shortcuts" }).getByRole("button", { name: "Model", exact: true }), "Model shortcut");
+        log.push(model);
+        const refusal = model.answers.find((answer) => answer.path === "/api/send");
+        const refusedDraft = refusal?.outcome === "refused" && refusal.reason === "draft_present";
+        notes.push(tapWords(model));
+        const strip = page.getByTestId("send-offers");
+        const stripShown = await strip
+          .waitFor({ state: "visible", timeout: 10_000 })
+          .then(() => true)
+          .catch(() => false);
+        const offer = (key: "composer.protocol.append" | "composer.protocol.replace" | "composer.protocol.cancel") => strip.getByRole("button", { name: message(key), exact: true });
+        const hasReplace = stripShown && (await offer("composer.protocol.replace").isVisible().catch(() => false));
+        const hasCancel = stripShown && (await offer("composer.protocol.cancel").isVisible().catch(() => false));
+        const hasAdd = stripShown && (await offer("composer.protocol.append").count()) > 0;
+        const sentence = await page
+          .getByText(message("composer.protocol.draftCommand"), { exact: true })
+          .isVisible()
+          .catch(() => false);
+        notes.push(`offers ${stripShown ? `${hasReplace ? "Replace" : "no Replace"}, ${hasCancel ? "Cancel" : "no Cancel"}, ${hasAdd ? "ADD" : "no Add"}` : "not shown"}; the notice ${sentence ? "names only Replace and Cancel" : "does not say Replace it, or cancel"}`);
+        const shotOffer = await capture(page, "claude-22-belt-model-offer");
+        // No Replace on the strip is the bug itself: the case fails, it is not "not reached".
+        if (!hasReplace) return { verdict: "fail", taps: log.length, minTaps: 2, note: notes.join("; "), taps_log: log, captures: [shotOffer] };
+        // Replace: one tap, a new request. The bridge empties the box with Backspace and sends /model.
+        const replace = await tap(recorder, offer("composer.protocol.replace"), "Replace");
+        log.push(replace);
+        notes.push(tapWords(replace));
+        const card = page.getByRole("group", { name: "Select model" });
+        const cardShown = await card
+          .waitFor({ state: "visible", timeout: 15_000 })
+          .then(() => true)
+          .catch(() => false);
+        const picker = (await rig.until(() => rig.pane(pane), (p) => askOn(p)?.kind === "menu", 10_000)) !== null;
+        const screen = await rig.screen(pane, 80);
+        const draftGone = !screen.includes(BELT_DRAFT);
+        notes.push(`picker ${picker ? "open on the pane" : "NOT open on the pane"}, card ${cardShown ? "on the phone" : "NOT on the phone"}, the draft ${draftGone ? "is gone" : "IS STILL ON THE SCREEN"}`);
+        const shot = await capture(page, "claude-22-belt-model-picker");
+        const shotScreen = await captureScreen(rig, pane, "claude-22-belt-model-picker");
+        // Leave the pane idle for the next case: close the picker outside the phone, as resetBox does.
+        if (picker) {
+          await rig.keys(pane, ["Escape"]);
+          const idle = (await rig.until(() => rig.pane(pane), freeSurface, 8000)) !== null;
+          notes.push(`picker closed outside the phone (Escape), box ${idle ? "free" : "NOT free"}`);
+        }
+        // Two taps and no more: Model (refused draft_present, by design) and Replace, which must work at once.
+        const verdict = refusedDraft && hasReplace && hasCancel && !hasAdd && sentence && replace.worked && cardShown && picker && draftGone && log.length === 2 ? "pass" : "fail";
+        return { verdict, taps: log.length, minTaps: 2, note: notes.join("; "), taps_log: log, captures: [shotOffer, shot, shotScreen] };
       } finally {
         await context.close();
       }

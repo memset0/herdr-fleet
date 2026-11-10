@@ -7,6 +7,7 @@ import {
   defaultSocketPath,
   envBool,
   isLoopbackBindHost,
+  listenFailureLine,
   loadConfig,
   nonLoopbackBindRefusal,
   resolveBridgeHost,
@@ -24,11 +25,15 @@ const KEYS = [
   "COLLIE_POLL_IDLE_MS",
   "COLLIE_NOTIFY_DELAY_MS",
   "COLLIE_CACHE_WARN_SECONDS",
+  "COLLIE_WALKY_PAIR_LIMIT",
   "COLLIE_READ_LINES",
   "COLLIE_TRANSCRIPT",
   "COLLIE_TRANSCRIPT_ROOT",
   "COLLIE_REDACT",
   "COLLIE_CODEX_ROOT",
+  "COLLIE_AGY_ROOT",
+  "COLLIE_KIRO_ROOT",
+  "KIRO_HOME",
   "COLLIE_PI_ROOT",
   "COLLIE_OPENCODE_ROOT",
   "COLLIE_GROK_ROOT",
@@ -101,7 +106,9 @@ describe("loadConfig", () => {
     expect(cfg.journalRoots.opencode).toEqual([join(homedir(), ".local", "share", "opencode")]);
     expect(cfg.journalRoots.grok).toEqual([join(homedir(), ".grok", "sessions")]);
     expect(cfg.journalRoots.hermes).toEqual([join(homedir(), ".hermes")]);
+    expect(cfg.journalRoots.kiro).toEqual([join(homedir(), ".kiro", "sessions")]);
     expect(cfg.journalRoots.openclaw).toEqual([join(homedir(), ".openclaw")]);
+    expect(cfg.journalRoots.agy).toEqual([join(homedir(), ".gemini", "antigravity-cli")]);
     expect(cfg.submitKeys).toEqual(["Enter"]);
     expect(cfg.trustedUser).toBe("");
     expect(cfg.trustedUserOptional).toBe(false);
@@ -118,6 +125,27 @@ describe("loadConfig", () => {
     expect(cfg.multiSession).toBe(true);
     // tailscale serve is used by default (reverse-proxy bypass is opt-in).
     expect(cfg.skipServe).toBe(false);
+  });
+
+  test("COLLIE_ACCOUNT_WINDOWS is claude and codex by default, a list names harnesses, 0 turns it off (ADR 0118)", () => {
+    const base = { ...process.env, COLLIE_ACCOUNT_WINDOWS: undefined };
+    expect(loadConfig(base).accountWindows).toEqual(["claude", "codex"]);
+    for (const off of ["0", "off", "false", "no"]) expect(loadConfig({ ...base, COLLIE_ACCOUNT_WINDOWS: off }).accountWindows).toEqual([]);
+    for (const on of ["1", "on", "true", "yes"]) expect(loadConfig({ ...base, COLLIE_ACCOUNT_WINDOWS: on }).accountWindows).toEqual(["claude", "codex"]);
+    expect(loadConfig({ ...base, COLLIE_ACCOUNT_WINDOWS: "all" }).accountWindows).toEqual(["claude", "codex", "opencode", "grok"]);
+    expect(loadConfig({ ...base, COLLIE_ACCOUNT_WINDOWS: " Grok, claude " }).accountWindows).toEqual(["claude", "grok"]);
+  });
+
+  test("COLLIE_ACCOUNT_WINDOWS with an unknown id warns and keeps only the known ids", () => {
+    const warnings: string[] = [];
+    const realWarn = console.warn;
+    console.warn = (...args: unknown[]) => void warnings.push(args.map(String).join(" "));
+    try {
+      expect(loadConfig({ ...process.env, COLLIE_ACCOUNT_WINDOWS: "opencode,gork" }).accountWindows).toEqual(["opencode"]);
+    } finally {
+      console.warn = realWarn;
+    }
+    expect(warnings.join("\n")).toContain('COLLIE_ACCOUNT_WINDOWS: unknown id "gork"');
   });
 
   test("parses COLLIE_MULTI_SESSION as a boolean toggle (default on)", () => {
@@ -237,10 +265,38 @@ describe("loadConfig", () => {
     expect(cfg.journalRoots.grok).toEqual([join("/srv/grok", "sessions")]);
   });
 
+  test("discovers bundled Gentle Shell beside stock Pi and Oh My Pi by default", () => {
+    expect(loadConfig().journalRoots.pi).toEqual([
+      join(homedir(), ".omp", "agent", "sessions"),
+      join(homedir(), ".pi", "agent", "sessions"),
+      join(homedir(), ".gentle-shell", "agent", "sessions"),
+    ]);
+  });
+
   test("an explicit COLLIE_* root beats the harness's home var", () => {
     process.env.CODEX_HOME = "/srv/codex";
     process.env.COLLIE_CODEX_ROOT = "/elsewhere/rollouts";
     expect(loadConfig().journalRoots.codex).toEqual(["/elsewhere/rollouts"]);
+  });
+
+  test("Kiro V3 follows KIRO_HOME, while the Collie root list wins", () => {
+    // Given: Kiro's own config directory is relocated.
+    process.env.KIRO_HOME = "/srv/kiro";
+    // When: Collie resolves the journal roots.
+    expect(loadConfig().journalRoots.kiro).toEqual([join("/srv/kiro", "sessions")]);
+    process.env.COLLIE_KIRO_ROOT = " /srv/work/sessions, ,/srv/personal/sessions ";
+    // Then: an explicit list preserves order and replaces the agent default.
+    expect(loadConfig().journalRoots.kiro).toEqual(["/srv/work/sessions", "/srv/personal/sessions"]);
+  });
+
+  test("Kiro blank roots fall back to its home, as Kiro does with a blank KIRO_HOME", () => {
+    // Given: a blank Collie override and a KIRO_HOME of spaces.
+    process.env.COLLIE_KIRO_ROOT = " , ";
+    process.env.KIRO_HOME = " ";
+    // When: Collie resolves the journal roots.
+    const roots = loadConfig().journalRoots.kiro;
+    // Then: it reads the default ~/.kiro/sessions.
+    expect(roots).toEqual([join(homedir(), ".kiro", "sessions")]);
   });
 
   test("COLLIE_HERMES_ROOT relocates Hermes state.db", () => {
@@ -348,6 +404,20 @@ describe("loadConfig", () => {
     expect(loadConfig().cacheWarnSeconds).toBe(300);
   });
 
+  test("COLLIE_WALKY_PAIR_LIMIT defaults to 6, takes 1 to 100 and falls back to 6 outside that or off a number", () => {
+    expect(loadConfig().walkyPairLimit).toBe(6);
+    process.env.COLLIE_WALKY_PAIR_LIMIT = "2";
+    expect(loadConfig().walkyPairLimit).toBe(2);
+    process.env.COLLIE_WALKY_PAIR_LIMIT = "100";
+    expect(loadConfig().walkyPairLimit).toBe(100);
+    process.env.COLLIE_WALKY_PAIR_LIMIT = "0";
+    expect(loadConfig().walkyPairLimit).toBe(6);
+    process.env.COLLIE_WALKY_PAIR_LIMIT = "101";
+    expect(loadConfig().walkyPairLimit).toBe(6);
+    process.env.COLLIE_WALKY_PAIR_LIMIT = "many";
+    expect(loadConfig().walkyPairLimit).toBe(6);
+  });
+
   test("uses the default upload cap when unset, and resolves COLLIE_MAX_UPLOAD_MB to bytes", () => {
     expect(loadConfig().maxUploadBytes).toBe(DEFAULT_MAX_UPLOAD_BYTES);
     process.env.COLLIE_MAX_UPLOAD_MB = "5";
@@ -425,6 +495,42 @@ describe("loadConfig", () => {
   test("an unrecognised dial mode falls back to auto rather than dialling nothing", () => {
     process.env.COLLIE_HERDR_DIAL = "carrier-pigeon";
     expect(loadConfig().dialMode).toBe("auto");
+  });
+});
+
+describe("listenFailureLine", () => {
+  const base = { door: "front door", port: 8787, code: "EADDRNOTAVAIL", message: "Failed to start server", interfaces: ["127.0.0.1", "192.168.1.5"] } as const;
+
+  test("names the door, the address, the port, the code and the message in one FATAL line", () => {
+    const line = listenFailureLine({ ...base, host: "127.0.0.1" });
+    expect(line.startsWith("[bridge] FATAL: front door cannot listen on 127.0.0.1:8787")).toBe(true);
+    expect(line).toContain("EADDRNOTAVAIL");
+    expect(line).toContain("Failed to start server");
+    expect(line).not.toContain("\n");
+  });
+
+  test("a loopback host gets no Tailscale hint, even when no interface lists it", () => {
+    expect(listenFailureLine({ ...base, host: "127.0.0.1", interfaces: [] })).not.toContain("Tailscale");
+    expect(listenFailureLine({ ...base, host: "::1", interfaces: [] })).not.toContain("Tailscale");
+  });
+
+  test("a wildcard host gets no hint", () => {
+    expect(listenFailureLine({ ...base, host: "0.0.0.0", interfaces: [] })).not.toContain("Tailscale");
+    expect(listenFailureLine({ ...base, host: "", interfaces: [] })).toContain("every interface");
+  });
+
+  test("a tailnet host that no interface holds gets the hint", () => {
+    const line = listenFailureLine({ ...base, host: "100.64.0.8", door: "standby door" });
+    expect(line).toContain("standby door cannot listen on 100.64.0.8:8787");
+    expect(line).toContain("address not on any interface yet (is Tailscale up?)");
+  });
+
+  test("a tailnet host that an interface holds gets no hint", () => {
+    expect(listenFailureLine({ ...base, host: "100.64.0.8", interfaces: ["127.0.0.1", "100.64.0.8"] })).not.toContain("Tailscale");
+  });
+
+  test("a missing code is said in words", () => {
+    expect(listenFailureLine({ ...base, host: "127.0.0.1", code: undefined })).toContain("no code");
   });
 });
 
@@ -570,3 +676,49 @@ describe("normaliseBasePath — COLLIE_BASE_PATH as the bridge mounts it", () =>
     expect(loadConfig().basePath).toBe("/");
   });
 });
+
+describe("loadConfig picks herdr-core with no COLLIE_MUX only where the Herdr TUI is absent (M74)", () => {
+  const core = "/run/user/7/herdr-core/default.sock";
+  const env = { XDG_RUNTIME_DIR: "/run/user/7", HERDR_SOCKET_PATH: "/home/dev/.config/herdr/herdr.sock" };
+  // The pick lists Herdr's plugin config dir; the test host has none, whatever the real home holds.
+  const noDirs = (): readonly string[] => [];
+  const tuiConfig = join(homedir(), ".config", "herdr", "config.toml").replaceAll("\\", "/");
+
+  // herdr-core runs on Linux and macOS only (M74), so Windows keeps `herdr` on the same sockets.
+  test("only the core socket: herdr-core on that socket, with the reason; Windows keeps herdr", () => {
+    const cfg = loadConfig(env, (path) => path === core, noDirs);
+    if (process.platform === "win32") {
+      expect(cfg.mux).toBe("herdr");
+      expect(cfg.muxPickedBecause).toBe("");
+      return;
+    }
+    expect(cfg.mux).toBe("herdr-core");
+    expect(cfg.muxEndpoint).toBe(core);
+    expect(cfg.muxPickedBecause).toContain(core);
+    expect(cfg.muxNotPickedBecause).toBe("");
+  });
+
+  test("the TUI socket is there: herdr, as before, and the core socket is named as not picked", () => {
+    const cfg = loadConfig(env, () => true, noDirs);
+    expect(cfg.mux).toBe("herdr");
+    expect(cfg.muxEndpoint).toBe(env.HERDR_SOCKET_PATH);
+    expect(cfg.muxPickedBecause).toBe("");
+    if (process.platform !== "win32") expect(cfg.muxNotPickedBecause).toContain(`a Herdr socket at ${env.HERDR_SOCKET_PATH}`);
+  });
+
+  test("the TUI socket is absent but the Herdr TUI is installed here: herdr, with the reason", () => {
+    const cfg = loadConfig(env, (path) => path === core || path === tuiConfig, noDirs);
+    expect(cfg.mux).toBe("herdr");
+    expect(cfg.muxEndpoint).toBe(env.HERDR_SOCKET_PATH);
+    expect(cfg.muxPickedBecause).toBe("");
+    if (process.platform !== "win32") expect(cfg.muxNotPickedBecause).toContain("Herdr TUI install");
+  });
+
+  test("an explicit COLLIE_MUX is never second-guessed", () => {
+    const cfg = loadConfig({ ...env, COLLIE_MUX: "herdr" }, (path) => path === core, noDirs);
+    expect(cfg.mux).toBe("herdr");
+    expect(cfg.muxPickedBecause).toBe("");
+    expect(cfg.muxNotPickedBecause).toBe("");
+  });
+});
+

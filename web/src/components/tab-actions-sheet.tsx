@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from "react";
-import { Pencil, XCircle } from "lucide-react";
+import { Icon } from "@/components/icons/icon";
 
 import { BottomSheet } from "@/components/ui/sheet";
 import { ActionRow, DestructiveActionRow, RenameView } from "@/components/action-sheet-rows";
@@ -93,6 +93,9 @@ export function TabActionsSheet({
       const res = await api.renameTab(tab.tabId, trimmed, scope);
       if (res.ok) {
         setStatus(t("space.tab.renamed"), "success");
+        // The same catch-up as a close: the strip should not wait out an idle-timed gap to show
+        // the new name (pane-actions-sheet.tsx says why the revalidate alone can read the old one).
+        stampTopology();
         onRenamed();
         onClose();
       } else {
@@ -176,14 +179,20 @@ export function TabActionsSheet({
               is why the rows themselves are shared components. */}
           {canRename.capable && (
             <ActionRow
-              icon={<Pencil className="size-4 shrink-0 text-muted-foreground" />}
+              icon={<Icon name="edit" className="size-4 shrink-0 text-muted-foreground" />}
               label={t("space.tab.rename")}
               onClick={() => setMode("rename")}
             />
           )}
+          {/* Rename and Close tab are never neighbours: Close ends every pane in the tab, so it sits
+              last, behind a divider and a gap of its own (a thumb aiming at Rename must not reach it).
+              The divider only draws when both rows do. */}
+          {canRename.capable && canClose.capable && (
+            <hr data-slot="tab-actions-divider" className="my-2 border-border" />
+          )}
           {canClose.capable && (
             <DestructiveActionRow
-              icon={<XCircle className="size-4 shrink-0" />}
+              icon={<Icon name="close-pane" className="size-4 shrink-0" />}
               label={t("space.tab.close")}
               confirmLabel={confirmLabel}
               closingLabel={t("space.tab.closing")}

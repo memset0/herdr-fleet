@@ -12,6 +12,9 @@ import { createMuseReducer, parseMuseTranscript } from "./muse.ts";
 import { createOpenclawReducer, parseOpenclawTranscript } from "./openclaw.ts";
 import { createOpencodeReducer, parseOpencodeTranscript } from "./opencode.ts";
 import { createPiReducer, parsePiTranscript } from "./pi.ts";
+import { createKiroReducer, parseKiroTranscript } from "./kiro.ts";
+import { createDshReducer, parseDshTranscript } from "./dsh.ts";
+import { agyJournal, createAgyReducer } from "./agy.ts";
 import type { TranscriptEntry } from "./types.ts";
 
 // ── THE GATE FOR THE ROW REDUCER ────────────────────────────────────────────────────────────────
@@ -97,18 +100,37 @@ function expectEquivalent(make: () => RowReducer, parse: (text: string) => Trans
  * equivalence proof is an adapter whose tail nobody has checked.
  */
 const COVERED = [
+  "agy",
   "claude",
   "codex",
   "opencode",
   "pi",
   "grok",
   "hermes",
+  "kiro",
   "muse",
   "openclaw",
+  "dsh-tui",
 ] as const;
 
 test("every harness the registry knows has an equivalence section here", () => {
   expect([...KNOWN_HARNESS_NAMES].toSorted()).toEqual([...COVERED].toSorted());
+});
+
+test("AGY whole, row and torn-chunk reads agree", () => {
+  const text = [
+    JSON.stringify({ step_index: 0, type: "USER_INPUT", content: "Inspect the repo", created_at: "2026-10-22T10:00:00.000Z" }),
+    JSON.stringify({
+      step_index: 1,
+      type: "PLANNER_RESPONSE",
+      content: "I will check the files.",
+      tool_calls: [{ name: "view_file", args: { path: "/repo/README.md" } }],
+      created_at: "2026-10-22T10:00:02.000Z",
+    }),
+    JSON.stringify({ step_index: 2, type: "GENERIC", content: "# Repo", created_at: "2026-10-22T10:00:04.000Z" }),
+    ...RUBBISH,
+  ].join("\n");
+  expectEquivalent(createAgyReducer, agyJournal([]).parse, text);
 });
 
 // Rubbish every corpus below ends with, because a tail read produces all of it: a blank row, a
@@ -193,6 +215,23 @@ describe("claude: a reducer reads a torn stream the way the parser reads a whole
     for (const line of text.split("\n")) for (const e of reducer.push(line).added) held.push(e);
     const tool = held.find((e) => e.uuid === "a1")?.parts.find((p) => p.kind === "tool");
     expect(tool?.kind === "tool" && tool.result?.text).toBe("const a = 1");
+  });
+});
+
+describe("kiro: a reducer reads a torn stream the way the parser reads a whole file", () => {
+  const fixture = readFileSync(join(import.meta.dir, "fixtures", "kiro", "messages.jsonl"), "utf8");
+  const extra = [
+    { id: "unicode", payload: { type: "assistant", operationType: "Say", content: "First line.\nSecond line: café 日本語." } },
+    { id: "late-call", payload: { type: "tool_call", toolCallId: "late", toolName: "read_file", args: { path: "/example/sample.txt" }, status: "completed" } },
+    { id: "late-result", payload: { type: "tool_result", toolCallId: "late", content: "first\nsecond", success: true } },
+  ].map((entry) => JSON.stringify({ ...entry, timestamp: "2026-10-01T12:00:01.000Z" }));
+  const text = fixture + [...extra, ...RUBBISH].join("\n");
+
+  test("whole history, complete rows and arbitrary chunks agree", () => {
+    // Given: saved-session rows include late tool output and Unicode.
+    // When: the same bytes arrive whole, by row or across arbitrary chunk boundaries.
+    // Then: each reading produces the same client-visible entries and tool updates.
+    expectEquivalent(createKiroReducer, parseKiroTranscript, text);
   });
 });
 
@@ -389,5 +428,18 @@ describe("the line feeder", () => {
     // `text.split("\n")` yields an empty string per blank row, and the reducers skip them. A feeder
     // that dropped them would still agree, but only by luck: nothing here may decide what a row means.
     expect(createLineFeeder().push("a\n\n\nb\n")).toEqual(["a", "", "", "b"]);
+  });
+});
+
+describe("dsh-tui: a reducer reads a torn stream the way the parser reads a whole file", () => {
+  const fixture = readFileSync(join(import.meta.dir, "fixtures", "dsh", "session.v4.jsonl"), "utf8");
+  const extra = [
+    { type: "assistant/message", seq: 900, time: 1790000100000, data: { message: { role: "assistant", id: "unicode", content: [{ type: "text", text: "First line.\nSecond line: café 日本語." }, { type: "tool-call", id: "late", name: "read", arguments: JSON.stringify({ path: "/example/sample.txt" }) }] } } },
+    { type: "tool/result", seq: 901, time: 1790000100500, data: { message: { role: "tool", id: "late-result", toolCallId: "late", content: [{ type: "text", text: "first\nsecond" }], isError: false } } },
+  ].map((row) => JSON.stringify(row));
+  const text = fixture + [...extra, ...RUBBISH].join("\n");
+
+  test("whole history, complete rows and arbitrary chunks agree", () => {
+    expectEquivalent(createDshReducer, parseDshTranscript, text);
   });
 });

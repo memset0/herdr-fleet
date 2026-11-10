@@ -1,24 +1,26 @@
-import { Activity, ArrowLeft, Bell, Bot, ChevronRight, FlaskConical, Mic, Palette, Server, SlidersHorizontal } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { Icon } from "@/components/icons/icon";
+import type { IconKey } from "@/components/icons/keys";
 
 import { RouteHeader } from "@/components/app-header";
 import { Button } from "@/components/ui/button";
 import { BuildStamp } from "@/components/build-stamp";
 import { Card } from "@/components/ui/card";
+import { SettingsNavRow } from "@/components/settings-nav-row";
 import { InstallControl } from "@/components/install-control";
 import { FleetSettingsSection } from "@/components/fleet-settings-section";
+import { useUpdatesStatus } from "@/components/updates-settings-card";
 import { hasExperiments } from "@/lib/experiments";
 import { useLocale } from "@/hooks/use-locale";
 import { useNav } from "@/hooks/use-nav";
 import { t, type MessageKey } from "@/lib/i18n";
-import { homePath, machinesPath, settingsSectionPath } from "@/lib/nav";
+import { homePath, machinesPath, settingsSectionPath, updatesPath } from "@/lib/nav";
 import type { Scope } from "@/lib/scope";
 import { useScope } from "@/lib/session";
 import { BandMain } from "@/components/ui/strip-host";
 
 // ── THE SETTINGS INDEX ──────────────────────────────────────────────────────────────────────────
 //
-// Five rows, each opening a section (routes/settings-sections.tsx, which explains the split), then
+// Updates first, then five rows, each opening a section (routes/settings-sections.tsx, which explains the split), then
 // Machines (a page, not a section) and, while Experiments holds anything, Experiments.
 //
 // This page used to BE the settings: seventeen cards in one column, over a thousand pixels of
@@ -43,7 +45,7 @@ interface Row {
   id: string;
   /** Where the row opens. A section is `/settings/<section>`; Machines is a page of its own. */
   to: (scope: Scope | undefined) => string;
-  icon: LucideIcon;
+  icon: IconKey;
   title: MessageKey;
   blurb: MessageKey;
 }
@@ -66,49 +68,49 @@ const ROWS: Row[] = [
   {
     id: "appearance",
     to: (scope) => settingsSectionPath("appearance", scope),
-    icon: Palette,
+    icon: "theme",
     title: "settings.section.appearance.title",
     blurb: "settings.section.appearance.blurb",
   },
   {
     id: "harnesses",
     to: (scope) => settingsSectionPath("harnesses", scope),
-    icon: Bot,
+    icon: "harnesses",
     title: "settings.section.harnesses.title",
     blurb: "settings.section.harnesses.blurb",
   },
   {
     id: "device",
     to: (scope) => settingsSectionPath("device", scope),
-    icon: SlidersHorizontal,
+    icon: "section-device",
     title: "settings.section.device.title",
     blurb: "settings.section.device.blurb",
   },
   {
     id: "voice",
     to: (scope) => settingsSectionPath("voice", scope),
-    icon: Mic,
+    icon: "mic",
     title: "settings.section.voice.title",
     blurb: "settings.section.voice.blurb",
   },
   {
     id: "alerts",
     to: (scope) => settingsSectionPath("alerts", scope),
-    icon: Bell,
+    icon: "notifications",
     title: "settings.section.alerts.title",
     blurb: "settings.section.alerts.blurb",
   },
   {
     id: "system",
     to: (scope) => settingsSectionPath("system", scope),
-    icon: Server,
+    icon: "machine",
     title: "settings.section.system.title",
     blurb: "settings.section.system.blurb",
   },
   {
     id: "machines",
     to: (scope) => machinesPath(scope),
-    icon: Activity,
+    icon: "machine-activity",
     title: "settings.section.machines.title",
     blurb: "settings.section.machines.blurb",
   },
@@ -117,7 +119,7 @@ const ROWS: Row[] = [
         {
           id: "experiments",
           to: (scope) => settingsSectionPath("experiments", scope),
-          icon: FlaskConical,
+          icon: "experiments",
           title: "settings.section.experiments.title",
           blurb: "settings.section.experiments.blurb",
         } satisfies Row,
@@ -128,6 +130,7 @@ const ROWS: Row[] = [
 export function SettingsRoute() {
   const nav = useNav();
   const scope = useScope();
+  const updates = useUpdatesStatus();
   useLocale();
 
   return (
@@ -147,7 +150,7 @@ export function SettingsRoute() {
               onClick={() => nav.up(homePath(scope))}
               aria-label={t("settings.nav.back")}
             >
-              <ArrowLeft className="size-5" />
+              <Icon name="back" className="size-5" />
             </Button>
             <h1 className="min-w-0 truncate text-lg font-semibold tracking-tight">{t("settings.title")}</h1>
           </>
@@ -163,20 +166,35 @@ export function SettingsRoute() {
             `rows: cards` makes them cards inside this one card, like every other list. */}
         <Card className="gap-0 py-0">
           <div data-slot="list-group">
+            {/* FIRST, because it is the one row whose answer changes without you touching anything: a
+                release lands, a peer falls behind. The caption is the live status (the same words the
+                Updates page opens with); a release waiting leads it with a 6px dot in the primary
+                colour. The row is not in `ROWS`, whose captions are fixed strings. */}
+            <SettingsNavRow
+              icon="update-available"
+              title={t("updates.entry.title")}
+              caption={
+                <>
+                  {updates.available && (
+                    <span
+                      aria-hidden="true"
+                      data-slot="update-dot"
+                      className="mr-1.5 inline-block size-1.5 rounded-full bg-primary align-middle"
+                    />
+                  )}
+                  {updates.line}
+                </>
+              }
+              onOpen={() => nav.down(updatesPath(scope))}
+            />
             {ROWS.map((row) => (
-              <button
+              <SettingsNavRow
                 key={row.id}
-                type="button"
-                onClick={() => nav.down(row.to(scope))}
-                className="flex w-full items-center gap-3 p-4 text-left active:bg-muted/60"
-              >
-                <row.icon className="size-5 shrink-0 text-muted-foreground" />
-                <div className="min-w-0 flex-1">
-                  <div className="font-medium">{t(row.title)}</div>
-                  <p className="truncate text-sm text-muted-foreground">{t(row.blurb)}</p>
-                </div>
-                <ChevronRight aria-hidden="true" className="size-5 shrink-0 text-muted-foreground" />
-              </button>
+                icon={row.icon}
+                title={t(row.title)}
+                caption={t(row.blurb)}
+                onOpen={() => nav.down(row.to(scope))}
+              />
             ))}
           </div>
         </Card>

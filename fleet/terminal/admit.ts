@@ -78,7 +78,7 @@ export interface AdmissionConfig {
  * this value is about to be looked up on a machine: a Pane id is not a path, and the resolver must
  * never be the first thing to discover that.
  */
-const PANE_ID = /^[A-Za-z0-9][A-Za-z0-9_-]{0,63}:[A-Za-z0-9][A-Za-z0-9_-]{0,63}$/;
+const PANE_ID = /^(?:[A-Za-z0-9][A-Za-z0-9_-]{0,63}:[A-Za-z0-9][A-Za-z0-9_-]{0,63}|t[0-9a-z]{1,64})$/;
 
 /**
  * The one shape a Pane id may have, shared with the member-side service.

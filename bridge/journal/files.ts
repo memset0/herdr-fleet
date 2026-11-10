@@ -67,6 +67,13 @@ import { type Cursor, decodeCursor, encodeCursor, type ReadSince } from "./curso
 export const MAX_TRANSCRIPT_BYTES = 32 * 1024 * 1024; // 32 MB
 
 /**
+ * Most bytes one Zstandard frame may expand to. The input is bounded by `MAX_TRANSCRIPT_BYTES`, but a
+ * small frame can expand by orders of magnitude, so a reader passes this as `maxOutputLength` and
+ * refuses a frame that passes it, the way it refuses a frame that does not decode.
+ */
+export const MAX_FRAME_OUTPUT_BYTES = 2 * MAX_TRANSCRIPT_BYTES; // 64 MiB
+
+/**
  * The real path of `path`. On Windows this is the OS's own answer (`fs.realpath.native`), which
  * expands an 8.3 short name (`PAIRED~1.JSO`) to the long one, so the deny rules read the name the
  * disk holds. Elsewhere it is the ordinary `realpath`.
@@ -245,9 +252,9 @@ export const FIRST_TAIL_ROWS = 400;
 /**
  * What is new in a log since `cursor` — the live read, beside {@link loadTail}'s whole-window one.
  *
- * Shared by every harness that writes a FILE (claude, codex, pi, grok, muse), which is why it lives here:
- * the byte counting, the bound and the torn-line rule are properties of reading a log, not of any
- * one grammar. The two SQLite harnesses answer the same question in their own language and share
+ * Shared by every harness that writes a FILE (claude, codex, pi, grok, muse, kiro), which is why it
+ * lives here: the byte counting, the bound and the torn-line rule are properties of reading a log,
+ * not of any one grammar. The two SQLite harnesses answer the same question in their own language and share
  * nothing with this but the {@link Cursor} codec.
  *
  * THE OFFSET ONLY EVER ADVANCES TO A ROW BOUNDARY. That one rule is what holds a torn final line

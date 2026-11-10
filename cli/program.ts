@@ -3,7 +3,8 @@ import { join } from "node:path";
 
 import { Command as Program, CommanderError } from "commander";
 
-import { type BeaconEmitDeps, runBeaconEmit } from "./beacon.ts";
+import { agentPidOf, type BeaconEmitDeps, readProcessInfo, runBeaconEmit } from "./beacon.ts";
+import { cmdBeaconStatusline, runShell, type StatusLineDeps } from "./statusline.ts";
 import { type HoldDeps, netConnect, runBeaconHold } from "./hold.ts";
 import { CODEX_NOTIFY_HARNESS, runCodexNotify } from "./codex-notify.ts";
 import { cmdBuild } from "./build.ts";
@@ -27,6 +28,7 @@ import {
 } from "./hooks.ts";
 import { lifecycleDeps, updateDeps } from "./deps.ts";
 import { cmdDoctor, doctorDeps } from "./doctor.ts";
+import { chooseDoctorInstanceHere } from "./doctor-instance.ts";
 import { cmdDocs, cmdSkill } from "./docs.ts";
 import {
   cmdSkillInstall,
@@ -88,11 +90,12 @@ import {
 } from "./push.ts";
 import { cmdPushKeys } from "./push-keys.ts";
 import { cmdQr } from "./qr.ts";
-import { loadUi, renderInputs, takePlainFlag, type Ui, wantsRich } from "./render.ts";
+import { loadUi, renderInputs, takePlainFlag, terminalColumns, type Ui, wantsRich } from "./render.ts";
 import { cmdCrewDeputy } from "./crew-deputy.ts";
 import { cmdCrewUpdate } from "./crew-update.ts";
 import { cmdCrewAdd, crewAddDeps, type CrewAddDeps } from "./remote.ts";
-import { cmdServe, cmdServeVerb, cmdUnserve } from "./serve.ts";
+import { gatherCensus } from "./census.ts";
+import { cmdServe, cmdServeStatus, cmdServeVerb, cmdUnserve, SERVE_SUBCOMMANDS } from "./serve.ts";
 import {
   cmdStt,
   cmdSttOff,
@@ -103,6 +106,8 @@ import {
   type SttDeps,
 } from "./stt.ts";
 import { cmdSttWhistle } from "./stt-whistle.ts";
+import { cmdMux, cmdMuxList, MUX_SUBCOMMANDS, type MuxListDeps } from "./mux-list.ts";
+import { cmdSessions, SESSIONS_VERB, type SessionsDeps } from "./sessions.ts";
 import { cmdDurable, cmdDurableAttach, cmdDurableDetach, cmdDurableList, DURABLE_SUBCOMMANDS, type DurableAttachDeps } from "./durable-attach.ts";
 import { realExec, realFiles } from "./sys.ts";
 import { HOST } from "../bridge/host.ts";
@@ -111,7 +116,10 @@ import { cmdApplyUpdate, cmdUpdate } from "./update.ts";
 import {
   askSocket,
   cmdWalky,
+  cmdWalkyCancel,
   cmdWalkyInbox,
+  cmdWalkyOff,
+  cmdWalkyOn,
   cmdWalkyReply,
   cmdWalkySend,
   cmdWalkyStatus,
@@ -120,6 +128,8 @@ import {
   type WalkyDeps,
 } from "./walky.ts";
 import { cmdUpdateCheck, updateCheckDeps, wantsCheck } from "./update-check.ts";
+import { cmdTheme, cmdThemeCheck, realThemeFiles, THEME_SUBCOMMANDS } from "./theme-check.ts";
+import { cmdThemeSkill } from "./theme-skill.ts";
 
 // The `collie` binary's dispatch: argv in, exit code out. This module owns ONLY the dispatch —
 // every verb's behaviour lives in its own module under `cli/`, taking the resolved context as an
@@ -314,6 +324,21 @@ const WALKY_TREE: readonly Subcommand[] = [
     summary: "a message's receipt: `walky status <id>`",
     run: (args, s) => cmdWalkyStatus(walkyDeps(s.io), args),
   },
+  {
+    name: "cancel",
+    summary: "take back a held message you sent: `walky cancel <id>` (it stays in the inbox, not typed)",
+    run: (args, s) => cmdWalkyCancel(walkyDeps(s.io), args),
+  },
+  {
+    name: "off",
+    summary: "turn this session's WalkyTalky off: other agents cannot message it, your operator still can",
+    run: (args, s) => cmdWalkyOff(walkyDeps(s.io), args),
+  },
+  {
+    name: "on",
+    summary: "turn this session's WalkyTalky on again",
+    run: (args, s) => cmdWalkyOn(walkyDeps(s.io), args),
+  },
 ];
 
 function sttDeps(io: Io): SttDeps {
@@ -336,8 +361,9 @@ function sttDeps(io: Io): SttDeps {
  *
  * There is no `Io` in this set, and that is the point — a hook's stdout is injected into the
  * conversation, so the verb has no way to print even by accident. The context's own stderr notes are
- * dropped for the same reason. `process.ppid` is the `claude` process: a hook command runs as its
- * direct child (probed 2026-08-20 — see `cli/beacon.ts`).
+ * dropped for the same reason. `process.ppid` is the `claude` process where `sh` execs the command
+ * (bash, macOS), and a short-lived dash where it does not, so the pid goes through `agentPidOf`
+ * (probed 2026-08-20, amended for issue 689 — see `cli/beacon.ts`).
  */
 /** `config`'s seams: the context (which already carries the file layer), the io and the filesystem. */
 function configVerbDeps(io: Io): ConfigDeps {
@@ -361,13 +387,30 @@ function durableVerbDeps(io: Io): DurableAttachDeps {
   };
 }
 
+/** `sessions`: the context, the filesystem, and the one network read of this instance's own bridge. */
+function sessionsDeps(io: Io): SessionsDeps {
+  const deps = lifecycleDeps(io);
+  return { ctx: deps.ctx, io, files: deps.files, fetch: (url, init) => fetch(url, init) };
+}
+
 function beaconDeps(): BeaconEmitDeps {
   return {
     ctx: loadContext(() => {}),
     files: realFiles,
     readStdin: () => Bun.stdin.text(),
-    agentPid: process.ppid,
+    agentPid: agentPidOf(process.ppid, readProcessInfo),
     uid: process.getuid?.(),
+  };
+}
+
+/** The statusLine wrapper's world. The run and its stopping rules live in cli/statusline.ts. */
+function statusLineDeps(): StatusLineDeps {
+  return {
+    ctx: loadContext(() => {}),
+    files: realFiles,
+    readStdin: () => Bun.stdin.text(),
+    uid: process.getuid?.(),
+    run: runShell,
   };
 }
 
@@ -376,13 +419,19 @@ function holdDeps(): HoldDeps {
     ctx: loadContext(() => {}),
     files: realFiles,
     readStdin: () => Bun.stdin.text(),
-    agentPid: process.ppid,
+    agentPid: agentPidOf(process.ppid, readProcessInfo),
     uid: process.getuid?.(),
     connect: netConnect,
     print: async (text) => {
       await Bun.write(Bun.stdout, `${text}\n`);
     },
   };
+}
+
+/** `mux list`'s seams: the resolved context, the process and filesystem, and the user id the registry folder is checked against. */
+function muxListDeps(io: Io): MuxListDeps {
+  const ctx = loadContext(io.err);
+  return { ctx, io, exec: realExec(ctx.env, ctx.home), files: realFiles, uid: process.getuid?.() };
 }
 
 /** A verb whose body is a lifecycle function over {@link lifecycleDeps}. */
@@ -400,6 +449,30 @@ function lifecycleCommand(
     // even loaded — see `Session.ui`. `repairAcl` is the bridge process's alone (M43 spec 04).
     run: async (args, s) =>
       body(lifecycleDeps(s.io, opts.rich === true ? await s.ui() : null, { repairAcl: opts.repairAcl === true }), args),
+  };
+}
+
+/**
+ * `serve` publishes the front door and `serve status` reads what `tailscale serve` publishes. The
+ * bare verb is still the publisher, so it answers `--help` itself: a parent with children runs outside
+ * the guard in {@link buildProgram}, and publishing a door to answer a request for usage is the
+ * mistake that guard exists to stop (#392).
+ */
+function serveCommand(): Command {
+  const summary = "publish the single managed `tailscale serve` front door; `serve status` shows what tailscale serve publishes";
+  const publish: Command["run"] = async (args, s) =>
+    helpGuard(s, asksForHelp(args), "serve", summary, false, args, async () => cmdServeVerb(lifecycleDeps(s.io)));
+  return {
+    name: "serve",
+    summary,
+    subcommands: [
+      {
+        name: SERVE_SUBCOMMANDS[0],
+        summary: "what tailscale serve publishes on this machine (read only; `status --verbose` prints the same)",
+        run: (_args, s) => cmdServeStatus(lifecycleDeps(s.io)),
+      },
+    ],
+    run: publish,
   };
 }
 
@@ -438,7 +511,7 @@ function crewTree(): readonly Subcommand[] {
       cmdCrewUpdate,
       true,
     ),
-    crewSubcommand("status", "mode, members, reachability, secret pickup and why a link is refused", cmdCrewStatus, true),
+    crewSubcommand("status", "mode, members, reachability, each member's version, mux and panes, secret pickup and why a link is refused (--json)", cmdCrewStatus, true),
     crewSubcommand("rotate", "reissue the crew secret and hand it to every reachable peer", (deps) =>
       cmdCrewRotate(deps),
     ),
@@ -592,9 +665,21 @@ export const COMMANDS: readonly Command[] = [
   // Invoked directly, `serve` also prints where to point a phone (the pre-shim collie-ctl.sh) —
   // `start` does not, because its banner already carries the URL. That extra line is `cmdServeVerb`,
   // which lives beside the publish decision it depends on (a peer prints none — F24).
-  lifecycleCommand("serve", "publish the single managed `tailscale serve` front door", cmdServeVerb),
+  serveCommand(),
   lifecycleCommand("unserve", "tear down the front door we published", cmdUnserve),
-  lifecycleCommand("status", "is it running, and on what URLs", cmdStatus, { rich: true }),
+  {
+    name: "status",
+    summary:
+      "is it running, and on what URLs; then crew members, paired devices and agent sessions (`--json` for a program, `--verbose` adds the tailscale serve dump)",
+    run: async (args, s) => {
+      const deps = lifecycleDeps(s.io, await s.ui());
+      // The census reads: a `hello` per crew member and this bridge's own snapshot. Built here, where
+      // the real transport lives, so `cmdStatus` stays a function over values the tests can pass.
+      const census = (input: Parameters<typeof gatherCensus>[1]) =>
+        gatherCensus({ ctx: deps.ctx, files: deps.files, fetch: (url, init) => fetch(url, init), now: () => Date.now() }, input);
+      return cmdStatus(deps, args, census);
+    },
+  },
   lifecycleCommand("url", "print the bridge URL", cmdUrl),
   lifecycleCommand("qr", "print the bridge URL as a scannable QR code", (deps) => cmdQr(deps)),
   {
@@ -626,12 +711,27 @@ export const COMMANDS: readonly Command[] = [
   // one left out — no service manager, no front door, no store write.
   {
     name: "doctor",
-    summary: "check this install for the traps that fail silently",
+    summary: "check this install for the traps that fail silently (--json, --instance <name>)",
     run: async (args, s) => {
-      const deps = lifecycleDeps(s.io);
+      // The lane flag is read, and the name checked against this machine's instances, BEFORE the
+      // context is built: an unknown name exits 2 with the list, and no check runs (M71/04).
+      const chosen = chooseDoctorInstanceHere(args, process.env);
+      if (!chosen.ok) {
+        s.io.err(chosen.message);
+        return EXIT.USAGE;
+      }
+      const deps = lifecycleDeps(s.io, null, { instance: chosen.instance });
       return cmdDoctor(
-        doctorDeps({ ctx: deps.ctx, io: s.io, exec: deps.exec, files: deps.files, ui: await s.ui() }),
-        args,
+        doctorDeps({
+          ctx: deps.ctx,
+          io: s.io,
+          exec: deps.exec,
+          files: deps.files,
+          ui: await s.ui(),
+          // Read once, here at the edge: the plain lines wrap at the terminal's width, else at 80.
+          columns: terminalColumns(process.stdout.isTTY === true, process.stdout.columns),
+        }),
+        chosen.rest,
       );
     },
   },
@@ -661,7 +761,9 @@ export const COMMANDS: readonly Command[] = [
     subcommands: [
       {
         name: "install",
-        summary: "register the beacon hooks: `hooks install claude` (add `--hold-permissions` to hold permissions), or `hooks install codex`",
+        summary:
+          "register the beacon hooks: `hooks install claude` (add `--hold-permissions` to hold permissions, and `--statusline` to also wrap your statusLine" +
+          " so the phone shows the 5-hour and 7-day windows; your command still runs and prints as before), or `hooks install codex`",
         run: (args, s) => cmdHooksInstall(hooksDeps(s.io), args),
       },
       {
@@ -679,7 +781,7 @@ export const COMMANDS: readonly Command[] = [
   },
   {
     name: "beacon",
-    summary: "internal: `beacon emit` and `beacon hold`, the agent hooks Collie installs",
+    summary: "internal: `beacon emit`, `beacon hold` and `beacon statusline`, the agent hooks Collie installs",
     internal: true,
     subcommands: [
       {
@@ -692,6 +794,11 @@ export const COMMANDS: readonly Command[] = [
         name: "hold",
         summary: "internal: hold one permission request for a tap on the phone (M56 spec 12)",
         run: () => runBeaconHold(holdDeps),
+      },
+      {
+        name: "statusline",
+        summary: "internal: run the operator's own statusLine, and pass its usage numbers to the phone (.adr/0115)",
+        run: (args) => cmdBeaconStatusline(statusLineDeps(), args),
       },
     ],
     // A bare `collie beacon`, or a misspelt sub-verb, is still an invocation from a hook — so it gets
@@ -855,15 +962,57 @@ export const COMMANDS: readonly Command[] = [
     ],
     run: async (args, s) => await cmdDurable(durableVerbDeps(s.io), args),
   },
+  // ── Multiplexers (M76 spec 02) ─────────────────────────────────────────────
+  // A read: the probes `start` and `doctor` make, and the live bridges' hook target records. Nothing
+  // is written, started or restarted. A bare `mux` prints the list.
+  {
+    name: "mux",
+    summary: `the multiplexers this machine has and who drives them: ${MUX_SUBCOMMANDS.join(", ")}`,
+    subcommands: [
+      {
+        name: "list",
+        summary: "every multiplexer this build knows, which are here, which instance drives each, how to start one (--json)",
+        run: (args, s) => cmdMuxList(muxListDeps(s.io), args),
+      },
+    ],
+    run: async (args, s) => await cmdMux(muxListDeps(s.io), args),
+  },
+  // ── Agent sessions (M76 spec 03) ───────────────────────────────────────────
+  // One read of this bridge's own snapshot, printed as a table. The name is `SESSIONS_VERB`, in one place.
+  {
+    name: SESSIONS_VERB,
+    summary: "list the agent sessions of the crew: member, mux, seat, harness, state (--state, --member, --all, --json)",
+    run: (args, s) => cmdSessions(sessionsDeps(s.io), args),
+  },
   // ── Walky talky (M62) ──────────────────────────────────────────────────────
   // Messages between agent sessions, typed by an agent inside its pane or by the operator outside one.
   // The verb talks to the running bridge over its local socket and changes nothing on disk itself.
   // One spelling: `wt` was dropped before release, since Windows Terminal's binary is `wt.exe`.
   {
     name: "walky",
-    summary: `walky talky, messages between agent sessions: ${WALKY_SUBCOMMANDS.join(", ")}`,
+    summary: `WalkyTalky, messages between agent sessions: ${WALKY_SUBCOMMANDS.join(", ")}`,
     subcommands: WALKY_TREE,
     run: (args, s) => cmdWalky({ io: s.io }, args),
+  },
+  // ── Themes (M59 spec 05) ───────────────────────────────────────────────────
+  // `theme check` runs the app's own theme parser and contrast report over files on disk, for a
+  // theme repository's CI. No context and no state dir: it reads the files it is named and prints.
+  {
+    name: "theme",
+    summary: `check a theme file before you share it, or print the brief for an agent that writes one: ${THEME_SUBCOMMANDS.join(", ")}`,
+    subcommands: [
+      {
+        name: "check",
+        summary: "validate theme files with the app's parser; refusals, contrast warnings, exit 1 on a refusal (--json, --shipped)",
+        run: (args, s) => cmdThemeCheck({ io: s.io, files: realThemeFiles }, args),
+      },
+      {
+        name: "skill",
+        summary: "print the brief for an AI agent that writes a theme (also `collie theme --skill`)",
+        run: (_args, s) => cmdThemeSkill(s.io),
+      },
+    ],
+    run: (args, s) => cmdTheme({ io: s.io, files: realThemeFiles }, args),
   },
   // ── The crew (M4/07, renamed in M24) ──────────────────────────────────────
   // The only way a machine enters or leaves a crew. The verb is `crew`; `crew` is an alias onto the
@@ -916,11 +1065,11 @@ export const COMMANDS: readonly Command[] = [
   {
     name: "skill",
     summary:
-      "print the agent-facing brief on Collie (also `collie --skill`), or install the walky talky skill into a harness: install, uninstall, sync, status, print",
+      "print the agent-facing brief on Collie (also `collie --skill`), or install the WalkyTalky skill into a harness: install, uninstall, sync, status, print",
     subcommands: [
       {
         name: "install",
-        summary: "write the walky talky skill: `skill install <claude|codex|opencode|pi|gemini|all>`",
+        summary: "write the WalkyTalky skill: `skill install <claude|codex|opencode|pi|gemini|all>`",
         run: (args, s) => cmdSkillInstall(skillDeps(s.io), args),
       },
       {

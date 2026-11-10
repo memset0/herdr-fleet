@@ -1,9 +1,7 @@
-import { readFileSync } from "node:fs";
-import { resolve } from "node:path";
-
 import { expect, test, type BrowserContext, type Page, type TestInfo } from "@playwright/test";
 
 import { installApiStub } from "./fixtures/api";
+import { collieHalves } from "./fixtures/collie-theme";
 
 // THE SEVEN MORE TOKENS PAINT (M57 spec 17). The unit tier holds every word's declarations equal to
 // the table and every default equal to index.css; this tier opens the shipped bundle with an imported
@@ -13,21 +11,19 @@ import { installApiStub } from "./fixtures/api";
 // for, which is the proof that the default look fetches no new byte and a display face costs exactly
 // one file.
 
-const web = resolve(import.meta.dirname, "..");
-const collie = JSON.parse(readFileSync(resolve(web, "src/themes/collie.json"), "utf8"));
-
 const PALETTE = {
   "0": "#000000", "1": "#cd3131", "2": "#0dbc79", "3": "#e5e510", "4": "#2472c8", "5": "#bc3fbc",
   "6": "#11a8cd", "7": "#e5e5e5", "8": "#666666", "9": "#f14c4c", "10": "#23d18b", "11": "#f5f543",
   "12": "#3b8eea", "13": "#d670d6", "14": "#29b8db", "15": "#ffffff", ink: "#fafafa", ground: "#14141e",
 };
 
+// A version 2 file: collie's 43 required tokens, never the version 3 `pane-active` (ADR 0120).
 const ALL = {
   version: 2,
   id: "seven",
   name: "Seven",
-  light: collie.light,
-  dark: collie.dark,
+  light: collieHalves.light,
+  dark: collieHalves.dark,
   fonts: { display: "geist" },
   surface: { ground: "gradient", chrome: "band", rows: "cards", icons: "heavy", labels: "sentence" },
   ansi: PALETTE,
@@ -94,7 +90,8 @@ test("the Collie look fetches only its own face, and draws every default", async
   onlyPhone(testInfo);
   const context = await browser.newContext({ baseURL: testInfo.project.use.baseURL, serviceWorkers: "block" });
   const { page, fonts } = await openWith(context, undefined, "/");
-  expect(fonts.filter((f) => !f.startsWith("ui-aldrich") && !f.startsWith("nerd"))).toEqual([]);
+  // The UI face is Atkinson since 2026-11-06 and the display face (titles) is Aldrich: two files, no more.
+  expect(fonts.filter((f) => !f.startsWith("ui-atkinson") && !f.startsWith("ui-aldrich") && !f.startsWith("nerd"))).toEqual([]);
   const seen = await page.evaluate(() => {
     const view = window;
     const style = (el: Element | null | undefined) => (el === null || el === undefined ? undefined : view.getComputedStyle(el));
@@ -106,24 +103,25 @@ test("the Collie look fetches only its own face, and draws every default", async
       rowGap: style(row)?.marginTop,
       rowEdge: style(row)?.borderLeftWidth,
       rowShadow: style(row)?.boxShadow,
-      stroke: style(document.querySelector("svg.lucide"))?.strokeWidth,
+      stroke: style(document.querySelector("svg.icon"))?.strokeWidth,
       label: style(document.querySelector(".label-caps"))?.textTransform,
       tracking: style(document.querySelector(".label-caps"))?.letterSpacing,
     };
   });
+  // The default look: the faint crossed grain behind the page (two 45deg hatch gradients, d2279ff88), a band
+  // behind the header (--secondary), labels as typed, no tracking.
+  expect(seen.ground).toMatch(/^repeating-linear-gradient\(45deg,.*\), repeating-linear-gradient\(-45deg,/u);
   expect(seen).toEqual({
-    ground: "none",
-    header: seen.page,
+    ground: seen.ground,
+    header: await resolved(page, "var(--secondary)"),
     page: seen.page,
     rowGap: "0px",
     rowEdge: "0px",
     rowShadow: "none",
     stroke: "2px",
-    label: "uppercase",
-    tracking: seen.tracking,
+    label: "none",
+    tracking: "normal",
   });
-  // tracking-wide at the label's own size: 0.025em of 11px.
-  expect(Number.parseFloat(seen.tracking ?? "0")).toBeCloseTo(0.275, 2);
   await context.close();
 });
 
@@ -132,7 +130,8 @@ test("a theme naming all seven paints each one, and its display face costs exact
   const context = await browser.newContext({ baseURL: testInfo.project.use.baseURL, serviceWorkers: "block" });
   const { page, fonts } = await openWith(context, ALL, "/");
   expect(fonts.filter((f) => f.startsWith("ui-geist"))).toHaveLength(1);
-  expect(fonts.filter((f) => !f.startsWith("ui-aldrich") && !f.startsWith("nerd") && !f.startsWith("ui-geist"))).toEqual([]);
+  // ui-atkinson is index.html's preload of the default face, fetched whatever the device chose.
+  expect(fonts.filter((f) => !f.startsWith("ui-atkinson") && !f.startsWith("ui-aldrich") && !f.startsWith("nerd") && !f.startsWith("ui-geist"))).toEqual([]);
 
   const secondary = await resolved(page, "var(--secondary)");
   const seen = await page.evaluate(() => {
@@ -149,7 +148,7 @@ test("a theme naming all seven paints each one, and its display face costs exact
       rowGap: style(row)?.marginTop,
       rowEdge: style(row)?.borderTopWidth,
       rowShadow: style(row)?.boxShadow,
-      stroke: style(document.querySelector("svg.lucide"))?.strokeWidth,
+      stroke: style(document.querySelector("svg.icon"))?.strokeWidth,
       label: style(document.querySelector(".label-caps"))?.textTransform,
       identity: style(document.querySelector('[data-slot="header-identity"]'))?.fontFamily,
       meta,

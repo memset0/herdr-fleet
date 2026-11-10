@@ -30,9 +30,11 @@ import { detectTrustRegion } from "./trust";
 import {
   askHeaderDirectlyAbove,
   boxIsBare,
+  hasFilterPickerTail,
   INPUT_PLACEHOLDERS,
   isContinuationRow,
   isNoteRow,
+  isTasksPopupHeader,
   locateTail,
   parsePaletteRow,
   promptRowText,
@@ -122,6 +124,32 @@ export function extractStatusLines(lines: StyledLine[]): StyledLine[] {
 }
 
 /**
+ * The background-tasks popup Muse paints between the bottom rule and the statusline while tasks
+ * exist (`main · ↓ to select` + one `├/└ <task> <state> <elapsed>` row per task — DIALOG_NOTES.md
+ * §5). stripChrome peels it off the mirror with the rest of the tail chrome, and
+ * extractStatusLines stops above it, so without this probe the task list was on no surface at
+ * all (the Claude agents-footer equivalent, issue #242). It gets its own chrome element rather
+ * than more statusline rows: the strip's height cap guards against an operator's script, and
+ * this block is Muse's own and already bounded by the tail walk.
+ *
+ * POSITIONAL, like the strip: the rows from the tail's popup header to the statusline, STYLED,
+ * top to bottom. `[]` when there is no tail or no popup under the rule (a plain idle/approval
+ * screen, trust, or a filter picker, which has no tail at all). One content check: the block
+ * must open with the tasks popup header — the walk peels by position, and without the header
+ * check a misread tail would show here labelled as background work.
+ */
+export function extractAgentsFooter(lines: StyledLine[]): StyledLine[] {
+  const tail = locateTail(lines);
+  if (tail === null || tail.popup === null) return [];
+  const rows: StyledLine[] = [];
+  for (let j = tail.popup; j < tail.status; j++) {
+    if (!isBlank(rstrip(lineText(lines[j]!)))) rows.push(lines[j]!);
+  }
+  if (rows.length === 0 || !isTasksPopupHeader(rstrip(lineText(rows[0]!)))) return [];
+  return rows;
+}
+
+/**
  * The user's draft stranded in the composer: the `❯` row's text plus every row down to the bottom
  * rule, folded with the single space the reply guard's FOLD_SEAM expects (reply-action.ts). Empty
  * box, placeholder tip, open note, or any claimed dialog → null.
@@ -134,6 +162,10 @@ export function extractStatusLines(lines: StyledLine[]): StyledLine[] {
 export function extractInputDraft(lines: StyledLine[]): string | null {
   if (detectApprovalRegion(lines) !== null) return null;
   if (detectTrustRegion(lines) !== null) return null;
+  // A filter picker's field text is not a draft (markers.ts): the tail walk already finds
+  // no composer under its footer, and this keeps the read null if that geometry is ever
+  // taught to the walk.
+  if (hasFilterPickerTail(lines)) return null;
   if (hasOpenNote(lines)) return null;
   if (boxIsBare(lines) && liveDialogOwnsKeyboard(lines)) return null;
   const tail = locateTail(lines);
@@ -218,7 +250,9 @@ export function hasComposer(lines: StyledLine[]): boolean {
  * shapes above a placeholder or draft box are quoted transcript and stay sendable (#260).
  * Approval replaces the box and trust is pre-session, so both fail on the geometry alone — and
  * are still consulted, so a future chrome change cannot silently re-open them. A tasks popup that
- * holds focus and names `x to stop` refuses too ({@link tasksPopupHoldsStopKey}).
+ * holds focus and names `x to stop` refuses too ({@link tasksPopupHoldsStopKey}), as does a filter
+ * picker under the rule ({@link hasFilterPickerTail}): its field takes every typed character, and
+ * it too already fails on geometry, consulted here so a chrome change cannot re-open it either.
  *
  * Known limitation, documented rather than guessed at: the command palette, `/resume` picker,
  * `/tasks` drawer and `/workflows` room are unmeasured (outside DIALOG_NOTES.md's scope). If one of them leaves a live
@@ -229,6 +263,7 @@ export function hasComposer(lines: StyledLine[]): boolean {
 export function composerReady(lines: StyledLine[]): boolean {
   if (detectApprovalRegion(lines) !== null) return false;
   if (detectTrustRegion(lines) !== null) return false;
+  if (hasFilterPickerTail(lines)) return false;
   if (hasOpenNote(lines)) return false;
   if (boxIsBare(lines) && liveDialogOwnsKeyboard(lines)) return false;
   if (tasksPopupHoldsStopKey(lines)) return false;

@@ -1,11 +1,14 @@
-import { Server, ServerOff } from "lucide-react";
+import { Icon } from "@/components/icons/icon";
+import { useMemo } from "react";
 
 import { cn } from "@/lib/utils";
 import { AddressTag } from "@/components/ui/address-tag";
-import { HOST_TEXT_CLASSES, hostName, hostSlot } from "@/lib/hosts";
+import { HOST_TEXT_CLASSES, hostName, hostSlot, serverFor } from "@/lib/hosts";
+import { groupByHost, hasSharedHost, instanceLabel, machineOf } from "@/lib/machines";
 import { linkPresentation, type HostState } from "@/lib/host-health";
 import { useHostHealth, useCrew } from "@/components/crew-provider";
 import { t } from "@/lib/i18n";
+import type { ServerSummary } from "@/lib/types";
 import { useLocale } from "@/hooks/use-locale";
 
 interface HostChipProps {
@@ -30,8 +33,14 @@ interface HostChipProps {
    * address and a bordered pill would read as a second object dropped on the end of it. It shares
    * `caption`'s drawing rules — the tint on the glyph, the fault in the glyph's SHAPE — and differs
    * from it only in type, which is why the two are one branch below.
+   *
+   * `glyph` — the glyph alone, no name at all: the machine as its tint and its shape, for a row that
+   * has no room for a word and whose neighbours already say the rest. Today that is the pane
+   * switcher's row (Altan, 2026-10-21: "subtle, possibly only the colour of the machine and the
+   * icon"). The name is not lost, it moves into the label a screen reader gets. Same branch as
+   * `caption` and `bare`, same tint, same `ServerOff` for a fault; it only leaves the name span out.
    */
-  variant?: "tag" | "target" | "caption" | "bare";
+  variant?: "tag" | "target" | "caption" | "bare" | "glyph";
   /**
    * This chip stands ON a write surface, so its accessible name says "sends to <name>" rather than
    * "host: <name>". `target` and `caption` imply it and need not pass it.
@@ -43,6 +52,12 @@ interface HostChipProps {
    * this cannot simply be the variant's default.
    */
   sends?: boolean;
+  /**
+   * Name the member plainly, even on a crew where a host runs two instances. The pane HEADER has the
+   * room for `<host> · <mux>`; a dashboard row does not (it clipped at 390px), and the row's neighbours
+   * already say the rest. Default: the two-part name where the crew shares a host.
+   */
+  plain?: boolean;
   className?: string;
 }
 
@@ -69,16 +84,18 @@ function useHostChipShown(host: string | undefined): boolean {
   return multi && host !== undefined;
 }
 
-export function HostChip({ host, state, variant = "tag", sends, className }: HostChipProps) {
+export function HostChip({ host, state, variant = "tag", sends, plain = false, className }: HostChipProps) {
   useLocale();
   const { servers } = useCrew();
   const health = useHostHealth(host);
   const shown = useHostChipShown(host);
+  // M77: the machines of the crew, for the two-part name. A view over the same rows; nothing is keyed on it.
+  const machines = useMemo(() => groupByHost(servers ?? []), [servers]);
   // No crew, or nothing to name: the whole dimension is invisible. (Hooks run first — the hide rule
   // is a render decision, not a reason to call a hook conditionally.)
   if (!shown || host === undefined) return null;
 
-  const name = hostName(servers, host) ?? host;
+  const name = plain ? (hostName(servers, host) ?? host) : chipName(servers, machines, host);
   // The machine's IDENTITY tint, or null when there is nothing to tell apart (lib/hosts.ts). It is
   // read here and not in AddressTag for the same reason the hide rule is here: which machine a row
   // is about is a fact about the snapshot, and this is the one component that already holds it.
@@ -115,6 +132,7 @@ export function HostChip({ host, state, variant = "tag", sends, className }: Hos
   const target = variant === "target";
   const caption = variant === "caption";
   const bare = variant === "bare";
+  const glyph = variant === "glyph";
   // The name is decorative repetition for a screen reader if it were bare text, so the WHOLE chip
   // carries one label that says what it MEANS. Every write surface says "sends to": `target` heads a
   // dock or sheet that is about to write, `caption` was the composer's own status band, and `sends`
@@ -147,7 +165,10 @@ export function HostChip({ host, state, variant = "tag", sends, className }: Hos
   // the address the path finishes. Everything else is the caption's, deliberately: the same tint on
   // the same glyph, the same `ServerOff` for a fault, the same one label for the whole run. A second
   // branch here is how the two would start describing one machine two different ways.
-  if (caption || bare) {
+  // `glyph` IS THE SAME RUN WITH THE NAME LEFT OUT: the 10px glyph, centred like the caption's, the
+  // same tint and the same fault shape, and the whole label on the span, so a screen reader still
+  // hears the machine the eye only sees as a colour.
+  if (caption || bare || glyph) {
     return (
       <span
         aria-label={label}
@@ -167,7 +188,9 @@ export function HostChip({ host, state, variant = "tag", sends, className }: Hos
           // there regardless, so it is left as it is.
           caption
             ? "items-center text-[10px]/3 font-medium label-caps"
-            : // `max-w-[8rem]` and `shrink-0` are AddressTag's one decision, kept here too (issue
+            : glyph
+              ? "shrink-0 items-center"
+              : // `max-w-[8rem]` and `shrink-0` are AddressTag's one decision, kept here too (issue
               // #264): the run never gives up width to its neighbours, and the NAME truncates inside
               // it instead. Without the cap, a member id derived from a long hostname (26 chars,
               // search domain appended) held its whole width on the dashboard row, and every card on
@@ -181,9 +204,10 @@ export function HostChip({ host, state, variant = "tag", sends, className }: Hos
         )}
       >
         {tone !== "quiet" ? (
-          <ServerOff className={cn("size-2.5 shrink-0", bare && "translate-y-[0.26px]")} aria-hidden />
+          <Icon name="machine-offline" className={cn("size-2.5 shrink-0", bare && "translate-y-[0.26px]")} aria-hidden />
         ) : (
-          <Server
+          <Icon
+            name="machine"
             className={cn(
               "size-2.5 shrink-0",
               bare && "translate-y-[0.26px]",
@@ -194,9 +218,11 @@ export function HostChip({ host, state, variant = "tag", sends, className }: Hos
         )}
         {/* `min-w-0`: a flex item will not shrink below its content without it, so `truncate`
             alone never cut the name short inside the capped run (issue #264). */}
-        <span className="min-w-0 truncate" aria-hidden>
-          {name}
-        </span>
+        {!glyph && (
+          <span className="min-w-0 truncate" aria-hidden>
+            {name}
+          </span>
+        )}
       </span>
     );
   }
@@ -204,7 +230,7 @@ export function HostChip({ host, state, variant = "tag", sends, className }: Hos
   return (
     <AddressTag
       aria-label={label}
-      glyph={<Server className="size-3 shrink-0" aria-hidden />}
+      glyph={<Icon name="machine" className="size-3 shrink-0" aria-hidden />}
       prefix={target ? t("connection.host.onPrefix") : undefined}
       name={name}
       size={target ? "md" : "sm"}
@@ -213,6 +239,27 @@ export function HostChip({ host, state, variant = "tag", sends, className }: Hos
       className={className}
     />
   );
+}
+
+/**
+ * What the chip calls a member. The plain member name, as ever, unless some machine of the crew runs
+ * two instances (the Herdr TUI and the Herdr core, say): then every chip reads `<host> · <mux>`, so a
+ * pane says which instance of the machine it lives on. The rule is {@link hasSharedHost} and the
+ * second part is {@link instanceLabel}; there is no third. A member the roster no longer lists keeps
+ * its id. View only: `?h=`, scopes and API paths keep the member id.
+ */
+function chipName(
+  servers: readonly ServerSummary[] | undefined,
+  machines: ReturnType<typeof groupByHost>,
+  host: string,
+): string {
+  const plain = hostName(servers, host) ?? host;
+  if (!hasSharedHost(machines)) return plain;
+  const member = serverFor(servers, host);
+  const machine = machineOf(machines, member?.id ?? host);
+  if (member === undefined || machine === undefined) return plain;
+  const instance = instanceLabel(member, machine.instances);
+  return instance === machine.name ? machine.name : `${machine.name} · ${instance}`;
 }
 
 /**

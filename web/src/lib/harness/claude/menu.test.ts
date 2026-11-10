@@ -302,6 +302,51 @@ describe("detectMenuRegion — the `▔` modal edge of Claude Code 2.1.283", () 
   });
 });
 
+// Claude Code 2.1.307 and later frame the focused denial's shell command on `/permissions` › Recently
+// denied (Recently blocked from 2.1.314) with a dashed box, Ink's `dashed` border. The footer keeps one
+// blank row above it, so the box's bottom `╌` row sits two rows over the footer. The scan took that row
+// as the region top, found no title under it, and the screen stayed raw (live, 2.1.310, 2026-11-02).
+// A list with no command to frame drew no box and lifted.
+describe("detectMenuRegion — the dashed command frame on /permissions' denied tab", () => {
+  const W = 100;
+  const EDGE = "▔".repeat(W);
+  const DASHED = `   ${"╌".repeat(W - 3)}`;
+  const FOOTER = "   Enter to approve · r to retry · ↑/↓ to navigate · Esc to close";
+  const denied = (tab: string) => [
+    EDGE,
+    `   Permissions  ${tab}   Allow   Ask   Deny   Auto mode   Workspace`,
+    "",
+    "   Commands recently denied by the auto mode classifier.",
+    "",
+    "   ❯ 1. ✘ Restart the staging server  [Modify Shared Resources]",
+    "",
+    DASHED,
+    "    │ cd /srv/app; docker compose down && docker compose up -d",
+    DASHED,
+    "",
+    FOOTER,
+  ];
+
+  it.each(["Recently denied", "Recently blocked"])("lifts the %s tab from its `▔` edge, over the frame", (tab) => {
+    const screen = lines(denied(tab).join("\n"));
+    const region = detectMenuRegion(screen)!;
+    expect(region).not.toBeNull();
+    expect(region.startLine).toBe(0);
+    expect(region.model.title).toBe(`Permissions  ${tab}   Allow   Ask   Deny   Auto mode   Workspace`);
+    expect(region.model.actions).toEqual([
+      { label: "Approve", keys: ["Enter"] },
+      { label: "Retry", keys: ["r"] },
+      { label: "Close", keys: ["Escape"], cancel: true },
+    ]);
+    expect(region.model.nav).toEqual({ upDown: true });
+    expect(claudeBuildBlocks(screen).map((b) => b.kind)).toEqual(["menu"]);
+  });
+
+  it("does not take a dashed frame as the region top with no edge or rule above it", () => {
+    expect(detectMenu(lines(denied("Recently denied").slice(1).join("\n")))).toBeNull();
+  });
+});
+
 // Claude Code 2.1.291 (capture lab, 2026-10-06) opens `/tasks` and the rewind picker under a plain
 // `─` rule flush at column 0 and indents the panel two spaces, where 2.1.278 drew a `▔` edge and
 // indented three. The rule is the region top region-top.ts has always taken first, so each panel
@@ -330,5 +375,54 @@ describe("detectMenuRegion — the `─` rule panels of Claude Code 2.1.291", ()
     // the unread-dialog card.
     expect(textRows(load("claude-lab--tasks-panel--w40.txt")).at(-1)!.trim()).toBe("to close");
     expect(detectMenu(load("claude-lab--tasks-panel--w40.txt"))).toBeNull();
+  });
+});
+
+// On `/permissions` › Recently denied, Enter only marks a denial (approve, or retry with `r`), and Esc
+// applies the marks: once one is marked, a dim row under the list says `Esc will approve 1 denied call`
+// (or `Esc will retry …`), while the footer still reads `Esc to close` (Claude Code 2.1.310 bundle,
+// read 2026-11-02). A `Close` button styled as the harmless cancel would approve the marked calls, so
+// the row the screen prints names the Esc button and makes it a peer action.
+describe("detectMenuRegion — a row that says what Esc will do", () => {
+  const W = 100;
+  const EDGE = "▔".repeat(W);
+  const TITLE = "   Permissions  Recently denied   Allow   Ask   Deny   Auto mode   Workspace";
+  const FOOTER = "   Enter to approve · r to retry · ↑/↓ to navigate · Esc to close";
+  const denied = (row: string | null) => [
+    EDGE,
+    TITLE,
+    "",
+    "   Commands recently denied by the auto mode classifier.",
+    "",
+    "   ❯ 1. ✔ Fetch the release notes  (approved)",
+    ...(row === null ? [] : [row]),
+    "",
+    FOOTER,
+  ];
+
+  it.each([
+    ["   Esc will approve 1 denied call", "Leave and approve 1 denied call"],
+    ["   Esc will retry 2 denied calls", "Leave and retry 2 denied calls"],
+  ])("names the Esc button from %j and drops its cancel styling", (row, label) => {
+    expect(detectMenu(lines(denied(row).join("\n")))!.actions).toEqual([
+      { label: "Approve", keys: ["Enter"] },
+      { label: "Retry", keys: ["r"] },
+      { label, keys: ["Escape"] },
+    ]);
+  });
+
+  it("keeps the footer's Close as the cancel with no such row", () => {
+    expect(detectMenu(lines(denied(null).join("\n")))!.actions.at(-1)).toEqual({ label: "Close", keys: ["Escape"], cancel: true });
+  });
+
+  it("leaves Esc alone under any other row that starts with \"Esc will\"", () => {
+    for (const row of ["   Esc will close the session", "   Esc will approve the plan"]) {
+      expect(detectMenu(lines(denied(row).join("\n")))!.actions.at(-1), row).toEqual({ label: "Close", keys: ["Escape"], cancel: true });
+    }
+  });
+
+  it("reads the row only inside the region, not from output above the edge", () => {
+    const screen = ["● Esc will approve every call, the docs say", ...denied(null)];
+    expect(detectMenu(lines(screen.join("\n")))!.actions.at(-1)).toEqual({ label: "Close", keys: ["Escape"], cancel: true });
   });
 });

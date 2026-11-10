@@ -6,7 +6,10 @@ import userEvent from "@testing-library/user-event";
 import { parseAnsi } from "@/lib/ansi";
 import { splitLines } from "@/lib/blocks";
 import { buildBlocks } from "@/lib/harness";
-import { ARM_MS, UnreadDialogBlock } from "./unread-dialog-block";
+import { ARM_MS } from "@/lib/arm";
+import { __resetReport, openReport, unreadDialogReport, useReportTarget } from "@/lib/report/store";
+import { CardDock } from "./card-dock";
+import { UnreadDialogBlock } from "./unread-dialog-block";
 
 // The unread-dialog card (.adr/0053). Driven off a real capture through the real pipeline, so what
 // it renders is exactly what the post-pass produces.
@@ -102,6 +105,33 @@ describe("UnreadDialogBlock", () => {
     rerender(<UnreadDialogBlock {...props} wrap={false} />);
     expect(container.querySelector("pre")!.className).toContain("overflow-x-auto");
     expect(container.querySelector("pre")!.className).not.toContain("whitespace-pre-wrap");
+  });
+
+  // #667: the dialog is the LAST rows of the pane, so the mirror opens at its bottom, not at the old
+  // tool output on top. jsdom has no layout, so the two properties are stubbed on the prototype.
+  it("scrolls its mirror to the bottom on mount and when the rows change", () => {
+    const sets: number[] = [];
+    vi.spyOn(HTMLElement.prototype, "scrollHeight", "get").mockReturnValue(1234);
+    Object.defineProperty(HTMLElement.prototype, "scrollTop", {
+      configurable: true,
+      get: () => 0,
+      set: (v: number) => void sets.push(v),
+    });
+    try {
+      const block = cardBlock();
+      const props = { cancel: block.cancel, onAction: vi.fn() };
+      const { container, rerender } = render(<UnreadDialogBlock {...props} lines={block.lines} />);
+      expect(container.querySelector("pre")!.className).toContain("overflow-y-auto");
+      expect(sets).toEqual([1234]);
+      // Equal rows in a new array do not yank the person who scrolled up to read.
+      rerender(<UnreadDialogBlock {...props} lines={[...block.lines]} />);
+      expect(sets).toEqual([1234]);
+      rerender(<UnreadDialogBlock {...props} lines={block.lines.slice(1)} />);
+      expect(sets).toEqual([1234, 1234]);
+    } finally {
+      vi.restoreAllMocks();
+      Reflect.deleteProperty(HTMLElement.prototype, "scrollTop");
+    }
   });
 
   // #339: the first tap arms, the second sends. An Escape over a screen nobody read can end a
@@ -265,5 +295,50 @@ describe("UnreadDialogBlock", () => {
     ).toBe(before.classes);
 
     release();
+  });
+});
+
+describe("Report a problem on the card (ADR 0123, amendment 2026-10-28)", () => {
+  afterEach(() => act(() => __resetReport()));
+
+  /** What the one report sheet would open on, as the store holds it. */
+  function TargetProbe() {
+    const target = useReportTarget();
+    return <output data-testid="target">{target === null ? "closed" : JSON.stringify(target)}</output>;
+  }
+
+  it("opens the report sheet with kind unread-dialog and the card's verdicts, and presses no key", async () => {
+    const user = userEvent.setup();
+    const blocks = buildBlocks(splitLines(parseAnsi(SCREEN)), { agent: "claude" });
+    const onAction = vi.fn();
+    render(
+      <>
+        <CardDock
+          blocks={blocks}
+          onUnreadDialogAction={onAction}
+          onUnreadDialogReport={(cancel) => openReport(unreadDialogReport("w1:p7", undefined, cancel))}
+        />
+        <TargetProbe />
+      </>,
+    );
+    expect(screen.getByTestId("target")).toHaveTextContent("closed");
+    await user.click(screen.getByRole("button", { name: "Report a problem" }));
+    const target = JSON.parse(screen.getByTestId("target").textContent ?? "{}");
+    expect(target).toMatchObject({ paneId: "w1:p7", kind: "unread-dialog", dialog: { agent: "claude", key: "Escape" } });
+    expect(target.dialog.verdicts.length).toBeGreaterThan(0);
+    expect(target.dialog.verdicts[0]).toEqual({ name: "preview-select", result: "null" });
+    expect(onAction).not.toHaveBeenCalled();
+  });
+
+  it("keeps the report row on a read-only card, and draws none when no handler is given", () => {
+    const block = cardBlock();
+    const onReport = vi.fn();
+    const { rerender } = render(<UnreadDialogBlock cancel={block.cancel} lines={block.lines} onAction={vi.fn()} disabled onReport={onReport} />);
+    const report = screen.getByRole("button", { name: "Report a problem" });
+    expect(report).toBeEnabled();
+    fireEvent.click(report);
+    expect(onReport).toHaveBeenCalledTimes(1);
+    rerender(<UnreadDialogBlock cancel={block.cancel} lines={block.lines} onAction={vi.fn()} />);
+    expect(screen.queryByRole("button", { name: "Report a problem" })).toBeNull();
   });
 });

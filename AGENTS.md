@@ -2,10 +2,10 @@
 
 **Collie** (repo `AltanS/collie`) — a phone web UI for the AI agents running in your terminal,
 served over Tailscale. A mobile-first PWA (Vite + React + TS + Tailwind v4 + shadcn) plus a Bun/TS
-bridge that mirrors ONE multiplexer per install — Herdr, tmux or zellij — letting you monitor and
-reply to agents from a phone. Herdr is one adapter among the three, not the product: it is the
-default, it is the only one that talks over a Unix socket, and its plugin route stays supported —
-plugin id `herdr.collie` (manifest: `herdr-plugin.toml`). Orientation:
+bridge that mirrors ONE selected backend per install — including the separate Herdr TUI and
+herdr-core adapters — letting you monitor and reply to agents from a phone. Fleet supports
+standalone Core execution without a TUI process; the legacy plugin route remains supported.
+The fork identity and provenance are governed below. Orientation:
 [`README.md`](./README.md) · [`ARCHITECTURE.md`](./ARCHITECTURE.md) · the UI's visual
 language [`DESIGN.md`](./DESIGN.md) · verified API [`HERDR_API.md`](./HERDR_API.md) ·
 decisions [`.adr/`](./.adr/) · adding a harness
@@ -36,11 +36,11 @@ the browser leaves, which is what makes the ADR's objection — that resizing fi
 keyboard — bounded here rather than true. The ADR's other objection, that these verbs are unverified,
 was answered by probing them first; the findings are in
 [`fleet/README.md`](./fleet/README.md) and the reasoning in that change's `design.md`.
-The terminal surface SHALL always use `terminal attach <terminal-id> --takeover` on lead and peer,
+For the TUI backend, the terminal surface SHALL use `terminal attach <terminal-id> --takeover` on lead and peer,
 displacing an external Herdr attachment. Fleet SHALL share one establishment per placement and refuse
 a second browser client by default. Only an explicit operator Take over, offered on the busy notice,
 displaces the attached browser onto the same establishment, and the displaced browser is told; it is
-never automatic and never a duplicate-start fix.
+never automatic and never a duplicate-start fix. Core-backed deployments instead use the selected local Core and its native `hc attach`/framed attachment, without a TUI command or TUI takeover flag; browser exclusivity still applies.
 
 ## Fork boundary — MANDATORY
 
@@ -71,7 +71,7 @@ and records it; the boundary check fails while one lags.
 
 ## Fleet terminal associations
 
-Fleet's shared binding layer owns durable terminal identity for favorites, tags and Todoist.
+Fleet's shared binding layer owns durable terminal identity for favorites and tags.
 For a pane carrying stable identity, associations follow the original terminal across layout
 moves and renames. This supersedes ADR 0070's place-key policy for that case only: pins remain
 in the one browser-local store and native entrypoints still agree. Exact, fresh legacy matches
@@ -225,8 +225,7 @@ deciding to; here that trigger is replaced by `workflow_dispatch`, and the chang
 not restore it during a sync. Upstream's reasoning does not carry: a Release exists so a user can
 install the version, and both readers of these assets — the in-app update banner and `collie
 update`'s binary path — read `AltanS/collie`, because `bridge/index.ts` defaults the update repo
-there and nothing in this fork sets `COLLIE_UPDATE_REPO`. This deployment installs and updates as a
-Herdr plugin. A version with a tag and no Release is therefore a shipped release here, not a broken
+there and nothing in this fork sets `COLLIE_UPDATE_REPO`. This deployment builds and updates exact reviewed source releases, through standalone Core control or the legacy plugin route. A version with a tag and no Release is therefore a shipped release here, not a broken
 one. If a future change would make this product read its own Releases, it must restore a way to
 publish them or not be made.
 
@@ -618,7 +617,7 @@ What the design settles, and what a later change must not quietly undo:
 - Reachability is transport only. An established link asserts nothing and a dead one revokes
   nothing; pinned mutual TLS and the Pack secret remain the only factors that admit a member.
 - Fleet installs, enables and restarts no operating-system service anywhere, and never invokes
-  Collie's own CLI verbs against a Fleet deployment. Lifecycle is the Herdr plugin's.
+  Collie's own CLI verbs against a Fleet deployment. Lifecycle belongs to Fleet's own control entrypoint; legacy TUI installs invoke it through plugin actions.
 - Enrolment is an explicit, ordered operator act driven through Collie's own transitions.
 
 **Fleet owns its Collie child's environment.** It states the child's state directory as

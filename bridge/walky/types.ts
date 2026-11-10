@@ -46,6 +46,12 @@ export interface WalkyMessage {
   readonly at: number;
   /** Cleaned, at most {@link WALKY_BODY_MAX} characters. */
   readonly body: string;
+  /**
+   * True when the sender asked a fan-out (a scope, `all`, `<member>/all`) to type into resting panes too
+   * (M85). Absent otherwise: a message without it is the message every older bridge knows. Signed when
+   * present (canonical.ts), so a crew hop cannot add or drop it.
+   */
+  readonly wake?: true;
   /** The member id whose key made `signature`; null when unsigned (solo). */
   readonly signer: string | null;
   /** Base64 ECDSA P-256 SHA-256 over the canonical string (canonical.ts). */
@@ -67,14 +73,29 @@ export function stateRank(state: WalkyReceiptState): 0 | 1 | 2 {
 
 /**
  * Whether `next` may replace `held` when it comes from another machine (a member's report, the lead's
- * push): never over a finished state, never backwards, and a repeat of the same state only when newer.
+ * push): never over a finished state, never backwards, and a repeat of the same state only when newer,
+ * or of the same millisecond when it adds a reason the held one lacks. A held send (M62 spec 02) is
+ * `accepted` with a reason, and the member can write it in the millisecond it wrote the bare
+ * `accepted` the dial answered with: a second message to a pane that already holds one is held at
+ * once. Field case 2026-10-22 (browser leg case 21, message 3 of six): both at 1792620803859, so the
+ * lead skipped the report and `collie walky send` printed a bare `accepted`. A resend of the same
+ * receipt still writes nothing: the held one has the reason then.
  */
 export function movesForward(held: WalkyReceipt, next: WalkyReceipt): boolean {
   const from = stateRank(held.state);
   const to = stateRank(next.state);
   if (from === 2 || to < from) return false;
-  return next.state !== held.state || next.at > held.at;
+  if (next.state !== held.state || next.at > held.at) return true;
+  return next.at === held.at && held.reason === undefined && next.reason !== undefined;
 }
+
+/** The reason of a fan-out message left in the inbox of a pane that rests (M85). */
+export const RESTING = "resting";
+
+/** The reason of an agent's message to a session that turned its walky talky off (M89, off.ts). */
+export const WALKY_OFF = "walky talky off";
+/** The reason of a message from an agent whose own pane turned its walky talky off (M89). */
+export const SENDER_OFF = "your walky talky is off";
 
 /** The longest receipt `reason` read or written (CREW_PROTOCOL §21, added 2026-10-18). */
 export const RECEIPT_REASON_MAX = 120;
@@ -136,7 +157,21 @@ export interface WalkyReceipt {
 export const OUTCOME_ON_LEAD = "outcome known on the lead";
 
 /** A message as the log and the phone list it: the message, the pane it went to and its newest receipt. */
-export type WalkyEntry = WalkyMessage & { readonly receipt: WalkyReceipt };
+export type WalkyEntry = WalkyMessage & {
+  readonly receipt: WalkyReceipt;
+  /**
+   * Present only on a row ANOTHER Collie instance on this machine recorded (siblings.ts): the last
+   * segment of its state dir, `collie` or `collie-next`. A row this bridge recorded has no field, and
+   * an older member's answer has none either.
+   */
+  readonly recordedBy?: string;
+  /**
+   * With `recordedBy`: this pane's address in the recording instance's words, `<member>/<paneId>`.
+   * Its member id and token are that instance's, so the phone reads the row's direction and machine
+   * against this address, not against its own (web/src/lib/walky.ts `selfOf`).
+   */
+  readonly recordedAs?: string;
+};
 
 /** One reachable target, as `collie walky who` and `GET /api/walky/who` list it. */
 export interface WalkyTarget {
@@ -146,6 +181,8 @@ export interface WalkyTarget {
   readonly harness: string | null;
   readonly label: string;
   readonly state: string;
+  /** Present only when the session turned its walky talky off (M89). The owner machine enforces it; this only shows it. */
+  readonly walky?: "off";
 }
 
 /** A shell pane, which never receives a message: a broadcast lists it as skipped. */
@@ -154,6 +191,12 @@ export interface WalkySkipped {
   readonly memberId: string;
   readonly machine: string;
   readonly label: string;
+  /**
+   * Why a broadcast leaves the pane out: `shell`, a bare shell that never receives a message, or
+   * `resting` (M85), an agent that finished and has been quiet for 15 minutes (`REST_MS`, deliver.ts); a broadcast keeps its
+   * message in the inbox only unless the sender asks to wake it. Absent from an older bridge: a shell.
+   */
+  readonly reason?: "shell" | "resting";
 }
 
 /**

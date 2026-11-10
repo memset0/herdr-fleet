@@ -1,24 +1,30 @@
-import { Inbox, KeyRound, Plus, WifiOff } from "lucide-react";
+import { isFleetBuild } from "@/lib/fleet-build";
 import { useEffect, type ReactNode } from "react";
 
 import { clockTime } from "@/lib/format";
 import { useMuxCapability } from "@/lib/mux-capability";
 import { SectionHeader } from "@/components/section-header";
 import { ListGroup } from "@/components/ui/list-group";
-import { groupPanesByWorkspace, type WorkspaceGroup } from "@/lib/pane-groups";
+import {
+  groupPanesByWorkspace,
+  resolveIsolatedPrefKeys,
+  workspaceGroupKey,
+  type WorkspaceGroup,
+} from "@/lib/pane-groups";
 import { StatusCounts, StatusSummaryLine } from "@/components/status-counts";
 import { ATTENTION, bucketOf, triage, worstTriage } from "@/lib/triage";
 import { groupHost, pinnedRows, shownGroups, stripEntries } from "@/lib/dash-view";
-import type { AgentView, BridgeStatus, ServerSummary, SessionSummary, TabView } from "@/lib/types";
+import type { AgentView, BridgeStatus, ServerSummary, SessionSummary, TabView, WorkspaceView } from "@/lib/types";
 import { paneRowKey, paneScope } from "@/lib/hosts";
 import { machinesHiddenFrom } from "@/lib/hidden-machines";
 import { pinMatcher, type Pin } from "@/lib/pins";
 import { inRankOrder, type PaneOrder } from "@/lib/pane-order";
 import { NeedsYouSwitch } from "@/components/needs-you-switch";
-import { PaneOrderSelect, WorkspaceSelect } from "@/components/dash-selects";
+import { PaneOrderSelect, WorkspaceFilter } from "@/components/dash-selects";
 import { useFrozenRanks } from "@/hooks/use-frozen-ranks";
 import { showsPinHint, usePinHintRetired } from "@/lib/pin-hint";
 import type { Scope } from "@/lib/scope";
+import { besideOf, type NewTabTarget } from "@/hooks/use-new-tab-or-sheet";
 import { tabCreateKey } from "@/hooks/use-spaces";
 import { AgentCard } from "./agent-card";
 import { PinHint } from "./pin-hint";
@@ -29,6 +35,7 @@ import { useLocale } from "@/hooks/use-locale";
 // DOWNSTREAM PORT (FORK.toml native-agent-favorites-port): the star on every agent row toggles this
 // device's pin, through the same store the hold and the actions sheet write.
 import { togglePanePin } from "@/lib/fleet-roster";
+import { Icon } from "@/components/icons/icon";
 
 interface AgentListProps {
   agents: AgentView[];
@@ -80,6 +87,8 @@ interface AgentListProps {
   tabs?: readonly TabView[];
   /** The snapshot's machine list, for the order machines run in: the lead first (lib/pane-groups.ts). */
   servers?: readonly ServerSummary[] | undefined;
+  /** The snapshot's workspace list, so linked worktrees fold under their open root workspace (issue #587). */
+  workspaces?: readonly WorkspaceView[] | undefined;
   /**
    * The workspace heading's "+" (M40/03, issue 290): a new tab in that workspace, on the heading's
    * own machine and session. Omit and no heading carries one; every strong heading still reserves
@@ -87,16 +96,17 @@ interface AgentListProps {
    */
   newTab?: HeadingNewTab;
   /**
-   * The workspace filter the select on top drives, per device (hooks/use-dash-prefs.ts). `isolated`
-   * shows one workspace alone; `hidden` drops workspaces from the list while their options stay in
-   * the select, marked hidden, still carrying their state in words, so a hidden workspace that needs
-   * you is never silent. Keys from `workspacePrefKey` (machine, session, workspace name). Omit both and the list shows everything.
+   * The workspace filter the control on top drives, per device (hooks/use-dash-prefs.ts). `isolated`
+   * shows the chosen workspaces only (issue #527); `hidden` drops workspaces from the list while
+   * their rows stay in the filter, marked hidden, still carrying their state in words, so a hidden
+   * workspace that needs you is never silent. Keys from `workspacePrefKey` (machine, session,
+   * workspace name). Omit both and the list shows everything.
    */
-  isolated?: string | null;
+  isolated?: readonly string[];
   hidden?: readonly string[];
-  /** Pick a workspace in the select: isolate it, or clear the filter (null). */
-  onIsolate?: (key: string | null) => void;
-  /** Flip a workspace's hidden state. The select calls it for each hidden workspace on "Show hidden workspaces". */
+  /** Choose workspaces in the filter: the keys to show, in the list's order, or none for all of them. */
+  onIsolate?: (keys: string[]) => void;
+  /** Flip a workspace's hidden state. The filter calls it for each hidden workspace on "Show hidden workspaces". */
   onToggleHidden?: (key: string) => void;
   /**
    * The machines this device leaves off the dashboard, as STORED (lib/hidden-machines.ts, issue
@@ -118,7 +128,7 @@ interface AgentListProps {
   /**
    * The "needs you" switch (issue 270, ADR 0066; the old Focus tab, now a switch by ADR 0085): a group
    * shows only its panes that need you, and a group with none is dropped. A filter, never a sort. The
-   * workspace select, the summary line and every heading's counts still count ALL panes, so the filter never
+   * workspace filter, the summary line and every heading's counts still count ALL panes, so the filter never
    * understates the herd.
    */
   needsYouOnly?: boolean;
@@ -147,7 +157,7 @@ interface AgentListProps {
    */
   order?: PaneOrder;
   /**
-   * Store a new order. Given, the order select is drawn at the right of the workspace select on the
+   * Store a new order. Given, the order select is drawn at the right of the workspace filter on the
    * Dashboard; withheld, it is not, and the list keeps whatever `order` says.
    */
   onOrderChange?: (order: PaneOrder) => void;
@@ -169,7 +179,8 @@ export interface HeadingNewTab {
   sessions?: readonly SessionSummary[] | undefined;
   /** The tab creates in flight, keyed by `tabCreateKey` (hooks/use-spaces.ts). */
   creating: ReadonlySet<string>;
-  onNewTab: (workspaceId: string, at: Scope) => void;
+  /** The heading's tap, after its machine's refusal: `useNewTabOrSheet`'s `request` (M91). */
+  onNewTab: (target: NewTabTarget) => void;
 }
 
 /** A module-level empty list: a fresh `[]` default per render is a new reference for nothing. */
@@ -268,8 +279,9 @@ export function AgentList({
   stale = false,
   tabs,
   servers,
+  workspaces,
   newTab,
-  isolated = null,
+  isolated = NO_KEYS,
   hidden = NO_KEYS,
   onIsolate,
   onToggleHidden,
@@ -320,7 +332,7 @@ export function AgentList({
       // first. The command stays literal, never translated, as on the pair form itself.
       return (
         <div className="flex flex-col items-center justify-center gap-3 px-4 py-24 text-muted-foreground">
-          <KeyRound className="size-7" />
+          <Icon name="pairing" className="size-7" />
           <span className="text-sm font-medium text-foreground">{t("settings.devices.pair.title")}</span>
           <code className="font-mono text-[13px]">collie pair</code>
         </div>
@@ -329,7 +341,7 @@ export function AgentList({
     if (error) {
       return (
         <div className="flex flex-col items-center justify-center gap-3 px-4 py-24 text-muted-foreground">
-          <WifiOff className="size-7" />
+          <Icon name="offline" className="size-7" />
           <span className="text-sm">
             {lastSeenAt === undefined
               ? t("home.empty.disconnected")
@@ -347,7 +359,7 @@ export function AgentList({
             className="flex w-full flex-col items-start gap-3 rounded-md border border-border bg-card px-4 py-6 text-left shadow-sm transition-colors active:bg-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring"
           >
             <span className="flex size-12 items-center justify-center rounded-md bg-primary text-primary-foreground">
-              <Plus className="size-6" aria-hidden />
+              <Icon name="new-agent" className="size-6" aria-hidden />
             </span>
             <span className="text-lg font-semibold text-foreground">{t("newPage.first.title")}</span>
             <span className="text-sm text-muted-foreground">{t("newPage.first.body")}</span>
@@ -362,7 +374,7 @@ export function AgentList({
     }
     return (
       <div className="flex flex-col items-center justify-center gap-3 px-4 py-24 text-muted-foreground">
-        <Inbox className="size-7" />
+        <Icon name="empty-state" className="size-7" />
         <span className="text-sm">
           {bridge === "connected" ? t("home.empty.noAgents") : t("home.empty.waiting")}
         </span>
@@ -389,10 +401,14 @@ export function AgentList({
   // the one summary line. Push and the badge carry the alarm; this screen answers "where".
   const all = triage(agents);
   const attention = all.filter((s) => ATTENTION.has(s.key) && s.agents.length > 0);
-  const groups = groupPanesByWorkspace(agents, shellPanes, { order: "fixed", tabs, servers });
+  const groupScope = { order: "fixed" as const, tabs, servers, workspaces, scope: viewScope, sessions: newTab?.sessions };
+  const groups = groupPanesByWorkspace(agents, shellPanes, groupScope);
   if (groups.length === 0) return null;
-  // A stale key (a workspace since closed) filters nothing: an isolation nobody can see is dropped.
-  const isolatedGroup = isolated === null ? undefined : groups.find((g) => workspacePrefKey(g) === isolated);
+  // A stale key (a workspace since closed) filters nothing: an isolation nobody can see is dropped,
+  // and when every key is stale the list shows everything. An isolated orphan worktree whose root
+  // workspace has since opened promotes to that root workspace (issue #587).
+  const isolatedSet = new Set(resolveIsolatedPrefKeys(isolated, groupScope));
+  const isolatedGroups = groups.filter((g) => isolatedSet.has(workspacePrefKey(g)));
   const hiddenSet = new Set(hidden);
   // THE MACHINE FILTER (issue #288), one clause beside hide: a group on a hidden machine leaves
   // `shown`, so the Dashboard, Crew and Changes follow at once. Isolate still wins, because the isolated
@@ -400,10 +416,12 @@ export function AgentList({
   // (ADR 0070). The addressed machine is never in this set, so the filter cannot empty the list, and
   // on a solo list the set is empty and the clause never matches (lib/hidden-machines.ts).
   const machineHidden = machinesHiddenFrom(hiddenMachines, servers, addressedHost);
-  const shown = isolatedGroup
-    ? [isolatedGroup]
-    : groups.filter((g) => !hiddenSet.has(workspacePrefKey(g)) && !machineHidden.has(groupHost(g)));
-  const strip = stripEntries(groups, machineHidden, isolatedGroup?.key);
+  const shown =
+    isolatedGroups.length > 0
+      ? isolatedGroups
+      : groups.filter((g) => !hiddenSet.has(workspacePrefKey(g)) && !machineHidden.has(groupHost(g)));
+  const isolatedKeys = new Set(isolatedGroups.map((g) => g.key));
+  const strip = stripEntries(groups, machineHidden, isolatedKeys);
   const allClear = attention.length === 0;
   // THE PINNED GROUP (ADR 0070). Drawn from EVERY workspace, before isolate and hide apply, and never
   // through the needs-you switch: a pin means "always show me this one", and the summary line above
@@ -428,9 +446,10 @@ export function AgentList({
   const rankedRows = ranked && !renderBody ? inRankOrder(drawn.flatMap((d) => d.rows), ranks) : NO_PANES;
   const firstUrgentRow = rankedRows.find((p) => ATTENTION.has(bucketOf(p)));
   const jumpTo = (g: WorkspaceGroup) => {
-    // The target may be filtered out: isolate it, which is also the scroll.
+    // The target may be filtered out: add it to the chosen workspaces (or choose it alone when the
+    // list shows everything), which is also the scroll.
     if (!drawn.some((d) => d.group === g)) {
-      onIsolate?.(workspacePrefKey(g));
+      onIsolate?.(groups.filter((x) => x === g || isolatedGroups.includes(x)).map(workspacePrefKey));
       return;
     }
     document.getElementById(groupDomId(g.key))?.scrollIntoView({ behavior: "smooth", block: "start" });
@@ -466,19 +485,24 @@ export function AgentList({
   // A workspace heading's "+", addressed to the heading's OWN machine and session, never the ambient
   // ones: this list holds every machine in a crew, and a crew's machines number their spaces from
   // `w1` each, so the ambient scope would open a peer's tab in the lead's `w1`. Every pane of a group
-  // shares one workspace, machine and session, so its first pane addresses the whole workspace, as
-  // the Changes tab's rows do (routes/home.tsx). A group is never empty; the guard is for the type.
+  // shares one machine and session, so its first pane resolves `at`, while the group key names the
+  // root workspace itself (which may hold only a linked worktree's panes, issue #587). A group is
+  // never empty; the guard is for the type.
   const headingNewTab = (g: WorkspaceGroup) => {
     const first = g.panes[0];
     if (newTab === undefined || first === undefined) return null;
+    const workspaceId = g.key.slice(g.key.lastIndexOf("\u0000") + 1);
     const at = paneScope(newTab.scope, first, servers, newTab.sessions);
     return (
       <WorkspaceNewTab
-        workspaceId={first.workspaceId}
+        workspaceId={workspaceId}
         label={g.label}
         at={at}
         host={first.host}
-        busy={newTab.creating.has(tabCreateKey(first.workspaceId, at))}
+        // The workspace's OWN pane: a group may list only a linked worktree's panes (issue #587), and a
+        // tab opened beside one of those would land in the worktree's space.
+        beside={besideOf(g.panes, workspaceId, first.host)}
+        busy={newTab.creating.has(tabCreateKey(workspaceId, at))}
         onNewTab={newTab.onNewTab}
       />
     );
@@ -508,7 +532,7 @@ export function AgentList({
       unseen={bucketOf(a) === "ready"}
       tint
       favorite={isPinned(a)}
-      onFavoriteToggle={() => togglePanePin(a, [...agents, ...shellPanes], rowDomId(paneRowKey(a)))}
+      onFavoriteToggle={isFleetBuild() ? () => togglePanePin(a, [...agents, ...shellPanes], rowDomId(paneRowKey(a))) : undefined}
       stale={stale}
     />
   );
@@ -557,11 +581,11 @@ export function AgentList({
           Every row of the block is 44px and the block draws the same on every pane tab: a tab with
           its own body (Changes) keeps the switch and the order select as invisible slots, so a switch
           between tabs moves neither the line nor the row nor anything below it (DESIGN.md §2,
-          `e2e/dashboard-footer.spec.ts`). The workspace select stays live on Changes, where it
+          `e2e/dashboard-footer.spec.ts`). The workspace filter stays live on Changes, where it
           narrows the workspaces that body lists.
-          The workspace select is the old strip's filter, whole: the options run in the list's own order,
-          each with its state in words, the isolated workspace shows alone, a hidden workspace or
-          machine has its way back as an option (components/dash-selects.tsx). */}
+          The workspace filter is the old strip's filter, whole: its sheet's rows run in the list's own
+          order, each with its state in words, the chosen workspaces show (issue #527), a hidden
+          workspace or machine has its way back as a row (components/dash-selects.tsx). */}
       <div className="flex flex-col gap-1">
         {/* The twenty-times-a-day glance, in ONE slot of one height: every state counted, with its
             word where the line has room for it, once for the whole dashboard (the headings below
@@ -581,13 +605,13 @@ export function AgentList({
           summary
         )}
         <div className="flex items-center gap-2">
-          <WorkspaceSelect
+          <WorkspaceFilter
             className="min-w-0 flex-1"
             entries={strip}
-            isolatedKey={isolatedGroup?.key}
+            isolatedKeys={isolatedKeys}
             isHidden={(g) => hiddenSet.has(workspacePrefKey(g))}
             servers={servers}
-            onIsolate={(group) => onIsolate?.(group === null ? null : workspacePrefKey(group))}
+            onIsolate={(chosen) => onIsolate?.(chosen.map(workspacePrefKey))}
             onShowHidden={onToggleHidden && ((hiddenGroups) => hiddenGroups.forEach((g) => onToggleHidden(workspacePrefKey(g))))}
             onShowMachine={onShowMachine}
           />
@@ -657,7 +681,7 @@ export function AgentList({
       {!renderBody && !ranked && drawn.map(({ group: g, rows }) => (
         <section key={g.key} id={groupDomId(g.key)} className="flex scroll-mt-4 flex-col gap-2">
           <SectionHeader
-            label={g.label}
+            label={g.heading ?? g.label}
             tone="strong"
             mark={urgentMark(g)}
             className="min-h-7"
@@ -668,7 +692,7 @@ export function AgentList({
               </>
             }
           />
-          <ListGroup>{rows.map((a) => row(a))}</ListGroup>
+          <ListGroup>{rows.map((a) => row(a, workspaceGroupKey(a) === g.key ? "place" : "herd"))}</ListGroup>
         </section>
       ))}
     </div>

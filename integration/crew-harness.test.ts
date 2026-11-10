@@ -3,13 +3,15 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { get as httpGet } from "node:http";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
+import { createServer } from "node:net";
 
 import { HOST } from "../bridge/host.ts";
 import type { JsonValue } from "../bridge/json.ts";
 import { EXIT } from "../cli/io.ts";
 import { askSocket, cmdWalkySend, cmdWalkyStatus, type WalkyDeps } from "../cli/walky.ts";
 import { asJsonObject, asJsonString } from "../web/src/lib/json.ts";
+import type { AskReply } from "../web/src/lib/surface/ask.ts";
 import { signMessage } from "../bridge/walky/canonical.ts";
 import { walkySocketPath } from "../bridge/walky/socket.ts";
 import { readReceiptsAnswer, readWalkyReport } from "../bridge/walky/parse.ts";
@@ -856,6 +858,29 @@ describe("the lead speaks for the crew", () => {
     // The peer's uploads dir is the observable: a lead that served a peer pane locally would have
     // had to materialise something under its own state dir.
     expect(readdirSync(lead.stateDir).toSorted()).not.toContain("uploads");
+  });
+
+  // M56 spec 12: the hook hold card on a member's pane answers that member's ask. The lead forwards
+  // `POST /api/ask/<id>?host=` over the link and the member's own ask book answers it: it never minted
+  // this id, so it refuses it `ask_unknown` with no key, in its own receipt. Before the forward, the
+  // lead answered 400 ("does not cross a crew link yet") and nothing reached the member.
+  test("an ask answer to a member's pane is forwarded, and the member's own ask route answers it", async () => {
+    const peerId = peer.store()!.self.memberId;
+    const res = await lead.apiWrite(`/api/ask/ask-0123456789abcd?host=${peerId}`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ pane: peer.paneId, hash: "0abc12", optionId: "1", origin: "person_tap", via: "hold-card" }),
+    });
+    expect(res.status).toBe(200);
+    // SAFETY: the member's `askRoute` answers an `AskReply` (web/src/lib/surface/ask.ts), read field by field below.
+    const reply = (await res.json()) as AskReply;
+    expect(reply.receipt).toMatchObject({ askId: "ask-0123456789abcd", paneId: peer.paneId, outcome: "refused", reason: "ask_unknown", keys: [] });
+    // Nothing was typed on the member: an id its book never minted sends no key.
+    expect(peer.herdr!.writes).toEqual([]);
+    // Two logs of one tap: the lead's line for the forward, and the member's own, stamped `via: crew`.
+    const askLines = (at: Instance): string[] => readFileSync(join(at.stateDir, "audit.log"), "utf8").split("\n").filter((line) => line.includes('"action":"ask"'));
+    expect(askLines(lead).some((line) => line.includes(`"host":"${peerId}"`) && line.includes('"forwarded":"http 200"'))).toBe(true);
+    expect(askLines(peer).some((line) => line.includes('"via":"crew"') && line.includes('"reason":"ask_unknown"'))).toBe(true);
   });
 });
 
@@ -2292,8 +2317,14 @@ describe("walky talky in a crew of four, on the real wire", () => {
     return [...transcript, "", "─".repeat(40), ...rows, "─".repeat(40), "  sonnet · project · main"].join("\n");
   }
 
+  /** The pane label the lead's and A's panes share: one folder on two machines, for the scope case (M75). */
+  const SCOPE_LABEL = "scope-ws#main";
+
+  /** A pane label one case sets for a while, read on every snapshot; absent: the label the pane started with. */
+  const paneLabels = new Map<Instance, string>();
+
   /** `startHerdr` for an instance whose pane is {@link claudeScreen}: the fake's `text` is read per `pane.read`. */
-  function startLiveHerdr(at: Instance): void {
+  function startLiveHerdr(at: Instance, label = at.name): void {
     at.herdr = startFakeHerdr({
       socketPath: at.socketPath,
       workspaceLabel: at.name,
@@ -2302,7 +2333,9 @@ describe("walky talky in a crew of four, on the real wire", () => {
           paneId: at.paneId,
           tabId: "t1",
           workspaceId: "w1",
-          label: at.name,
+          get label() {
+            return paneLabels.get(at) ?? label;
+          },
           get text() {
             return claudeScreen(at.herdr?.writes ?? []);
           },
@@ -2487,7 +2520,7 @@ describe("walky talky in a crew of four, on the real wire", () => {
     wa = new Instance("wa", "w1:p2", "");
     wb = new Instance("wb", "w1:p3", "");
     wo = new Instance("wold", "w1:p4", "", { COLLIE_PLUGIN_ROOT: oldRoot });
-    for (const i of [wl, wa, wb, wo]) startLiveHerdr(i);
+    for (const i of [wl, wa, wb, wo]) startLiveHerdr(i, i === wl || i === wa ? SCOPE_LABEL : i.name);
     await Promise.all([wl.start(), wa.start(), wb.start(), wo.start()]);
     await enrol(wl, wa);
     await enrol(wl, wb);
@@ -2650,6 +2683,111 @@ describe("walky talky in a crew of four, on the real wire", () => {
     expect(await cmdWalkyStatus({ ...cli, io: depsFor(wa, status).io }, [id])).toBe(EXIT.OK);
     expect(status.out).toEqual([id, `${paneOf(wb)}: typed into the pane (signed by ${idOf(wa)})`]);
     expect(typedFor(wb, id)).toHaveLength(1);
+  }, 60_000);
+
+  test("a scope send (M75) from a member's pane reaches the lead's pane in that folder and comes back `delivered`, and `here` from the lead reaches the member", async () => {
+    // The lead's pane and A's share the folder label `scope-ws#main` (beforeAll); B's and the old member's do
+    // not. It runs before the phone-reply case, which stops A mid-send and leaves a draft in A's box.
+    await waitFor(
+      async () => {
+        const listed = JSON.stringify(await walky(wl, { op: "who" }));
+        return listed.includes(`"${paneOf(wa)}#`) && listed.includes(`"label":"${SCOPE_LABEL}"`);
+      },
+      20_000,
+      async () => `the lead's who never listed A in the scope: ${JSON.stringify(await walky(wl, { op: "who" }))}`,
+    );
+    // Member to lead: A hands the scope to the lead whole, the lead expands it to its own pane only.
+    const up = "wt_scopeup00001";
+    const sent = await agentSend(wa, up, "scope-ws", "to every agent in scope-ws");
+    expect(sent).toMatchObject({ ok: true, receipts: [{ id: up, target: paneOf(wl), by: idOf(wl), verified: "origin" }] });
+    await settled(wl, up);
+    expect(await walky(wl, { op: "status", id: up })).toMatchObject({
+      ok: true,
+      receipts: [{ target: paneOf(wl), state: "delivered" }],
+      message: { to: "scope-ws", from: { address: tokened(wa) } },
+      deliveries: [{ address: paneOf(wl), member: idOf(wl), outcome: "delivered" }],
+      totals: { delivered: 1 },
+    });
+    // And back: the lead pushes the outcome to A, whose own status names the one delivery.
+    await waitFor(
+      async () => readReceiptsAnswer(await walky(wa, { op: "status", id: up })).some((r) => r.target === paneOf(wl) && r.state === "delivered"),
+      20_000,
+      async () => `A never learned the lead's outcome: ${JSON.stringify(await walky(wa, { op: "status", id: up }))}`,
+    );
+    expect(await walky(wa, { op: "status", id: up })).toMatchObject({ ok: true, deliveries: [{ address: paneOf(wl), outcome: "delivered" }], elsewhere: [] });
+    expect(typedFor(wl, up)).toHaveLength(1);
+    expect(typedFor(wa, up)).toEqual([]);
+    expect(typedFor(wb, up)).toEqual([]);
+
+    // Lead to member: `here` from the lead's pane is its folder without itself, so A's pane, checked by A.
+    const down = "wt_scopedown001";
+    const back = await agentSend(wl, down, "here", "to my siblings in scope-ws");
+    expect(back).toMatchObject({ ok: true, receipts: [{ id: down, target: paneOf(wa), by: idOf(wa), verified: "origin" }] });
+    await settled(wa, down);
+    expect(await walky(wa, { op: "status", id: down })).toMatchObject({ ok: true, receipts: [{ target: paneOf(wa), state: "delivered" }], message: { to: "here" } });
+    // A's report carries the outcome to the lead's parent.
+    await waitFor(
+      async () => readReceiptsAnswer(await walky(wl, { op: "status", id: down })).some((r) => r.target === paneOf(wa) && r.state === "delivered"),
+      20_000,
+      async () => `the lead never learned A's outcome: ${JSON.stringify(await walky(wl, { op: "status", id: down }))}`,
+    );
+    expect(typedFor(wa, down)).toHaveLength(1);
+    expect(typedFor(wl, down)).toEqual([]);
+  }, 90_000);
+
+  test("`collie walky send here` from a member's pane reaches the lead's pane in that folder, past an older bridge asked first (2026-10-30)", async () => {
+    // The live failure: on the sender's machine the CLI asked its own install's socket first, a release
+    // lane older than M75, which answered the bare `bad request` before it looked at the markers. Here a
+    // stand-in for it is asked first, A's bridge (not B's pane) second, B's own bridge third. B sends: the
+    // A-lead pair is spent by the cases around this one (6 per 10 minutes, either direction), so B's pane
+    // joins the folder for this case only, on another branch: `here` is the folder on any branch.
+    paneLabels.set(wb, "scope-ws#side");
+    const listsB = async (label: string): Promise<boolean> => JSON.stringify(await walky(wl, { op: "who" })).includes(`"label":"${label}"`);
+    await waitFor(() => listsB("scope-ws#side"), 20_000, async () => `the lead's who never listed B in the scope: ${JSON.stringify(await walky(wl, { op: "who" }))}`);
+    const olderDir = mkdtempSync(join(root, "older-bridge-"));
+    const olderPath = walkySocketPath(olderDir);
+    mkdirSync(dirname(olderPath), { recursive: true, mode: 0o700 });
+    const older = createServer((socket) => socket.end(`${JSON.stringify({ ok: false, error: "bad request" })}\n`));
+    await new Promise<void>((resolve) => older.listen(olderPath, resolve));
+    try {
+      const id = "wt_scopehere001";
+      const captured: Captured = { out: [], err: [] };
+      const base = depsFor(wb, captured);
+      const cli: WalkyDeps = {
+        ctx: { ...base.ctx, env: { HERDR_PANE_ID: wb.paneId, HERDR_SOCKET_PATH: wb.socketPath } },
+        files: realFiles,
+        uid: process.getuid?.(),
+        io: base.io,
+        platform: HOST.platform,
+        readStdin: () => Promise.resolve(""),
+        stdinIsTty: true,
+        ask: (path, line) => askSocket(path, line, 5000),
+        sockets: () => [olderPath, walkySocketPath(wa.stateDir), walkySocketPath(wb.stateDir)],
+        mintId: () => id,
+      };
+      expect(await cmdWalkySend(cli, ["here", "to my siblings in scope-ws, from member b"])).toBe(EXIT.OK);
+      expect(captured.err).toEqual([]);
+      expect(captured.out.slice(0, 2)).toEqual([id, "to here"]);
+      // The lead resolved `here` from B's label: its own pane and A's, never B's.
+      const onLead = async () => walky(wl, { op: "status", id });
+      await waitFor(
+        async () => readReceiptsAnswer(await onLead()).filter((r) => r.state === "delivered").length === 2,
+        20_000,
+        async () => `the lead's parent never showed both deliveries: ${JSON.stringify(await onLead())}`,
+      );
+      expect(await onLead()).toMatchObject({
+        ok: true,
+        message: { to: "here", from: { address: tokened(wb), label: "scope-ws#side" } },
+        deliveries: [{ address: paneOf(wl), member: idOf(wl), outcome: "delivered" }, { address: paneOf(wa), member: idOf(wa), outcome: "delivered" }],
+      });
+      expect(typedFor(wl, id)).toHaveLength(1);
+      expect(typedFor(wa, id)).toHaveLength(1);
+      expect(typedFor(wb, id)).toEqual([]);
+    } finally {
+      older.close();
+      paneLabels.delete(wb);
+    }
+    await waitFor(() => listsB(wb.name), 20_000, async () => `the lead's who still lists B in the scope: ${JSON.stringify(await walky(wl, { op: "who" }))}`);
   }, 60_000);
 
   test("a sender block whose certificate the lead did not vouch for is the uniform 401, and the vouched one reads `origin`", async () => {

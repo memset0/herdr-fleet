@@ -1,9 +1,9 @@
-import { ChevronDown } from "lucide-react";
+import { Icon } from "@/components/icons/icon";
 
 import { StatusDot } from "@/components/status-badge";
 import { cn } from "@/lib/utils";
 import { hostKey } from "@/lib/hosts";
-import { TRIAGE_STATUS, worstTriage } from "@/lib/triage";
+import { shownStatus, TRIAGE_STATUS, worstTriage } from "@/lib/triage";
 import type { AgentStatus, AgentView, TabView } from "@/lib/types";
 import { t, tn, type TemplateVars } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
@@ -136,14 +136,14 @@ export function StripsSummary({
               <Bead
                 key={pane.paneId}
                 active={pane.paneId === currentPaneId}
-                status={pane.status}
+                status={shownStatus(pane)}
               />
             ))}
           </span>
         )}
       </span>
 
-      <ChevronDown aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
+      <Icon name="expand" aria-hidden="true" className="size-4 shrink-0 text-muted-foreground" />
     </button>
   );
 }

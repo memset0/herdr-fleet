@@ -1,11 +1,13 @@
+import { Icon } from "@/components/icons/icon";
 import { useLoaderData } from "react-router";
-import { FlaskConical } from "lucide-react";
 
+import { AppearanceIntro } from "@/components/appearance-intro";
 import { SettingsPage } from "@/components/settings-page";
 import { Notice } from "@/components/ui/notice";
 import { useLocale } from "@/hooks/use-locale";
 import { t } from "@/lib/i18n";
 import { BeltSizeControl } from "@/components/belt-size-control";
+import { ZoomPillControl } from "@/components/zoom-pill-control";
 import { ChangesControl } from "@/components/changes-control";
 import { ConnectionInfo } from "@/components/connection-info";
 import { CrewSettingsCard } from "@/components/crew-settings-card";
@@ -19,9 +21,12 @@ import { HarnessBarControl } from "@/components/harness-bar-control";
 import { HarnessPrefsControl } from "@/components/harness-prefs-control";
 import { LanguageControl } from "@/components/language-control";
 import { NotifyPrefsControl } from "@/components/notify-prefs-control";
+import { PaneNavControl } from "@/components/pane-nav-control";
 import { PaneOrderControl } from "@/components/pane-order-control";
+import { WideLayoutControl } from "@/components/wide-layout-control";
 import { PairedDevices } from "@/components/paired-devices";
 import { PushControl, usePushAvailability } from "@/components/push-control";
+import { ReportControl } from "@/components/report-control";
 import { SnoozeControl } from "@/components/snooze-control";
 import { ThemeControl } from "@/components/theme-control";
 import { ThemePickerControl } from "@/components/theme-picker-control";
@@ -29,7 +34,8 @@ import { CompactionsControl } from "@/components/compactions-control";
 import { ToolCallsControl } from "@/components/tool-calls-control";
 import { TourControl } from "@/components/tour-control";
 import { TypefaceControl } from "@/components/typeface-control";
-import { UpdatesSettingsCard } from "@/components/updates-settings-card";
+import { TelemetrySettingsCard, TelemetrySettingsRow } from "@/components/telemetry-settings-card";
+import { MathControl } from "@/components/math-control";
 import { ZenControl } from "@/components/zen-control";
 import { useServerDiagnostics } from "@/hooks/use-server-diagnostics";
 import { EMPTY_DEVICES, type DevicesData } from "@/lib/loaders";
@@ -78,6 +84,11 @@ import { useScope } from "@/lib/session";
 export function SettingsAppearanceRoute() {
   return (
     <SettingsPage title="settings.section.appearance.title">
+      {/* "Make Collie your own": one line and a docs link over the two cards that make the app
+          yours, in the order a person decides them: the theme (Paste, Browse and Try live in its
+          card), then which half of the theme you see. The header's character comes with the theme
+          and has no card of its own: it is something a theme maker sets, not a device setting. */}
+      <AppearanceIntro />
       {/* Which theme, then which half of it: the picker sits directly above the three-way (System,
           Light, Dark) because the two are one question asked twice, and a person who finds one
           should find the other. First on the page, because it is the one people come here for. */}
@@ -90,10 +101,16 @@ export function SettingsAppearanceRoute() {
           Reading them one after the other is what makes the split obvious. */}
       <TypefaceControl />
       <FontSettingsControl />
+      {/* How agent prose draws LaTeX. Under the two font cards, because it is the same question —
+          what text looks like — asked of a formula, and above the cards that arrange surfaces. */}
+      <MathControl />
       {/* The harness bar, then the belt's size directly under what it carries: one factor for
           band, pills, icons and words (components/actions-row.tsx, `--belt-scale`). */}
       <HarnessBarControl />
       <BeltSizeControl />
+      {/* The belt's Zoom pill: in the Screen view or never (lib/zoom-pill.ts). Under the belt's size
+          because both decide what that one belt carries. */}
+      <ZoomPillControl />
       {/* Which thumb the belt and the reply box are laid out for. Under the belt's size because both
           decide how that one belt is drawn. */}
       <HandControl />
@@ -101,6 +118,14 @@ export function SettingsAppearanceRoute() {
           surface is ARRANGED, which is the same question every card above answers. The pane
           switcher's own toggle writes the same value; this is where you go to find it. */}
       <PaneOrderControl />
+      {/* Whether a tablet or an open Fold may show the sidebar and the strip of panes (ADR 0120). The
+          way out for a screen where the layout misbehaves, so it sits with the other arrangement
+          choices. Stored per device. */}
+      <WideLayoutControl />
+      {/* How the pane screen moves between panes and spaces by gesture (ADR 0121): Two fingers,
+          Joystick or Off. Beside Large-screen layout, because both decide how the pane screen is
+          arranged and moved through. Stored per device with the hand. */}
+      <PaneNavControl />
       {/* Last, and it is the odd one here: every card above changes how a surface LOOKS, and this
           one changes what a surface CONTAINS. It earns the place anyway, because the question it
           answers is the same question — what do I want on screen — and filing it under Device would
@@ -210,7 +235,7 @@ export function SettingsAlertsRoute() {
 function ExperimentsContract() {
   useLocale();
   return (
-    <Notice variant="box" tone="caution" icon={<FlaskConical className="size-4" />}>
+    <Notice variant="box" tone="caution" icon={<Icon name="experiments" className="size-4" />}>
       {t("settings.experiments.contract")}
     </Notice>
   );
@@ -251,9 +276,6 @@ export function SettingsSystemRoute() {
   const devices = (useLoaderData() as DevicesData | undefined) ?? EMPTY_DEVICES;
   return (
     <SettingsPage title="settings.section.system.title">
-      {/* ONE row for the whole subject: updating is a flow with a lead, N peers, progress and a
-          rollback state, so it lives on `/settings/updates` and this is the row that opens it. */}
-      <UpdatesSettingsCard />
       {/* Access sits with the connection diagnostics — both answer "what is this device allowed to
           do, and why". Pairing is the gate you can change from here; ConnectionInfo below only
           reports the header-based one. */}
@@ -266,6 +288,23 @@ export function SettingsSystemRoute() {
         build={diagnostics.build}
         redact={diagnostics.redact}
       />
+      {/* The anonymous install count (M86 spec 02, ADR 0129): one row with its state, above the report
+          card because both are about what this machine says to Collie's host. The switch, the cause
+          and the next message are the page the row opens. */}
+      <TelemetrySettingsRow />
+      {/* Report a problem (ADR 0123): the offer's switch and the sheet's third door, with the diagnostics
+          because a report is the one way those leave this phone, and only by the person's taps. */}
+      <ReportControl />
+    </SettingsPage>
+  );
+}
+
+/** Settings → System → Telemetry: the whole card, one level below System. */
+export function SettingsInstallCountRoute() {
+  const scope = useScope();
+  return (
+    <SettingsPage title="telemetry.card.title" parent={settingsSectionPath("system", scope)}>
+      <TelemetrySettingsCard />
     </SettingsPage>
   );
 }

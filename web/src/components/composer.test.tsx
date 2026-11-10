@@ -1,13 +1,14 @@
-import { useMemo, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import type { ComponentProps } from "react";
 import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { createMemoryRouter, RouterProvider } from "react-router";
 
-import { clearStatus, useStatus } from "@/lib/status";
+import * as api from "@/lib/api";
 import { setLocale, whenLocaleReady } from "@/lib/i18n";
-import { isReloadHeld, __resetReloadGuard } from "@/lib/reload-guard";
+import { clearStatus, useStatus } from "@/lib/status";
+import { isReloadHeld, subscribeReloadHeld, __resetReloadGuard } from "@/lib/reload-guard";
 import { loadDraft, loadDraftEntry, saveDraft } from "@/lib/drafts";
 import { __resetOperatorCommands } from "@/lib/operator-config";
 import { server } from "@/test/setup";
@@ -16,7 +17,9 @@ import { CrewProvider } from "./crew-provider";
 import { Composer } from "./composer";
 import { addRow, chordKey, DEFAULT_BOARD, setCell } from "@/lib/key-board";
 import { resetKeyBoard, setKeyBoard } from "@/lib/key-board-store";
-import { type PaneSubagent, type ServerSummary, type TranscriptEntry } from "@/lib/types";
+import { type PaneJob, type PaneSubagent, type PinRow, type ServerSummary, type TranscriptEntry } from "@/lib/types";
+import { __resetBeltIntents, queueBeltIntent, takeBeltIntent } from "@/lib/belt-intent";
+import { paneScopeKey } from "@/lib/scope";
 import { SubagentSheetCtx, type SubagentSheetHandle, type SubagentTarget } from "./chat-cards";
 import type { Surface } from "@/lib/surface/surface";
 import { asJsonObject } from "@/lib/json";
@@ -34,6 +37,79 @@ vi.mock("@/lib/liveness", async (importOriginal) => ({
   ...(await importOriginal<typeof import("@/lib/liveness")>()),
   isLive: () => true,
   useLive: () => true,
+}));
+
+// The canvas editor is covered in image-editor.test.tsx. These cases pin the composer's decision
+// to upload. `mode: "auto"` confirms immediately so existing chip tests still reach an upload; the
+// image-edit describe below sets `manual` and clicks. jsdom has no 2D context, so canvasAvailable
+// is stubbed here; image-edit.test.ts covers the real check.
+const canvasGate = vi.hoisted(() => ({ available: true }));
+
+vi.mock("@/lib/image-edit", async (importOriginal) => {
+  const actual = await importOriginal<typeof import("@/lib/image-edit")>();
+  return { ...actual, canvasAvailable: () => canvasGate.available };
+});
+interface ImageEditHarness {
+  mode: "auto" | "manual";
+  seen: WeakSet<File>;
+  lastConfirm: ((file: File) => void) | null;
+  mounts: number;
+}
+
+const imageEditHarness = vi.hoisted(() => {
+  const harness: ImageEditHarness = {
+    mode: "auto",
+    seen: new WeakSet<File>(),
+    lastConfirm: null,
+    mounts: 0,
+  };
+  return harness;
+});
+
+vi.mock("@/components/image-editor", () => ({
+  ImageEditor: (props: {
+    file: File;
+    startInEdit?: boolean;
+    onConfirm: (file: File) => void;
+    onCancel: () => void;
+    onFail: (reason: "unavailable" | "failed") => void;
+  }) => {
+    useEffect(() => {
+      imageEditHarness.mounts += 1;
+    }, []);
+    imageEditHarness.lastConfirm = props.onConfirm;
+    if (imageEditHarness.mode === "auto" && !imageEditHarness.seen.has(props.file)) {
+      imageEditHarness.seen.add(props.file);
+      queueMicrotask(() => {
+        props.onConfirm(new File(["edited"], props.file.name, { type: props.file.type || "image/png" }));
+      });
+    }
+    if (imageEditHarness.mode !== "manual") return null;
+    return (
+      <div role="dialog" aria-label="Edit image" data-start-in-edit={props.startInEdit === true ? "yes" : "no"}>
+        <span data-testid="editor-file">{props.file.name}</span>
+        {/* What the real editor does for Attach, and for "Use this image" with nothing changed. */}
+        <button type="button" onClick={() => props.onConfirm(props.file)}>
+          Attach
+        </button>
+        <button
+          type="button"
+          onClick={() => props.onConfirm(new File(["EDITED-BYTES"], "edited.png", { type: "image/png" }))}
+        >
+          Use this image
+        </button>
+        <button type="button" onClick={() => props.onConfirm(new File([], "empty.png", { type: "image/png" }))}>
+          Save empty
+        </button>
+        <button type="button" onClick={() => props.onFail("failed")}>
+          Fail edit
+        </button>
+        <button type="button" onClick={props.onCancel}>
+          Cancel edit
+        </button>
+      </div>
+    );
+  },
 }));
 
 // Every text the composer sends is ONE Send Protocol request (M56 spec 06): the bridge types, checks
@@ -91,7 +167,13 @@ function expectLeaving(el: HTMLElement | null) {
 beforeAll(() => {
   if (!Element.prototype.scrollTo) Element.prototype.scrollTo = () => {};
 });
-beforeEach(() => clearStatus());
+beforeEach(() => {
+  clearStatus();
+  imageEditHarness.mode = "auto";
+  imageEditHarness.lastConfirm = null;
+  imageEditHarness.mounts = 0;
+  canvasGate.available = true;
+});
 
 function renderComposer(overrides: Partial<ComponentProps<typeof Composer>> = {}) {
   const props: ComponentProps<typeof Composer> = {
@@ -229,12 +311,13 @@ describe("Composer: keyboard hints on the field (issue 465)", () => {
     expect(box).toHaveAttribute("spellcheck", "false");
   });
 
-  it("leaves correction and spell check at the keyboard default on an agent pane", () => {
+  it("leaves correction at the keyboard default on an agent pane and turns the browser spell check off", () => {
     renderComposer();
     const box = screen.getByRole("textbox");
     expect(box).toHaveAttribute("autocapitalize", "none");
     expect(box).not.toHaveAttribute("autocorrect");
-    expect(box).not.toHaveAttribute("spellcheck");
+    // A tap on a marked word opens Chrome's suggestion menu on Android, which hides the keyboard.
+    expect(box).toHaveAttribute("spellcheck", "false");
   });
 });
 
@@ -485,7 +568,7 @@ describe("Composer: the Surface table (M56 spec 06)", () => {
     renderComposerWithStatus({ surface: UNREACHABLE, unreachableNote: "workshop is not answering the lead" });
     const box = screen.getByPlaceholderText("workshop is not answering the lead");
     expect(box).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute("aria-disabled", "true");
   });
 
   it("composer unreachable with no note says the box cannot be reached", () => {
@@ -507,7 +590,7 @@ describe("Composer: the Surface table (M56 spec 06)", () => {
     const box = screen.getByPlaceholderText(/type a reply/i);
     await user.type(box, "later");
     expect(box).toHaveValue("later");
-    expect(screen.getByRole("button", { name: "Reconnect to send" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Reconnect to send" })).toHaveAttribute("aria-disabled", "true");
     expect(recordedSends()).toEqual([]);
   });
 });
@@ -750,17 +833,17 @@ describe("Composer: password prompt", () => {
     const box = screen.getByPlaceholderText(/shell command/i);
 
     await user.type(box, "hunter2hunter2");
-    expect(localStorage.getItem("collie:draft:default:w1:p1")).toContain("hunter2hunter2");
+    expect(localStorage.getItem("collie:draft:v2:default:w1:p1")).toContain("hunter2hunter2");
 
     await user.click(screen.getByRole("button", { name: "Send" }));
     await screen.findByRole("button", { name: /use type/i });
-    expect(localStorage.getItem("collie:draft:default:w1:p1")).toBeNull();
+    expect(localStorage.getItem("collie:draft:v2:default:w1:p1")).toBeNull();
     // Through the store's own reader: the draft store has an in-memory tier too (lib/drafts.ts).
     expect(loadDraft(undefined, "w1:p1")).toBeNull();
 
     await user.click(screen.getByRole("button", { name: /dismiss password-prompt notice/i }));
     expect(box).toHaveValue("hunter2hunter2");
-    expect(localStorage.getItem("collie:draft:default:w1:p1")).toBeNull();
+    expect(localStorage.getItem("collie:draft:v2:default:w1:p1")).toBeNull();
   });
 
   it("the handoff clears the draft before arming Type", async () => {
@@ -774,7 +857,7 @@ describe("Composer: password prompt", () => {
     await user.click(await screen.findByRole("button", { name: /use type/i }));
 
     await waitFor(() => expect(screen.getByPlaceholderText(/type into the terminal/i)).toHaveValue(""));
-    expect(localStorage.getItem("collie:draft:default:w1:p1")).toBeNull();
+    expect(localStorage.getItem("collie:draft:v2:default:w1:p1")).toBeNull();
     expectLeaving(screen.queryByRole("button", { name: /use type/i }));
   });
 
@@ -2176,6 +2259,93 @@ describe("Composer — no draft preview while its own send is in flight", () => 
   });
 });
 
+// Issue 691: on an iPhone with the keyboard up, the first tap on Send only dropped the keyboard. The
+// press moved focus off the field, and a busy (disabled) Send let the tap fall through to the box.
+describe("Composer — one tap on Send keeps the keyboard up (issue 691)", () => {
+  function holdSend() {
+    let release!: () => void;
+    const gate = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    const posts: string[] = [];
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/keys$/, async () => HttpResponse.json({ ok: true })),
+      http.post<never, { id: string; text: string }>("/api/send", async ({ request }) => {
+        const body = await request.json();
+        posts.push(body.text);
+        await gate;
+        return HttpResponse.json(sendAnswer(body.id, "sent"));
+      }),
+    );
+    return { release, posts };
+  }
+
+  it("refuses the focus move of a mouse down on Send", async () => {
+    const user = userEvent.setup();
+    renderComposer();
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    await user.type(box, "hello");
+    const down = new MouseEvent("mousedown", { bubbles: true, cancelable: true });
+    screen.getByRole("button", { name: "Send" }).dispatchEvent(down);
+    expect(down.defaultPrevented).toBe(true);
+  });
+
+  it("does not cancel pointer down on Send, which would drop the click on iPhone WebKit", async () => {
+    const user = userEvent.setup();
+    renderComposer();
+    await user.type(screen.getByPlaceholderText(/type a reply/i), "hello");
+    const down = new MouseEvent("pointerdown", { bubbles: true, cancelable: true });
+    screen.getByRole("button", { name: "Send" }).dispatchEvent(down);
+    expect(down.defaultPrevented).toBe(false);
+  });
+
+  it("keeps a busy Send under the finger: a tap sends nothing more and the field keeps focus", async () => {
+    const user = userEvent.setup();
+    const { release, posts } = holdSend();
+    renderComposer();
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    await user.type(box, "hello");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(posts).toEqual(["hello"]));
+    const send = screen.getByRole("button", { name: "Send" });
+    await waitFor(() => expect(send).toHaveAttribute("aria-disabled", "true"));
+    expect(send).not.toBeDisabled();
+    expect(send).toHaveClass("opacity-50");
+    box.focus();
+    await user.type(box, "more");
+    await user.click(send);
+    expect(posts).toEqual(["hello"]);
+    expect(box).toHaveFocus();
+    release();
+    await waitFor(() => expect(send).not.toHaveAttribute("aria-disabled"));
+  });
+
+  it("does not open the hold menu from a long press on a busy Send", async () => {
+    const user = userEvent.setup();
+    const { release, posts } = holdSend();
+    renderComposer();
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    await user.type(box, "hello");
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(posts).toEqual(["hello"]));
+    const send = screen.getByRole("button", { name: "Send" });
+    await waitFor(() => expect(send).toHaveAttribute("aria-disabled", "true"));
+    vi.useFakeTimers({ shouldAdvanceTime: true });
+    try {
+      fireEvent.pointerDown(send, { button: 0, clientX: 5, clientY: 5 });
+      await act(async () => {
+        await vi.advanceTimersByTimeAsync(700);
+      });
+      fireEvent.contextMenu(send);
+      fireEvent.pointerUp(send);
+    } finally {
+      vi.useRealTimers();
+    }
+    expect(screen.queryByRole("button", { name: "Send as message" })).toBeNull();
+    release();
+  });
+});
+
 // The no-service-worker self-updater must never reload over unsent work. The composer holds a reload
 // (lib/reload-guard) while its phone-owned input has REAL text or an upload is in flight — but a
 // terminal draft alone is SAFE (it lives on the "❯" line and its preview re-derives after a reload),
@@ -2396,6 +2566,68 @@ describe("Composer — clipboard image paste", () => {
     expect(box).toHaveValue("");
     expect(screen.queryByText(/Image added/i)).not.toBeInTheDocument();
     expect(uploadCalls).toBe(0);
+  });
+
+  it("collapses a 5+ line paste into a [Pasted #1] chip, lets the sheet edit or expand it, and sends the expanded text", async () => {
+    const user = userEvent.setup();
+    renderComposer();
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    const longText = "line 1\nline 2\nline 3\nline 4\nline 5";
+
+    fireEvent.paste(box, {
+      clipboardData: {
+        items: [{ kind: "string", type: "text/plain", getAsFile: () => null }],
+        getData: (type: string) => (type === "text/plain" ? longText : ""),
+      },
+    });
+
+    await waitFor(() => expect(box).toHaveValue("[Pasted #1] "));
+    const chipBtn = screen.getByRole("button", { name: "Edit pasted text #1" });
+    expect(chipBtn).toHaveTextContent("5 lines · 34 chars");
+
+    // Open the sheet and edit the pasted content; scrolling inside the textarea never triggers the
+    // sheet's pull-down dismiss gesture.
+    await user.click(chipBtn);
+    const sheetEditor = screen.getByRole("textbox", { name: "Edit pasted text #1" });
+    expect(sheetEditor).toHaveValue(longText);
+    fireEvent.touchStart(sheetEditor, { touches: [{ clientY: 100 }] });
+    fireEvent.touchMove(sheetEditor, { touches: [{ clientY: 250 }] });
+    fireEvent.touchEnd(sheetEditor);
+    expect(screen.getByRole("textbox", { name: "Edit pasted text #1" })).toBeInTheDocument();
+    fireEvent.change(sheetEditor, { target: { value: "edited 1\nedited 2\nedited 3\nedited 4\nedited 5" } });
+    expect(chipBtn).toHaveTextContent("5 lines · 44 chars");
+
+    // Close sheet and send with additional instructions
+    await user.click(screen.getByRole("button", { name: "Close" }));
+    fireEvent.change(box, { target: { value: "[Pasted #1] please check" } });
+    await user.click(screen.getByRole("button", { name: "Send" }));
+
+    await waitFor(() =>
+      expect(recordedSends().at(-1)?.text).toBe(
+        "edited 1\nedited 2\nedited 3\nedited 4\nedited 5 please check",
+      ),
+    );
+  });
+
+  it("expands a collapsed paste chip back into the input box when requested from the sheet", async () => {
+    const user = userEvent.setup();
+    renderComposer();
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    const longText = "alpha 1\nalpha 2\nalpha 3\nalpha 4\nalpha 5";
+
+    fireEvent.paste(box, {
+      clipboardData: {
+        items: [],
+        getData: (type: string) => (type === "text/plain" ? longText : ""),
+      },
+    });
+
+    await waitFor(() => expect(box).toHaveValue("[Pasted #1] "));
+    await user.click(screen.getByRole("button", { name: "Edit pasted text #1" }));
+    await user.click(screen.getByRole("button", { name: "Expand into input" }));
+
+    expect(screen.queryByRole("button", { name: "Edit pasted text #1" })).not.toBeInTheDocument();
+    expect(box).toHaveValue(`${longText} `);
   });
 });
 
@@ -3248,7 +3480,7 @@ describe("Composer — the composer is one box", () => {
     expect(box.className).toMatch(/(?:^|\s)bg-muted\/40(?=\s|$)/);
     expect(box.className).not.toMatch(/(?:^|\s)bg-background(?=\s|$)/);
     expect(attach()).toBeDisabled();
-    expect(screen.getByRole("button", { name: "Send" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send" })).toHaveAttribute("aria-disabled", "true");
   });
 });
 
@@ -4063,7 +4295,524 @@ describe("Composer — a draft that holds masked text", () => {
   it("does not block Send", () => {
     renderComposerWithStatus();
     fireEvent.change(screen.getByPlaceholderText(/type a reply/i), { target: { value: "ghp_••••••••" } });
-    expect(screen.getByRole("button", { name: "Send" })).not.toBeDisabled();
+    expect(screen.getByRole("button", { name: "Send" })).not.toHaveAttribute("aria-disabled");
+  });
+});
+
+describe("Composer — an image is edited before it uploads", () => {
+  beforeEach(() => {
+    __resetOperatorCommands();
+    imageEditHarness.mode = "manual";
+  });
+
+  function pick(file: File, id = "attach-photos") {
+    // SAFETY: getByTestId throws when the element is absent, and this id is on an <input>.
+    const input = screen.getByTestId(id) as HTMLInputElement;
+    fireEvent.change(input, { target: { files: [file] } });
+  }
+
+  /** The File the composer handed to uploadFile. jsdom's multipart writer drops the part body, so the
+   *  bytes are read here, before FormData, which is the same object api.uploadFile appends. */
+  function watchUploads() {
+    const spy = vi.spyOn(api, "uploadFile");
+    return spy;
+  }
+
+  const png = (name: string, bytes: number[] = [1, 2, 3, 4]) =>
+    new File([Uint8Array.from(bytes)], name, { type: "image/png" });
+
+  it("uploads nothing until confirm, then uploads the edited file and leaves the original bytes", async () => {
+    const user = userEvent.setup();
+    const uploads = watchUploads();
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/upload$/, () => HttpResponse.json({ ok: true, path: "/tmp/edited.png" })),
+    );
+    try {
+      renderComposerWithStatus();
+      const original = png("shot.png");
+      pick(original);
+
+      expect(await screen.findByRole("dialog", { name: "Edit image" })).toBeInTheDocument();
+      expect(uploads).not.toHaveBeenCalled();
+      await user.click(screen.getByRole("button", { name: "Use this image" }));
+
+      await waitFor(() => expect(uploads).toHaveBeenCalledTimes(1));
+      const sent = uploads.mock.calls[0]?.[1];
+      expect(sent?.name).toBe("edited.png");
+      expect(sent?.type).toBe("image/png");
+      expect(await sent?.text()).toBe("EDITED-BYTES");
+      expect(Array.from(new Uint8Array(await original.arrayBuffer()))).toEqual([1, 2, 3, 4]);
+      expect(screen.getByRole("button", { name: "Remove edited.png" })).toBeInTheDocument();
+    } finally {
+      uploads.mockRestore();
+    }
+  });
+
+  it("Attach uploads the picked file itself, once, and closes the sheet", async () => {
+    const user = userEvent.setup();
+    const uploads = watchUploads();
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/upload$/, () => HttpResponse.json({ ok: true, path: "/tmp/shot.png" })),
+    );
+    try {
+      renderComposerWithStatus();
+      const original = png("shot.png");
+      pick(original);
+      expect(await screen.findByRole("dialog", { name: "Edit image" })).toHaveAttribute("data-start-in-edit", "no");
+      expect(uploads).not.toHaveBeenCalled();
+      await user.click(screen.getByRole("button", { name: "Attach" }));
+
+      await waitFor(() => expect(uploads).toHaveBeenCalledTimes(1));
+      expect(uploads.mock.calls[0]?.[1]).toBe(original);
+      expect(screen.queryByRole("dialog", { name: "Edit image" })).not.toBeInTheDocument();
+      expect(await screen.findByRole("button", { name: "Remove shot.png" })).toBeInTheDocument();
+    } finally {
+      uploads.mockRestore();
+    }
+  });
+
+  describe("the chip's Edit", () => {
+    // The thumbnail (and so the Edit button on it) needs object URLs, which jsdom lacks.
+    beforeEach(() => {
+      let n = 0;
+      Object.defineProperty(URL, "createObjectURL", { value: () => `blob:edit/${String(++n)}`, configurable: true, writable: true });
+      Object.defineProperty(URL, "revokeObjectURL", { value: () => undefined, configurable: true, writable: true });
+    });
+    afterEach(() => {
+      Reflect.deleteProperty(URL, "createObjectURL");
+      Reflect.deleteProperty(URL, "revokeObjectURL");
+    });
+    async function attachOne(user: ReturnType<typeof userEvent.setup>, uploads: ReturnType<typeof watchUploads>) {
+      renderComposerWithStatus();
+      const original = png("shot.png");
+      pick(original);
+      await user.click(await screen.findByRole("button", { name: "Attach" }));
+      await screen.findByRole("button", { name: "Remove shot.png" });
+      expect(uploads).toHaveBeenCalledTimes(1);
+      return original;
+    }
+
+    it("opens the sheet on the attachment's own file, on the tools", async () => {
+      const user = userEvent.setup();
+      const uploads = watchUploads();
+      server.use(
+        http.post(/\/api\/pane\/[^/]+\/upload$/, () => HttpResponse.json({ ok: true, path: "/tmp/shot.png" })),
+      );
+      try {
+        await attachOne(user, uploads);
+        await user.click(screen.getByRole("button", { name: "Edit" }));
+        const dialog = await screen.findByRole("dialog", { name: "Edit image" });
+        expect(dialog).toHaveAttribute("data-start-in-edit", "yes");
+        expect(screen.getByTestId("editor-file")).toHaveTextContent("shot.png");
+      } finally {
+        uploads.mockRestore();
+      }
+    });
+
+    it("an unchanged edit closes with no upload and leaves the chip", async () => {
+      const user = userEvent.setup();
+      const uploads = watchUploads();
+      server.use(
+        http.post(/\/api\/pane\/[^/]+\/upload$/, () => HttpResponse.json({ ok: true, path: "/tmp/shot.png" })),
+      );
+      try {
+        await attachOne(user, uploads);
+        await user.click(screen.getByRole("button", { name: "Edit" }));
+        await user.click(await screen.findByRole("button", { name: "Attach" })); // the mock's "unchanged"
+        await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit image" })).not.toBeInTheDocument());
+        expect(uploads).toHaveBeenCalledTimes(1);
+        expect(screen.getByRole("button", { name: "Remove shot.png" })).toBeInTheDocument();
+      } finally {
+        uploads.mockRestore();
+      }
+    });
+
+    it("a crop uploads once and replaces the chip, keeping its number and its marker", async () => {
+      const user = userEvent.setup();
+      const uploads = watchUploads();
+      server.use(
+        http.post(/\/api\/pane\/[^/]+\/upload$/, () =>
+          HttpResponse.json({ ok: true, path: uploads.mock.calls.length > 1 ? "/tmp/edited.png" : "/tmp/shot.png" }),
+        ),
+      );
+      try {
+        await attachOne(user, uploads);
+        // SAFETY: getByPlaceholderText returns the composer textarea, which is an HTMLTextAreaElement.
+        const box = screen.getByPlaceholderText(/type a reply/i) as HTMLTextAreaElement;
+        expect(box.value).toContain("[Image #1]");
+        await user.click(screen.getByRole("button", { name: "Edit" }));
+        await user.click(await screen.findByRole("button", { name: "Use this image" }));
+
+        await waitFor(() => expect(uploads).toHaveBeenCalledTimes(2));
+        expect(uploads.mock.calls[1]?.[1].name).toBe("edited.png");
+        expect(await screen.findByRole("button", { name: "Remove edited.png" })).toBeInTheDocument();
+        expect(screen.queryByRole("button", { name: "Remove shot.png" })).not.toBeInTheDocument();
+        expect(screen.getAllByRole("button", { name: /^Remove / })).toHaveLength(1);
+        expect(box.value).toContain("[Image #1]");
+        expect(box.value).not.toContain("[Image #2]");
+      } finally {
+        uploads.mockRestore();
+      }
+    });
+
+    it("cancel leaves the chip and uploads nothing", async () => {
+      const user = userEvent.setup();
+      const uploads = watchUploads();
+      server.use(
+        http.post(/\/api\/pane\/[^/]+\/upload$/, () => HttpResponse.json({ ok: true, path: "/tmp/shot.png" })),
+      );
+      try {
+        await attachOne(user, uploads);
+        await user.click(screen.getByRole("button", { name: "Edit" }));
+        await user.click(await screen.findByRole("button", { name: "Cancel edit" }));
+        expect(screen.queryByRole("dialog", { name: "Edit image" })).not.toBeInTheDocument();
+        expect(uploads).toHaveBeenCalledTimes(1);
+        expect(screen.getByRole("button", { name: "Remove shot.png" })).toBeInTheDocument();
+      } finally {
+        uploads.mockRestore();
+      }
+    });
+  });
+
+  it("cancel adds no chip and does not upload or change the original file", async () => {
+    const user = userEvent.setup();
+    let uploads = 0;
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/upload$/, () => {
+        uploads += 1;
+        return HttpResponse.json({ ok: true, path: "/tmp/nope.png" });
+      }),
+    );
+    renderComposerWithStatus();
+    const original = png("shot.png");
+    pick(original);
+    await screen.findByRole("dialog", { name: "Edit image" });
+    await user.click(screen.getByRole("button", { name: "Cancel edit" }));
+
+    expect(screen.queryByRole("dialog", { name: "Edit image" })).not.toBeInTheDocument();
+    expect(uploads).toBe(0);
+    expect(screen.queryByRole("list", { name: "Attachments" })).toBeNull();
+    expect(Array.from(new Uint8Array(await original.arrayBuffer()))).toEqual([1, 2, 3, 4]);
+  });
+
+  it("a pasted image waits the same way, and a non-image still uploads immediately", async () => {
+    const user = userEvent.setup();
+    const uploads = watchUploads();
+    server.use(
+      http.get("/api/config", () =>
+        HttpResponse.json({
+          push: false,
+          vapidPublicKey: "",
+          upload: { maxBytes: 10 * 1024 * 1024, imageTypes: ["png"], textTypes: ["md"] },
+        }),
+      ),
+      http.post(/\/api\/pane\/[^/]+\/upload$/, () => HttpResponse.json({ ok: true, path: "/tmp/notes.md" })),
+    );
+    try {
+      renderComposerWithStatus();
+      await waitFor(() => expect(screen.getByTestId("attach-files")).toHaveAttribute("accept", "image/*,.png,.md"));
+      const box = screen.getByPlaceholderText(/type a reply/i);
+      const image = png("pasted.png");
+      fireEvent.paste(box, {
+        clipboardData: { items: [{ kind: "file", type: "image/png", getAsFile: () => image }] },
+      });
+      expect(await screen.findByRole("dialog", { name: "Edit image" })).toBeInTheDocument();
+      expect(uploads).not.toHaveBeenCalled();
+      await user.click(screen.getByRole("button", { name: "Cancel edit" }));
+
+      pick(new File(["# hi"], "notes.md", { type: "text/markdown" }), "attach-files");
+      await waitFor(() => expect(uploads).toHaveBeenCalledTimes(1));
+      const sent = uploads.mock.calls[0]?.[1];
+      expect(sent?.name).toBe("notes.md");
+      expect(await sent?.text()).toBe("# hi");
+      expect(screen.queryByRole("dialog", { name: "Edit image" })).not.toBeInTheDocument();
+      expect(screen.getByRole("button", { name: "Remove notes.md" })).toBeInTheDocument();
+    } finally {
+      uploads.mockRestore();
+    }
+  });
+
+  it("without a canvas the image uploads as it is, with no sheet, and a non-image uploads too", async () => {
+    canvasGate.available = false;
+    const uploads = watchUploads();
+    try {
+      server.use(
+        http.get("/api/config", () =>
+          HttpResponse.json({
+            push: false,
+            vapidPublicKey: "",
+            upload: { maxBytes: 10 * 1024 * 1024, imageTypes: ["png"], textTypes: ["md"] },
+          }),
+        ),
+        http.post(/\/api\/pane\/[^/]+\/upload$/, () => HttpResponse.json({ ok: true, path: "/tmp/notes.md" })),
+      );
+      renderComposerWithStatus();
+      await waitFor(() => expect(screen.getByTestId("attach-files")).toHaveAttribute("accept", "image/*,.png,.md"));
+      // No canvas: no editor, and the picture goes up as it is, the way it did before the editor.
+      pick(png("shot.png"));
+      await waitFor(() => expect(uploads).toHaveBeenCalledTimes(1));
+      expect(uploads.mock.calls[0]?.[1].name).toBe("shot.png");
+      expect(screen.queryByRole("dialog", { name: "Edit image" })).not.toBeInTheDocument();
+
+      pick(new File(["# hi"], "notes.md", { type: "text/markdown" }), "attach-files");
+      await waitFor(() => expect(uploads).toHaveBeenCalledTimes(2));
+      expect(uploads.mock.calls[1]?.[1].name).toBe("notes.md");
+    } finally {
+      canvasGate.available = true;
+      uploads.mockRestore();
+    }
+  });
+
+  it("does not upload an empty save or a failed prepare, and reports the failure", async () => {
+    const user = userEvent.setup();
+    let uploads = 0;
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/upload$/, () => {
+        uploads += 1;
+        return HttpResponse.json({ ok: true, path: "/tmp/nope.png" });
+      }),
+    );
+    renderComposerWithStatus();
+    pick(png("shot.png"));
+    await screen.findByRole("dialog", { name: "Edit image" });
+    await user.click(screen.getByRole("button", { name: "Save empty" }));
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent(/nothing was attached/));
+    expect(uploads).toBe(0);
+    expect(screen.getByRole("dialog", { name: "Edit image" })).toBeInTheDocument();
+
+    // An exported PNG that exceeds the upload size limit keeps the editor open so the user can crop smaller.
+    act(() => {
+      imageEditHarness.lastConfirm?.(
+        new File([new Uint8Array(10 * 1024 * 1024 + 1)], "oversize.png", { type: "image/png" }),
+      );
+    });
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent(/too large|10 MB/i));
+    expect(uploads).toBe(0);
+    expect(screen.getByRole("dialog", { name: "Edit image" })).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: "Fail edit" }));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit image" })).not.toBeInTheDocument());
+    expect(uploads).toBe(0);
+    expect(screen.queryByRole("list", { name: "Attachments" })).toBeNull();
+  });
+
+  it("reports an upload error and adds no chip", async () => {
+    const user = userEvent.setup();
+    server.use(http.post(/\/api\/pane\/[^/]+\/upload$/, () => new HttpResponse("nope", { status: 500 })));
+    renderComposerWithStatus();
+    pick(png("shot.png"));
+    await user.click(await screen.findByRole("button", { name: "Use this image" }));
+    await waitFor(() => expect(screen.getByTestId("status").textContent ?? "").not.toBe(""));
+    expect(screen.queryByRole("button", { name: /Remove / })).not.toBeInTheDocument();
+  });
+
+  it("edits a multi-image pick one at a time and uploads each only after its confirm", async () => {
+    const user = userEvent.setup();
+    const uploads = watchUploads();
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/upload$/, () => HttpResponse.json({ ok: true, path: "/tmp/one.png" })),
+    );
+    try {
+      renderComposer();
+      // SAFETY: getByTestId throws when the element is absent, and this id is on an <input>.
+      const input = screen.getByTestId("attach-photos") as HTMLInputElement;
+      fireEvent.change(input, { target: { files: [png("a.png"), png("b.png", [9])] } });
+      expect(await screen.findByRole("dialog", { name: "Edit image" })).toBeInTheDocument();
+      expect(uploads).not.toHaveBeenCalled();
+      await user.click(screen.getByRole("button", { name: "Use this image" }));
+      await waitFor(() => expect(uploads).toHaveBeenCalledTimes(1));
+      expect(await uploads.mock.calls[0]?.[1].text()).toBe("EDITED-BYTES");
+      expect(await screen.findByRole("dialog", { name: "Edit image" })).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Use this image" }));
+      await waitFor(() => expect(uploads).toHaveBeenCalledTimes(2));
+      expect(await uploads.mock.calls[1]?.[1].text()).toBe("EDITED-BYTES");
+    } finally {
+      uploads.mockRestore();
+    }
+  });
+
+  it("drops an open edit on a pane change, and a late confirm does not upload to the new pane", async () => {
+    let uploads = 0;
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/upload$/, () => {
+        uploads += 1;
+        return HttpResponse.json({ ok: true, path: "/tmp/late.png" });
+      }),
+    );
+    let swap: ((id: string) => void) | null = null;
+    function Harness() {
+      const [paneId, setPaneId] = useState("w1:p1");
+      swap = setPaneId;
+      return (
+        <Composer
+          paneId={paneId}
+          agent="claude"
+          isShell={false}
+          gone={false}
+          readOnly={false}
+          surface={{ revision: 1, turn: "idle", modal: "none", composer: "empty" }}
+          text="pane output"
+          terminalDraft={null}
+          rawTerminalDraft={null}
+          prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, chatFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, stretchText: false }}
+          display={{ open: false, onToggle: vi.fn() }}
+          onSent={vi.fn()}
+        />
+      );
+    }
+    render(
+      <RouterProvider router={createMemoryRouter([{ path: "/", element: <Harness /> }])} />,
+    );
+    pick(png("shot.png"));
+    await screen.findByRole("dialog", { name: "Edit image" });
+    act(() => swap?.("w1:p2"));
+    await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit image" })).not.toBeInTheDocument());
+    imageEditHarness.lastConfirm?.(new File(["LATE"], "late.png", { type: "image/png" }));
+    await act(async () => {
+      await Promise.resolve();
+    });
+    expect(uploads).toBe(0);
+    expect(screen.queryByRole("list", { name: "Attachments" })).toBeNull();
+  });
+
+  it("does not open the editor for a read-only, gone, or stale composer", async () => {
+    let uploads = 0;
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/upload$/, () => {
+        uploads += 1;
+        return HttpResponse.json({ ok: true, path: "/tmp/nope.png" });
+      }),
+    );
+    renderComposerWithStatus({ readOnly: true });
+    pick(png("shot.png"));
+    expect(screen.queryByRole("dialog", { name: "Edit image" })).not.toBeInTheDocument();
+    expect(uploads).toBe(0);
+
+    cleanup();
+    renderComposerWithStatus({ gone: true });
+    // SAFETY: getByTestId throws when the element is absent, and this id is on an <input>.
+    const goneInput = screen.getByTestId("attach-photos") as HTMLInputElement;
+    fireEvent.change(goneInput, { target: { files: [png("other.png")] } });
+    expect(screen.queryByRole("dialog", { name: "Edit image" })).not.toBeInTheDocument();
+
+    cleanup();
+    renderComposerWithStatus({ stale: true });
+    // SAFETY: getByTestId throws when the element is absent, and this id is on an <input>.
+    const staleInput = screen.getByTestId("attach-photos") as HTMLInputElement;
+    fireEvent.change(staleInput, { target: { files: [png("stale.png")] } });
+    await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent(/Reconnect to send/));
+    expect(screen.queryByRole("dialog", { name: "Edit image" })).not.toBeInTheDocument();
+    expect(uploads).toBe(0);
+  });
+
+  it("holds reload continuously from opening the editor through upload completion, survives transient offline blips, and remounts for identical file metadata", async () => {
+    const user = userEvent.setup();
+    __resetReloadGuard();
+    const holdStates: boolean[] = [];
+    const unsubscribe = subscribeReloadHeld(() => {
+      holdStates.push(isReloadHeld());
+    });
+    let setStaleProp: ((stale: boolean) => void) | null = null;
+    function OfflineHarness() {
+      const [stale, setStale] = useState(false);
+      setStaleProp = setStale;
+      return (
+        <>
+          <StatusSentinel />
+          <Composer
+            paneId="w1:p1"
+            agent="claude"
+            isShell={false}
+            gone={false}
+            readOnly={false}
+            stale={stale}
+            surface={FREE}
+            text="pane output"
+            terminalDraft={null}
+            rawTerminalDraft={null}
+            prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, chatFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, stretchText: false }}
+            display={{ open: false, onToggle: vi.fn() }}
+            onSent={vi.fn()}
+          />
+        </>
+      );
+    }
+
+    let uploads = 0;
+    let resolvePendingUpload: (() => void) | null = null;
+    server.use(
+      http.post(/\/api\/pane\/[^/]+\/upload$/, async () => {
+        uploads += 1;
+        if (uploads === 1) {
+          await new Promise<void>((resolve) => {
+            resolvePendingUpload = resolve;
+          });
+          return new HttpResponse("upload failed", { status: 500 });
+        }
+        return HttpResponse.json({ ok: true, path: `/tmp/shot-${uploads}.png` });
+      }),
+    );
+
+    try {
+      render(
+        <RouterProvider router={createMemoryRouter([{ path: "/", element: <OfflineHarness /> }])} />,
+      );
+      expect(isReloadHeld()).toBe(false);
+
+      const firstFile = new File(["same-bytes"], "clipboard.png", { type: "image/png", lastModified: 1700000000000 });
+      pick(firstFile);
+      const firstDialog = await screen.findByRole("dialog", { name: "Edit image" });
+      expect(isReloadHeld()).toBe(true);
+
+      // Transient offline blip while editing must not close the local editor; confirming while offline
+      // reports Reconnect and keeps the editor open until online returns.
+      act(() => setStaleProp?.(true));
+      expect(screen.getByRole("dialog", { name: "Edit image" })).toBe(firstDialog);
+      await user.click(screen.getByRole("button", { name: "Use this image" }));
+      await waitFor(() => expect(screen.getByTestId("status")).toHaveTextContent(/Reconnect to send/));
+      expect(uploads).toBe(0);
+      expect(screen.getByRole("dialog", { name: "Edit image" })).toBe(firstDialog);
+
+      act(() => setStaleProp?.(false));
+      holdStates.length = 0;
+      await user.click(screen.getByRole("button", { name: "Use this image" }));
+      await waitFor(() => expect(uploads).toBe(1));
+      // Hold never dropped to false between confirmEdit and uploadFile:
+      expect(holdStates).not.toContain(false);
+      expect(isReloadHeld()).toBe(true);
+
+      // While the first upload is still pending, picking and cancelling a second image must NOT
+      // release the first upload's reload hold or uploading state.
+      pick(new File(["second"], "second.png", { type: "image/png" }));
+      expect(await screen.findByRole("dialog", { name: "Edit image" })).toBeInTheDocument();
+      await user.click(screen.getByRole("button", { name: "Cancel edit" }));
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit image" })).not.toBeInTheDocument());
+      expect(isReloadHeld()).toBe(true);
+      expect(holdStates).not.toContain(false);
+
+      // Once the first upload finishes (with 500 so no draft chip is added), `uploading` clears to
+      // false and the reload hold releases cleanly.
+      act(() => resolvePendingUpload?.());
+      await waitFor(() => expect(isReloadHeld()).toBe(false));
+
+      // Back-to-back files in a single batch with identical name, size, and lastModified must mount
+      // a fresh ImageEditor instance for the second file (monotonic session key).
+      const mountsBeforeBatch = imageEditHarness.mounts;
+      const sameMetaA = new File(["same-bytes"], "clipboard.png", { type: "image/png", lastModified: 1700000000000 });
+      const sameMetaB = new File(["same-bytes"], "clipboard.png", { type: "image/png", lastModified: 1700000000000 });
+      // SAFETY: getByTestId throws when the element is absent, and this id is on an <input>.
+      const photoInput = screen.getByTestId("attach-photos") as HTMLInputElement;
+      fireEvent.change(photoInput, { target: { files: [sameMetaA, sameMetaB] } });
+      expect(await screen.findByRole("dialog", { name: "Edit image" })).toBeInTheDocument();
+      expect(imageEditHarness.mounts).toBe(mountsBeforeBatch + 1);
+      await user.click(screen.getByRole("button", { name: "Cancel edit" }));
+      await waitFor(() => expect(imageEditHarness.mounts).toBe(mountsBeforeBatch + 2));
+      await user.click(screen.getByRole("button", { name: "Cancel edit" }));
+      await waitFor(() => expect(screen.queryByRole("dialog", { name: "Edit image" })).not.toBeInTheDocument());
+      expect(isReloadHeld()).toBe(false);
+    } finally {
+      unsubscribe();
+    }
   });
 });
 
@@ -4212,7 +4961,7 @@ describe("outcome at the thumb", () => {
   // Send drill 2 (Codex on Herdr, 2026-10-16): a typed_not_submitted on a pane with no frame showed the
   // typed sentence with only Take over and Open Keys. Submit and Discard show for every reason, and each
   // carries the rows hash of the answer, so the bridge acts only on the screen the person saw.
-  it.each(["mismatch", "changed", "modal_cue", "stale_token", "submit_failed"] as const)(
+  it.each(["mismatch", "changed", "modal_cue", "stale_token", "submit_failed", "dialog_open", "unreadable"] as const)(
     "typed_not_submitted %s with no frame: Submit and Discard show, and Submit carries the rows hash it was offered with",
     async (reason) => {
       const user = await send(() => sendAnswer("x", "typed_not_submitted", reason, { offers: offersFor("typed_not_submitted", reason, false), rowsHash: "0f00ba", surface: SURFACES.noMatch }));
@@ -4308,6 +5057,33 @@ describe("outcome at the thumb", () => {
     expect(screen.getByRole("textbox")).toHaveValue("hello there plus more");
   });
 
+  it("unknown, a paste chip's text is edited in the sheet, then the sent text lands: the notice retires, the edited chip stays (#511)", async () => {
+    server.use(...sendHandler(() => sendAnswer("x", "unknown", "no_evidence", { offers: ["keys"] })));
+    const user = userEvent.setup();
+    const { land } = renderComposerWithEntries();
+    const box = screen.getByRole("textbox");
+    const longText = "line 1\nline 2\nline 3\nline 4\nline 5";
+    fireEvent.paste(box, {
+      clipboardData: {
+        items: [],
+        getData: (type: string) => (type === "text/plain" ? longText : ""),
+      },
+    });
+    await waitFor(() => expect(box).toHaveValue("[Pasted #1] "));
+    await user.click(screen.getByRole("button", { name: "Send" }));
+    await waitFor(() => expect(refusalText()).toMatch(/read the screen, then send again/i));
+
+    await user.click(screen.getByRole("button", { name: "Edit pasted text #1" }));
+    const sheetEditor = screen.getByRole("textbox", { name: "Edit pasted text #1" });
+    fireEvent.change(sheetEditor, { target: { value: "updated 1\nupdated 2\nupdated 3\nupdated 4\nupdated 5" } });
+    await user.click(screen.getByRole("button", { name: "Close" }));
+
+    land(userTurn(longText, "turn-1"));
+    await waitFor(() => expect(refusalText()).toBe(""));
+    expect(box).toHaveValue("[Pasted #1] ");
+    expect(screen.getByRole("button", { name: "Edit pasted text #1" })).toHaveTextContent("5 lines · 49 chars");
+  });
+
   it("no answer: says so at the thumb, keeps the draft and the request id, and the retry does not send twice", async () => {
     server.use(http.post("/api/send", () => new HttpResponse("down", { status: 502 })));
     const user = userEvent.setup();
@@ -4334,7 +5110,7 @@ describe("outcome at the thumb", () => {
 
   it("every closed outcome and reason lands at the thumb, and none of them puts an action in the header", async () => {
     const outcomeOf = (reason: SendReason): string =>
-      ["mismatch", "changed", "modal_cue", "stale_token", "submit_failed"].includes(reason)
+      ["mismatch", "changed", "modal_cue", "stale_token", "submit_failed", "dialog_open", "unreadable"].includes(reason)
         ? "typed_not_submitted"
         : ["crash", "lost_lock", "no_evidence"].includes(reason)
           ? "unknown"
@@ -4350,13 +5126,13 @@ describe("outcome at the thumb", () => {
       cleanup();
       clearStatus();
     }
-  }, 20_000);
+  }, 60_000);
 
   it("a send with no link says Reconnect to send on the Send slot, keeps the draft, and the header stays empty", async () => {
     const user = userEvent.setup();
     renderState("offline");
     await user.type(screen.getByRole("textbox"), "later");
-    expect(screen.getByRole("button", { name: "Reconnect to send" })).toBeDisabled();
+    expect(screen.getByRole("button", { name: "Reconnect to send" })).toHaveAttribute("aria-disabled", "true");
     expect(screen.getByRole("textbox")).toHaveValue("later");
     expect(recordedSends()).toEqual([]);
     expect(header()).toBe("");
@@ -4790,6 +5566,32 @@ describe("Composer agents mark and sheet", () => {
     expect(screen.getByRole("dialog", { name: "Agents 2" })).toBeInTheDocument();
   });
 
+  it("draws a journal row (no transcript) as a plain row, not a tap, and opens nothing", async () => {
+    // Oh My Pi's and Gentle Shell's jobs reach the list from the session's journal, and no route
+    // serves their log: the row is drawn the same, without a button.
+    const user = userEvent.setup();
+    const open = vi.fn<(t: SubagentTarget) => void>();
+    const sync = vi.fn<(t: SubagentTarget) => void>();
+    const journal: PaneSubagent[] = [
+      { agentId: "LabFix", agentType: "task", description: "count the files in the lab", transcript: false },
+      RUNNING[0]!,
+    ];
+    const router = createMemoryRouter([{ path: "/", element: <SheetHost subagents={journal} open={open} sync={sync} /> }]);
+    render(<RouterProvider router={router} />);
+
+    await user.click(screen.getByRole("button", { name: "Agents 2" }));
+    const sheet = screen.getByRole("dialog", { name: "Agents 2" });
+    const rows = sheet.querySelectorAll<HTMLElement>('[data-slot="belt-subagent"]');
+    expect(rows).toHaveLength(2);
+    expect(rows[0]!.tagName).toBe("DIV");
+    expect(within(rows[0]!).getByText("Agent · task")).toBeInTheDocument();
+    expect(within(rows[0]!).getByText("count the files in the lab")).toBeInTheDocument();
+    expect(rows[1]!.tagName).toBe("BUTTON");
+    await user.click(rows[0]!);
+    expect(open).not.toHaveBeenCalled();
+    expect(within(sheet).getAllByRole("button").filter((b) => b.dataset.slot === "belt-subagent")).toHaveLength(1);
+  });
+
   it("tells the open sheet the subagent ended once it leaves the running list", async () => {
     const user = userEvent.setup();
     const open = vi.fn<(t: SubagentTarget) => void>();
@@ -4809,6 +5611,158 @@ describe("Composer agents mark and sheet", () => {
     act(() => setList([RUNNING[1]!]));
     await waitFor(() => expect(sync).toHaveBeenCalledTimes(1));
     expect(sync.mock.calls[0]![0]).toMatchObject({ agentId: "acc7972eef92651f4", status: "done" });
+  });
+});
+
+describe("Composer jobs mark and sheet (issue 670)", () => {
+  const NOW = Date.parse("2026-11-03T12:00:00.000Z");
+  const iso = (ms: number) => new Date(ms).toISOString();
+  const JOBS: PaneJob[] = [
+    { id: "job-1", label: "suite", command: "bun test", startedAt: iso(NOW - 4 * 60_000) },
+    { id: "job-2", label: "lint", command: "bun run lint", startedAt: iso(NOW - 6 * 60_000), exitCode: 1, endedAt: iso(NOW - 60_000) },
+  ];
+
+  it("has no jobs mark when the pane carries no jobs", () => {
+    renderComposer();
+    expect(document.querySelector('[data-slot="belt-jobs"]')).toBeNull();
+    cleanup();
+    renderComposer({ jobs: [] });
+    expect(document.querySelector('[data-slot="belt-jobs"]')).toBeNull();
+  });
+
+  it("names the mark by the running count, stands it in the fixed block, and opens the sheet with both groups", async () => {
+    vi.useFakeTimers({ now: NOW, shouldAdvanceTime: true });
+    try {
+      const user = userEvent.setup({ advanceTimers: vi.advanceTimersByTime });
+      renderComposer({ jobs: JOBS, changesPill: { onClick: vi.fn(), label: "Files" } });
+      const mark = screen.getByRole("button", { name: "Jobs 1" });
+      expect(mark).toHaveAttribute("data-slot", "belt-jobs");
+      const scroller = document.querySelector<HTMLElement>('[data-slot="composer-controls"]')!;
+      expect(scroller.contains(mark)).toBe(false);
+      expect(mark.querySelector('[data-slot="belt-jobs-count"]')!.textContent).toBe("1");
+
+      await user.click(mark);
+      expect(mark).toHaveAttribute("aria-expanded", "true");
+      const sheet = screen.getByRole("dialog", { name: "Jobs 1" });
+      expect(within(sheet).getByText("bun test")).toBeInTheDocument();
+      expect(within(sheet).getByText("4m")).toBeInTheDocument();
+      expect(within(sheet).getByText("Exit code 1")).toBeInTheDocument();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("stays, with no badge, while only ended jobs are listed", () => {
+    renderComposer({ jobs: [JOBS[1]!] });
+    const mark = screen.getByRole("button", { name: "Jobs 0" });
+    expect(mark.querySelector('[data-slot="belt-jobs-count"]')).toBeNull();
+  });
+});
+
+describe("Composer pins mark and sheet (M90 spec 03)", () => {
+  afterEach(() => __resetBeltIntents());
+  const NOW = Date.now();
+  const ROWS: PinRow[] = [
+    { id: "p1", itemId: "t1:0", kind: "user", excerpt: "what changed today?", textLength: 19, anchor: "what changed today?", pinnedAt: NOW - 120_000 },
+    { id: "p2", itemId: "t2:1", kind: "reply", excerpt: "One commit: abc1234.", textLength: 20, anchor: "One commit", pinnedAt: NOW - 60_000 },
+  ];
+
+  /** A composer whose pins list the test can empty, the way the pane view's hook does after an Unpin. */
+  function Pinned({ onShow, onOpened }: { onShow?: (pin: PinRow) => boolean; onOpened?: () => void }) {
+    const [rows, setRows] = useState<readonly PinRow[]>(ROWS);
+    return (
+      <Composer
+        paneId="w1:p1"
+        agent="claude"
+        isShell={false}
+        gone={false}
+        readOnly={false}
+        surface={FREE}
+        text="pane output"
+        terminalDraft={null}
+        rawTerminalDraft={null}
+        prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, chatFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, stretchText: false }}
+        display={{ open: false, onToggle: vi.fn() }}
+        onSent={vi.fn()}
+        changesPill={{ onClick: vi.fn(), label: "Files" }}
+        pins={{
+          count: rows.length,
+          rows,
+          onUnpin: (id) => setRows((held) => held.filter((row) => row.id !== id)),
+          onOpened: onOpened ?? vi.fn(),
+          onShow: onShow ?? (() => true),
+        }}
+      />
+    );
+  }
+  const mountPinned = (props: ComponentProps<typeof Pinned> = {}) =>
+    render(<RouterProvider router={createMemoryRouter([{ path: "/", element: <Pinned {...props} /> }])} />);
+
+  it("has no pins mark when the pane passes no pins, or none are left", () => {
+    renderComposer();
+    expect(document.querySelector('[data-slot="belt-pins"]')).toBeNull();
+    cleanup();
+    renderComposer({ pins: { count: 0, rows: [], onUnpin: vi.fn(), onOpened: vi.fn(), onShow: () => true } });
+    expect(document.querySelector('[data-slot="belt-pins"]')).toBeNull();
+  });
+
+  it("names the mark by the count, stands it in the fixed block left of Files, and opens the sheet with the list", async () => {
+    const user = userEvent.setup();
+    const onOpened = vi.fn();
+    mountPinned({ onOpened });
+    const mark = screen.getByRole("button", { name: "2 pinned" });
+    expect(mark).toHaveAttribute("data-slot", "belt-pins");
+    expect(mark.querySelector('[data-slot="belt-pins-count"]')!.textContent).toBe("2");
+    const scroller = document.querySelector<HTMLElement>('[data-slot="composer-controls"]')!;
+    expect(scroller.contains(mark)).toBe(false);
+    const files = screen.getByRole("button", { name: "Files" });
+    expect(Array.from(files.parentElement!.querySelectorAll("button")).map((b) => b.getAttribute("aria-label"))).toEqual(["2 pinned", "Files"]);
+    expect(onOpened).not.toHaveBeenCalled();
+
+    await user.click(mark);
+    expect(mark).toHaveAttribute("aria-expanded", "true");
+    const sheet = screen.getByRole("dialog", { name: "Pinned messages" });
+    expect(within(sheet).getByText("One commit: abc1234.")).toBeInTheDocument();
+    expect(within(sheet).getByText("what changed today?")).toBeInTheDocument();
+    expect(onOpened).toHaveBeenCalledTimes(1);
+  });
+
+  it("closes the sheet and takes the mark away after the last Unpin", async () => {
+    const user = userEvent.setup();
+    mountPinned();
+    await user.click(screen.getByRole("button", { name: "2 pinned" }));
+    const sheet = screen.getByRole("dialog", { name: "Pinned messages" });
+    await user.click(within(sheet).getAllByRole("button", { name: "Unpin" })[0]!);
+    expect(screen.getByRole("button", { name: "1 pinned" })).toBeInTheDocument();
+    await user.click(within(screen.getByRole("dialog", { name: "Pinned messages" })).getByRole("button", { name: "Unpin" }));
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await waitFor(() => expect(document.querySelector('[data-slot="belt-pins"]')).toBeNull());
+  });
+
+  it("moves focus to the belt when the last Unpin takes the sheet and the mark away", async () => {
+    const user = userEvent.setup();
+    mountPinned();
+    await user.click(screen.getByRole("button", { name: "2 pinned" }));
+    for (let left = 2; left > 0; left -= 1) {
+      const sheet = screen.getByRole("dialog", { name: "Pinned messages" });
+      await user.click(within(sheet).getAllByRole("button", { name: "Unpin" })[0]!);
+    }
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    const belt = document.querySelector('[data-slot="composer-actions"]')!;
+    await waitFor(() => expect(belt.contains(document.activeElement)).toBe(true));
+  });
+
+  it("opens the sheet for a pins intent a column's tap left, once", async () => {
+    queueBeltIntent(paneScopeKey(undefined, "w1:p1"), { kind: "pins" });
+    mountPinned();
+    expect(await screen.findByRole("dialog", { name: "Pinned messages" })).toBeInTheDocument();
+    expect(takeBeltIntent(paneScopeKey(undefined, "w1:p1"))).toBeNull();
+  });
+
+  it("ignores a pins intent when the pane holds no pins", () => {
+    queueBeltIntent(paneScopeKey(undefined, "w1:p1"), { kind: "pins" });
+    renderComposer();
+    expect(screen.queryByRole("dialog")).toBeNull();
   });
 });
 
@@ -4875,3 +5829,63 @@ describe("Composer command suggestions (#458)", () => {
   });
 });
 
+
+
+describe("Composer — known launch startup send-lock", () => {
+  it("keeps a local draft editable and blocks button, keyboard and Quick without a request", async () => {
+    const user = userEvent.setup();
+    const typed = vi.fn();
+    server.use(...replyHandler(typed));
+    const props = renderComposer({ starting: true });
+    const box = screen.getByPlaceholderText(/type a reply/i);
+    expect(box).not.toBeDisabled();
+    await user.type(box, "keep this draft");
+    expect(screen.getByText("Starting…")).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Send$/ })).toHaveAttribute("aria-disabled", "true");
+    fireEvent.keyDown(box, { key: "Enter", ctrlKey: true });
+    await user.click(screen.getByRole("button", { name: "Quick" }));
+    await user.click(screen.getByRole("button", { name: "continue" }));
+    expect(typed).not.toHaveBeenCalled();
+    expect(props.onSent).not.toHaveBeenCalled();
+    expect(box).toHaveValue("keep this draft");
+    expect(loadDraft(undefined, props.paneId)).toBe("keep this draft");
+    expect(screen.getByRole("button", { name: "Type into terminal" })).not.toBeDisabled();
+    await user.click(screen.getByRole("button", { name: "Keys" }));
+    expect(screen.getByRole("button", { name: "Esc" })).not.toBeDisabled();
+  });
+
+  it("startup never unlocks a genuine read-only or unreachable composer", () => {
+    renderComposer({ starting: true, readOnly: true });
+    expect(screen.getByPlaceholderText(/read.only/i)).toBeDisabled();
+    cleanup();
+    renderComposer({ starting: true, surface: { ...FREE, composer: "unreachable" }, unreachableNote: "Sending is off" });
+    expect(screen.getByPlaceholderText("Sending is off")).toBeDisabled();
+  });
+
+  it("startup also blocks an already-offered protocol commit without losing its draft", async () => {
+    const user = userEvent.setup();
+    const typed = vi.fn();
+    server.use(...replyHandler(typed, undefined, (request) => sendAnswer(request.id, "refused", "unconfirmed", { offers: ["commit"], rowsHash: "abc", surface: { ...FREE, composer: "unknown", modal: "unknown", reason: "no-match" } })));
+    let lock = () => {};
+    function View() {
+      const [starting, setStarting] = useState(false);
+      lock = () => setStarting(true);
+      return <Composer paneId="offer:p1" agent="kiro" isShell={false} gone={false} readOnly={false} surface={FREE} starting={starting}
+        text="pane output" terminalDraft={null} rawTerminalDraft={null}
+        prefs={{ wrap: true, fontSize: 11, draftFontSize: 14, chatFontSize: 14, fontFamily: "system", rawTerminal: false, tapToFocus: true, expandClippedReply: true, stretchText: false }}
+        display={{ open: false, onToggle: vi.fn() }} onSent={vi.fn()} />;
+    }
+    const router = createMemoryRouter([{ path: "/", element: <View /> }]);
+    render(<RouterProvider router={router} />);
+    const box = screen.getByRole("textbox");
+    await user.type(box, "offered draft");
+    await user.click(screen.getByRole("button", { name: /^Send$/ }));
+    await screen.findByRole("button", { name: "Type here" });
+    act(lock);
+    const commit = screen.getByRole("button", { name: "Type here" });
+    expect(commit).toBeDisabled();
+    await user.click(commit);
+    expect(typed).toHaveBeenCalledOnce();
+    expect(box).toHaveValue("offered draft");
+  });
+});

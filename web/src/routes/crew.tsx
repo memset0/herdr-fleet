@@ -1,7 +1,7 @@
+import { Icon } from "@/components/icons/icon";
 import type { ReactNode } from "react";
-import { useId, useState } from "react";
+import { useId, useMemo, useState } from "react";
 import { createPortal } from "react-dom";
-import { Activity, ArrowLeft, Crown, Network, Shield } from "lucide-react";
 import { useLoaderData } from "react-router";
 
 import { RouteHeader } from "@/components/app-header";
@@ -10,18 +10,27 @@ import { Card } from "@/components/ui/card";
 import { ListGroup } from "@/components/ui/list-group";
 import { BottomSheet } from "@/components/ui/sheet";
 import { useCrew } from "@/components/crew-provider";
-import { healthTone, healthWord, CrewFormation } from "@/components/crew-formation";
+import { asServerSummary, healthTone, healthWord, CrewFormation } from "@/components/crew-formation";
+import { CrewMachines } from "@/components/crew-machines";
 import { useLocale } from "@/hooks/use-locale";
 import { useNav } from "@/hooks/use-nav";
 import { timeAgoShort } from "@/lib/format";
+import type { HostHealth } from "@/lib/host-health";
 import { hostCounts } from "@/lib/hosts";
+import { groupByHost, hasSharedHost, type Machine } from "@/lib/machines";
 import { t } from "@/lib/i18n";
 import { type CrewData } from "@/lib/loaders";
 import { homePath, machinePath } from "@/lib/nav";
 import { usePairing } from "@/lib/pairing";
 import { useOptionalRootData } from "@/lib/route-data";
 import { useScope } from "@/lib/session";
-import { isReadOnly, type AgentView, type CrewMemberStatus, type CrewStatusResponse } from "@/lib/types";
+import {
+  isReadOnly,
+  type AgentView,
+  type CrewMemberStatus,
+  type CrewStatusResponse,
+  type ServerSummary,
+} from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { BandMain } from "@/components/ui/strip-host";
 import { WalkyBroadcastSheet } from "@/components/walky-broadcast-sheet";
@@ -64,7 +73,7 @@ export function CrewRoute() {
   // TIER-2 health, derived once at the data root against the lead's clock — the same map the
   // ServerSwitcher's rows read, so the two surfaces cannot disagree about a member. See
   // `memberHealth` in crew-formation.tsx for a mount without a provider.
-  const { health, servers } = useCrew();
+  const { health, servers, lead } = useCrew();
   // SAFETY: `crewLoader` returns `CrewData` for this route; `undefined` is what React Router hands
   // back for a harness that mounts the route without its loader, which the `??` below covers. A
   // data-mode `useLoaderData()` is typed `unknown` and cannot be narrowed any other way.
@@ -73,6 +82,9 @@ export function CrewRoute() {
   // re-widens at every closure boundary.
   const status = data.status;
   const counts = hostCounts(root?.agents ?? NO_AGENTS);
+  // The live panes, so the broadcast sheet's receipts name a session by its pane name (M80 spec 12).
+  const rootAgents = root?.agents;
+  const live = useMemo(() => ({ panes: rootAgents ?? NO_AGENTS, lead }), [rootAgents, lead]);
   // The open sheet holds the member ID, not the member: the loader revalidates underneath an open
   // sheet on every poll, and a held object would go on rendering the census as it was when tapped.
   const [openId, setOpenId] = useState<string | null>(null);
@@ -84,6 +96,9 @@ export function CrewRoute() {
   const mayNotSend = isReadOnly(root?.device) || notPaired;
   const mayNotSendId = useId();
   const selected = status?.members.find((m) => m.id === openId) ?? null;
+  // One card per MACHINE once some host runs two instances (M77); until then the formation, as before.
+  const machines = status === null ? NO_MACHINES : crewMachines(status, servers, health);
+  const grouped = hasSharedHost(machines);
 
   return (
     <div className="flex min-h-0 w-full flex-1 flex-col">
@@ -108,7 +123,7 @@ export function CrewRoute() {
               onClick={() => nav.up(homePath(scope))}
               aria-label={t("crew.nav.back")}
             >
-              <ArrowLeft className="size-5" />
+              <Icon name="back" className="size-5" />
             </Button>
             <h1 className="min-w-0 truncate text-lg font-semibold tracking-tight">{t("crew.title")}</h1>
           </>
@@ -123,13 +138,23 @@ export function CrewRoute() {
         {status === null ? (
           <EmptyCard error={data.error} />
         ) : (
-          <CrewFormation
-            status={status}
-            health={health}
-            counts={counts}
-            servers={servers}
-            onSelect={(m) => setOpenId(m.id)}
-          />
+          grouped ? (
+            <CrewMachines
+              status={status}
+              machines={machines}
+              counts={counts}
+              servers={servers}
+              onSelect={(m) => setOpenId(m.id)}
+            />
+          ) : (
+            <CrewFormation
+              status={status}
+              health={health}
+              counts={counts}
+              servers={servers}
+              onSelect={(m) => setOpenId(m.id)}
+            />
+          )
         )}
         {status !== null && (
           // The lead's line is the crew's line (M60 spec 01, ADR 0110): members take the lead's line
@@ -164,7 +189,7 @@ export function CrewRoute() {
           this route's scrolling `<main>` is a containing block that would otherwise clip it. */}
       {status !== null &&
         createPortal(
-          <WalkyBroadcastSheet open={messaging} onClose={() => setMessaging(false)} members={status.members} />,
+          <WalkyBroadcastSheet open={messaging} onClose={() => setMessaging(false)} members={status.members} live={live} />,
           document.body,
         )}
       {status !== null &&
@@ -208,6 +233,24 @@ export function CrewRoute() {
 // sits at module scope).
 const EMPTY_CREW: CrewData = { status: null, error: false };
 const NO_AGENTS: AgentView[] = [];
+const NO_MACHINES: Machine[] = [];
+
+/**
+ * The census grouped by host. A member's own `host` and `mux` win; a lead that does not send them yet
+ * lets the snapshot's roster row fill them in, so the page groups as soon as either side knows.
+ */
+function crewMachines(
+  status: CrewStatusResponse,
+  servers: readonly ServerSummary[],
+  health: ReadonlyMap<string, HostHealth>,
+): Machine[] {
+  const rows = status.members.map((m) => {
+    const row = asServerSummary(m);
+    const known = servers.find((s) => s.id === m.id);
+    return { ...row, host: row.host ?? known?.host, mux: row.mux ?? known?.mux };
+  });
+  return groupByHost(rows, { health, deputyId: status.deputy?.id ?? null });
+}
 
 /**
  * One machine's paperwork — everything the formation's node had no room for.
@@ -244,9 +287,9 @@ function MemberSheet({
         // is reserved for shapes whose width equals their height.
         <span className="flex w-fit items-center gap-1 rounded-md bg-muted px-2 py-0.5 text-[10px] font-medium label-caps text-muted-foreground">
           {member.isLead ? (
-            <Crown className="size-2.5" aria-hidden />
+            <Icon name="role-lead" className="size-2.5" aria-hidden />
           ) : (
-            <Shield className="size-2.5" aria-hidden />
+            <Icon name="role-deputy" className="size-2.5" aria-hidden />
           )}
           {member.isLead ? t("connection.host.lead") : t("crew.role.deputy")}
         </span>
@@ -356,7 +399,7 @@ function MemberSheet({
       {/* Where its load, history and alert rules live. A link to the page, never a switch of machine:
           "Go to this machine" below is the one that moves the phone. */}
       <Button variant="outline" className="w-full" onClick={onLoad}>
-        <Activity className="size-4" aria-hidden />
+        <Icon name="machine-activity" className="size-4" aria-hidden />
         {t("machines.memberSheet.link")}
       </Button>
       <Button className="w-full" onClick={onGo}>
@@ -371,7 +414,7 @@ function EmptyCard({ error }: { error: boolean }) {
   return (
     <Card className="gap-0 py-0">
       <div className="flex items-start gap-3 p-4">
-        <Network className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+        <Icon name="crew" className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
         <div className="min-w-0">
           <div className="font-medium">{error ? t("crew.error.title") : t("crew.solo.title")}</div>
           <p className="text-sm text-muted-foreground">

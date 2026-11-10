@@ -251,6 +251,24 @@ describe("update card — what it says before anything happens", () => {
     expect(screen.getByText("Dismissed until the next digest.")).toBeInTheDocument();
     expect(screen.getByText(/Running 1\.3\.0/)).toBeInTheDocument();
   });
+
+  it("on Edge there is no digest: the button and its receipt name the next build, and the snooze is the same call", async () => {
+    const user = userEvent.setup();
+    let snoozed = false;
+    server.use(
+      http.post("/api/update/snooze", () => {
+        snoozed = true;
+        return HttpResponse.json(info());
+      }),
+    );
+    renderCard(info({ line: "edge" }));
+    expect(await screen.findByRole("button", { name: "Remind me at the next build" })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Remind me next digest" })).not.toBeInTheDocument();
+    await user.click(screen.getByRole("button", { name: "Remind me at the next build" }));
+    await waitFor(() => expect(snoozed).toBe(true));
+    expect(screen.getByText("Dismissed until the next Edge build.")).toBeInTheDocument();
+    expect(screen.queryByText("Dismissed until the next digest.")).not.toBeInTheDocument();
+  });
 });
 
 // ── WHAT THE RELEASES CHANGED (1.21.1) ─────────────────────────────────────────────────────────
@@ -1076,9 +1094,17 @@ describe("the action row while an update is being asked for and driven", () => {
 
   it("keeps the button on screen — disabled — for the whole run, instead of unmounting it", async () => {
     renderCard(info({ run: runAt("restarting") }));
+    // WAIT FOR THE RUN TO LAND BEFORE ASKING ABOUT THE BUTTON. The card hands the loader's run to the
+    // store from an effect (`noteSnapshotRun`), and the store's own read of `/api/update/check`
+    // carries no run. When that read answers first, `checked` is true and `run` is still undefined,
+    // so the button is on screen with its real label and ENABLED for one render, and `findByRole`
+    // resolves on exactly that render. The restarting sentence is the first thing only the run can
+    // put on screen, so once it is there `moving` is true and the button cannot be anything but
+    // disabled. Found on a pinned single core under load (about one run in ten); passes alone.
+    expect(await screen.findByText("Restarting. This is not an outage.")).toBeInTheDocument();
+    // Still mounted, and disabled: a button that unmounted for the run would fail the lookup here.
     const button = await screen.findByRole("button", { name: "Update to 1.4.0" });
     expect(button).toBeDisabled();
-    expect(screen.getByText("Restarting. This is not an outage.")).toBeInTheDocument();
   });
 
   it("the preflight arrives inside a Collapse, so the button does not teleport when doctor lands", async () => {

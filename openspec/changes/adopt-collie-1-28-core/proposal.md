@@ -22,6 +22,7 @@ Fleet currently adopts Collie v1.23.3 (`5bb4233b07cbfed2239fcfd7fe013323b55ac49c
 
 - `fleet-upstream-sync`: an explicitly audited adoption across divergent upstream release lines, retaining both adopted provenance and the actual common ancestor.
 - `fleet-send-patience`: retain slow-response tolerance while replacing equivalent downstream work with upstream fixes and accounting for all request phases.
+- `fleet-terminal-bindings`: retain shared favorites/tags while retiring Todoist as a consumer.
 - `fleet-todoist`: retire all product-owned Todoist integration behavior.
 - `fleet-plugin-runtime`: allow Core-backed execution without a TUI-owned lifecycle, preserving the role-specific child and trust boundaries.
 

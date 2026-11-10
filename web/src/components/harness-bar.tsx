@@ -1,6 +1,6 @@
-import type { ReactNode } from "react";
-import { Archive, Check, Cpu, Ellipsis, Flag, Gauge, History, ListTree, Loader2, Pause, Play, RefreshCw, Search, Send, Shrink, Slash, Square, Star, StickyNote, Wind, X } from "lucide-react";
-import type { LucideIcon } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
+import { Icon } from "@/components/icons/icon";
+import type { IconKey } from "@/components/icons/keys";
 
 import { AgentIcon } from "@/components/agent-icon";
 import { AGENT_BRANDS } from "@/components/agent-icon-data";
@@ -10,6 +10,7 @@ import type { Hand } from "@/hooks/use-display-prefs";
 import { useActionEcho } from "@/hooks/use-action-echo";
 import { useLocale } from "@/hooks/use-locale";
 import { usePendingConfirm } from "@/hooks/use-pending-confirm";
+import { ARM_DWELL_MS, ARM_MS } from "@/lib/arm";
 import { t as translate, type MessageKey } from "@/lib/i18n";
 import { barFor, PROGRAM_MARK, durableBarFor, type DurableBarItem, type HarnessBarItem } from "@/lib/harness-bar";
 import { useHarnessBarEnabled } from "@/lib/harness-bar-pref";
@@ -89,17 +90,17 @@ function labelText(label: string): string {
  * A Map, not an object literal, for the reason the table itself gives: an operator row's id is
  * `op:/whatever`, which an object lookup would answer for inherited names.
  */
-const ICONS = new Map<string, LucideIcon>([
-  ["model", Cpu], // which brain is answering
-  ["effort", Gauge], // how hard it is told to think
-  ["compact", Shrink], // fold the context up
-  ["resume", History], // go back to an earlier session
-  ["tree", ListTree], // the session tree
+const ICONS = new Map<string, IconKey>([
+  ["model", "harness-model"], // which brain is answering
+  ["effort", "harness-effort"], // how hard it is told to think
+  ["compact", "harness-compact"], // fold the context up
+  ["resume", "harness-resume"], // go back to an earlier session
+  ["tree", "harness-tree"], // the session tree
 ]);
 
 /** An operator's own row gets the slash — it is their command, and we know nothing else about it. */
-function iconFor(id: string): LucideIcon {
-  return ICONS.get(id) ?? Slash;
+function iconFor(id: string): IconKey {
+  return ICONS.get(id) ?? "slash-command";
 }
 
 export interface HarnessBarProps {
@@ -158,7 +159,7 @@ export function HarnessBar({ agent, mine, onRun, disabled, hand = "right" }: Har
       {items.map((item) => {
         const phase = echo.phaseOf(item.id);
         const armed = pending === item.id;
-        const Icon = iconFor(item.id);
+        const iconKey = iconFor(item.id);
         return (
           <Button
             key={item.id}
@@ -195,12 +196,12 @@ export function HarnessBar({ agent, mine, onRun, disabled, hand = "right" }: Har
                 is a 700ms echo, not a resting label — that is why the icon's 3:1/4.5:1 contrast
                 note below does not gate it (the operator chose this on 2026-09-21). */}
             {phase === "done" ? (
-              <Check className={BELT_ICON} />
+              <Icon name="confirm" className={BELT_ICON} />
             ) : (
               /* The icon takes the brand colour and the word does not. An icon is held to 3:1
                  (non-text contrast) and clears it on both themes; a 12px word in #D97757 would
                  not, so the label keeps the app's own text colour and stays readable. */
-              <Icon className={BELT_ICON} style={accent ? { color: accent } : undefined} />
+              <Icon name={iconKey} className={BELT_ICON} style={accent ? { color: accent } : undefined} />
             )}
             {labelText(item.label)}
           </Button>
@@ -299,22 +300,22 @@ export interface DurableBarState {
 
 /** The glyph a program's icon name draws. A name outside the fixed set draws none (the label stands alone). */
 const ACTION_GLYPHS = {
-  play: Play,
-  pause: Pause,
-  check: Check,
-  x: X,
-  refresh: RefreshCw,
-  archive: Archive,
-  flag: Flag,
-  star: Star,
-  send: Send,
-  note: StickyNote,
-  search: Search,
-  more: Ellipsis,
-} satisfies Record<PaneActionIcon, LucideIcon>;
+  play: "action-play",
+  pause: "action-pause",
+  check: "action-check",
+  x: "action-x",
+  refresh: "action-refresh",
+  archive: "action-archive",
+  flag: "action-flag",
+  star: "action-star",
+  send: "action-send",
+  note: "action-note",
+  search: "action-search",
+  more: "action-more",
+} satisfies Record<PaneActionIcon, IconKey>;
 
 /** The glyph for a name the program sent, or undefined. A Map-free lookup that cannot answer for `constructor`. */
-function glyphFor(icon: string | undefined): LucideIcon | undefined {
+function glyphFor(icon: string | undefined): IconKey | undefined {
   if (icon === undefined) return undefined;
   for (const name of PANE_ACTION_ICONS) if (name === icon) return ACTION_GLYPHS[name];
   return undefined;
@@ -376,7 +377,7 @@ export function DurableBar({ items, state, disabled, hand = "right" }: DurableBa
               onClick={() => state.steer.onPressedChange(!pressed)}
               className={cn(base, pressed ? BELT_PRESSED : "text-foreground", left && "[direction:ltr]")}
             >
-              <Wind className={BELT_ICON} />
+              <Icon name="steer" className={BELT_ICON} />
               {translate("durable.composer.steer")}
             </Button>
           );
@@ -386,7 +387,7 @@ export function DurableBar({ items, state, disabled, hand = "right" }: DurableBa
           // bridge), the glyph one of twelve names or none. Dimmed in place when the program says it is
           // unavailable or busy, or while this tap is in flight; a busy one swaps its glyph for a spinner.
           const { action } = item;
-          const Glyph = glyphFor(action.icon);
+          const glyph = glyphFor(action.icon);
           const waiting = action.busy === true || state.action?.running === action.id;
           return (
             <Button
@@ -399,7 +400,7 @@ export function DurableBar({ items, state, disabled, hand = "right" }: DurableBa
               onClick={() => state.action?.onRun(action)}
               className={cn(base, "text-foreground", left && "[direction:ltr]")}
             >
-              {waiting ? <Loader2 className={cn(BELT_ICON, "animate-spin")} /> : Glyph === undefined ? null : <Glyph className={BELT_ICON} />}
+              {waiting ? <Icon name="busy" className={cn(BELT_ICON, "animate-spin")} /> : glyph === undefined ? null : <Icon name={glyph} className={BELT_ICON} />}
               {action.label}
             </Button>
           );
@@ -415,11 +416,114 @@ export function DurableBar({ items, state, disabled, hand = "right" }: DurableBa
             onClick={state.stop.onStop}
             className={cn(base, "text-foreground", left && "[direction:ltr]")}
           >
-            {state.stop.busy ? <Loader2 className={cn(BELT_ICON, "animate-spin")} /> : <Square className={BELT_ICON} />}
+            {state.stop.busy ? <Icon name="busy" className={cn(BELT_ICON, "animate-spin")} /> : <Icon name="stop" className={BELT_ICON} />}
             {translate("durable.composer.stop")}
           </Button>
         );
       })}
     </HarnessSection>
+  );
+}
+
+export interface ScreenStopProps {
+  /** Runs the Stop: the composer posts the abort and shows the receipt under the box. Resolves when the receipt is in. */
+  onStop: () => Promise<void>;
+  /** The pane the button stops. An arm never carries over to another pane. */
+  paneId: string;
+  /** Whether the turn reads running now. Idle draws the button dimmed and takes no tap; an arm ends
+   *  when the turn leaves running. */
+  running: boolean;
+  /** Bound to the composer's `locked` or `offline`. Greys the button in place. */
+  disabled?: boolean;
+  hand?: Hand;
+}
+
+/**
+ * STOP FOR A PANE WITH A SCREEN (M68 spec 02): one button on the belt's bare ground, drawn ALWAYS when the
+ * bridge says a key exists (`stopFor`, lib/harness-bar.ts; the caller decides). Collie's
+ * own control, so it stands at the belt's START, before Collie's other controls and the harness section, and not
+ * inside the section. The belt scrolls sideways and the first child is in view at rest, so a running turn is
+ * stopped without a scroll (under `hand="left"` the start is the belt's right end, mirrored like every control).
+ *
+ * IDLE IS DIM, NOT ABSENT. A button that came and went would shift every other button under the thumb at
+ * the belt's first position each time a turn started or ended (DESIGN.md §2, reserve and never reflow). While
+ * the turn does not read running the button keeps its place and its width, drawn at half strength with
+ * `aria-disabled="true"`. It is not the `disabled` attribute, so it stays in the focus order and a reader still
+ * finds it; the tap is refused in `tap` before any arm or request.
+ *
+ * ARM, THEN STOP. The first tap only arms: the word changes to "Stop?" (never the size) and the arm lapses
+ * by itself after ARM_MS. The second tap runs `onStop`, and counts only ARM_DWELL_MS or more after the
+ * arm: a tap inside the dwell (a double tap, a thumb that lands twice) is ignored, neither a Stop nor a
+ * disarm. An arm ends when the pane changes or the turn leaves running, and the button goes dim. While
+ * the Stop is in flight the button shows a spinner, is dimmed and takes no tap, so a third tap cannot press a second Stop. A durable program keeps its own
+ * Stop in `DurableBar`; the two never draw together, because a program pane never carries `canStop`.
+ */
+export function ScreenStop({ onStop, paneId, running, disabled, hand = "right" }: ScreenStopProps) {
+  useLocale();
+  const [armed, setArmed] = useState(false);
+  const [busy, setBusy] = useState(false);
+  const timer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
+  const armedAt = useRef(0);
+  const flying = useRef(false);
+
+  useEffect(() => () => clearTimeout(timer.current), []);
+  // A button that stops being pressable also stops being armed, and so does one on another pane or
+  // over a turn that no longer runs: the arm was for that turn.
+  useEffect(() => {
+    if (disabled !== true && running) return;
+    clearTimeout(timer.current);
+    setArmed(false);
+  }, [disabled, running]);
+  useEffect(() => {
+    clearTimeout(timer.current);
+    setArmed(false);
+  }, [paneId]);
+
+  async function tap() {
+    // An idle turn has nothing to stop: no arm, no request. The bridge would only answer `turn_idle`.
+    if (disabled === true || !running || flying.current) return;
+    if (!armed) {
+      setArmed(true);
+      armedAt.current = Date.now();
+      clearTimeout(timer.current);
+      timer.current = setTimeout(() => setArmed(false), ARM_MS);
+      return;
+    }
+    // Inside the dwell the tap is the same touch landing twice, not a second decision.
+    if (Date.now() - armedAt.current < ARM_DWELL_MS) return;
+    clearTimeout(timer.current);
+    setArmed(false);
+    flying.current = true;
+    setBusy(true);
+    try {
+      await onStop();
+    } finally {
+      flying.current = false;
+      setBusy(false);
+    }
+  }
+
+  return (
+    <Button
+      type="button"
+      variant="ghost"
+      size="sm"
+      data-slot="belt-stop"
+      aria-busy={busy}
+      aria-disabled={running ? undefined : true}
+      disabled={disabled === true || busy}
+      aria-label={translate(armed ? "belt.stopArmedAria" : "belt.stopAria")}
+      onClick={() => void tap()}
+      className={cn(
+        `${STRIP_ROW_PILL} gap-1.5`,
+        // The dim look of `disabled:opacity-50`, without the attribute. No press feedback on a button that does nothing.
+        !running && "opacity-50 active:scale-100",
+        armed ? "border border-destructive/40 bg-destructive/10 text-destructive" : "text-foreground",
+        hand === "left" && "[direction:ltr]",
+      )}
+    >
+      {busy ? <Icon name="busy" className={cn(BELT_ICON, "animate-spin")} /> : <Icon name="stop" className={BELT_ICON} />}
+      {translate(armed ? "belt.stopArmed" : "belt.stop")}
+    </Button>
   );
 }

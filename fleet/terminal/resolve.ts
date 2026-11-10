@@ -14,6 +14,7 @@
  * a snapshot the server produced; everything else about the terminal comes from that snapshot.
  */
 
+import { HcClient, defaultHcSocket } from "../../bridge/mux/herdr-core/client.ts";
 import { defaultSocketPath } from "../../bridge/config.ts";
 import { HerdrClient } from "../../bridge/mux/herdr/client.ts";
 import type { TerminalTarget } from "./admit.ts";
@@ -51,7 +52,7 @@ export type Resolution =
  * command argument, and a malformed id from an unexpected server version should stop here rather
  * than be executed.
  */
-const TERMINAL_ID = /^term_[A-Za-z0-9]{1,64}$/;
+const TERMINAL_ID = /^(?:term_[A-Za-z0-9]{1,64}|t[0-9a-z]{1,64})$/;
 
 /**
  * Resolve one Pane against one snapshot.
@@ -111,10 +112,15 @@ export type SnapshotSource = () => Promise<TerminalSnapshot>;
  */
 /** The one local multiplexer socket this machine's Fleet processes read and drive. */
 export function localSocketPath(): string {
+  if (process.env.COLLIE_MUX === "herdr-core") return process.env.HC_SOCKET ?? defaultHcSocket(process.env, process.getuid?.() ?? 0);
   return process.env.HERDR_SOCKET_PATH ?? defaultSocketPath();
 }
 
 export function localSnapshotSource(socketPath: string = localSocketPath()): SnapshotSource {
+  if (process.env.COLLIE_MUX === "herdr-core") {
+    const client = new HcClient(socketPath);
+    return async () => ({ panes: (await client.listTerminals()).filter((t) => t.state === "live" && /^t[0-9a-z]+$/.test(t.address)).map((t) => ({ pane_id: t.address, terminal_id: t.address, scroll: { viewport_rows: t.rows } })) });
+  }
   const client = new HerdrClient(socketPath);
   return async () => await client.sessionSnapshot();
 }
@@ -125,6 +131,7 @@ export async function resolveTerminal(
   source: SnapshotSource,
 ): Promise<Resolution> {
   if (target.host !== undefined) return { ok: false, reason: "not-local" };
+  if (process.env.COLLIE_MUX === "herdr-core" && target.session !== undefined && target.session !== (process.env.HC_SESSION ?? "default")) return { ok: false, reason: "not-local" };
   let snapshot: TerminalSnapshot;
   try {
     snapshot = await source();

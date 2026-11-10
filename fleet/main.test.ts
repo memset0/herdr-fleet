@@ -148,7 +148,7 @@ describe("herdr-fleet entrypoint", () => {
     // Everything else the operator sees is guidance, and none of it repeats the token.
     expect(result.err).not.toContain(token);
     expect(result.err).toContain("single-use");
-    expect(result.err).toContain("herdr plugin action invoke restart --plugin memset0.herdr-fleet");
+    expect(result.err).toContain("$HERDR_PLUGIN_ROOT/scripts/herdr-fleet.sh");
     expect(result.err).not.toContain("systemctl");
     expect(result.err).not.toContain("collie pack");
 

@@ -1,10 +1,11 @@
 import { useCallback, useState } from "react";
-import { asJsonBoolean, asJsonObject, asJsonString, type JsonValue } from "@/lib/json";
+import { asJsonBoolean, asJsonObject, asJsonString, type JsonObject, type JsonValue } from "@/lib/json";
 
 import type { ChangesLayout } from "@/lib/changes-tree";
 import { coerceDashView, isLegacyDashView, wasFocusView, type DashView } from "@/lib/dash-view";
 import { coercePaneOrder, type PaneOrder } from "@/lib/pane-order";
 import { coercePaneView, type PaneView } from "@/lib/pane-view";
+import { coerceZoomPill, type ZoomPill } from "@/lib/zoom-pill";
 import type { RecentDir } from "@/lib/triage";
 
 // Dashboard layout preferences, persisted in localStorage. Deliberately separate from
@@ -31,8 +32,12 @@ export interface DashPrefs {
   launchOpen: boolean | null;
   /** Which way Recent runs. Attention sections are never affected. */
   recentDir: RecentDir;
-  /** The dashboard's workspace filter: the one workspace shown alone, or null for all of them. */
-  isolatedSpace: string | null;
+  /**
+   * The dashboard's workspace filter (issue #527): the workspaces shown, by the key a device remembers
+   * them by, or empty for all of them. An older Collie stored one key as `isolatedSpace`; it reads as
+   * a choice of one (see {@link coerceDashPrefs}).
+   */
+  isolatedSpaces: string[];
   /** Workspaces hidden from the dashboard list (long-press a chip); their chips stay, dimmed. */
   hiddenSpaces: string[];
   /**
@@ -114,6 +119,12 @@ export interface DashPrefs {
    * See lib/pane-view.ts for why it is one per-device value and not a per-pane override.
    */
   paneView: PaneView;
+  /**
+   * Whether the belt's Zoom pill is drawn in the Screen view (`screen`) or never (`off`). `null` is
+   * "never chosen": the active theme's `zoom` word decides, and without one the pill shows in the
+   * Screen view. A choice made here always wins over the theme (lib/zoom-pill.ts).
+   */
+  zoomPill: ZoomPill | null;
 }
 
 const STORAGE_KEY = "collie:dash-prefs:v1";
@@ -133,7 +144,7 @@ const DEFAULTS: DashPrefs = {
   shellsOpen: null,
   launchOpen: null,
   recentDir: "newest",
-  isolatedSpace: null,
+  isolatedSpaces: [],
   hiddenSpaces: [],
   changesNested: true,
   changesDepth: 2,
@@ -147,10 +158,32 @@ const DEFAULTS: DashPrefs = {
   showCompactions: false,
   paneOrder: "place",
   paneView: "chat",
+  zoomPill: null,
 };
 
 function coerceDepth(raw: JsonValue | undefined): number {
   return CHANGES_DEPTHS.find((d) => d === raw) ?? DEFAULTS.changesDepth;
+}
+
+/** The strings of a stored array, each once, in stored order; anything else is an empty list. */
+function coerceKeys(raw: JsonValue | undefined): string[] {
+  if (!Array.isArray(raw)) return [];
+  const keys = raw.flatMap((k) => {
+    const key = asJsonString(k);
+    return key === undefined ? [] : [key];
+  });
+  return [...new Set(keys)];
+}
+
+/**
+ * The workspace filter as stored. A stored list wins, empty or not. Without one, the single
+ * `isolatedSpace` an older Collie wrote is a choice of one, so an update keeps the filter the device
+ * had; the old key is never written again.
+ */
+function coerceIsolatedSpaces(p: JsonObject): string[] {
+  if (Array.isArray(p.isolatedSpaces)) return coerceKeys(p.isolatedSpaces);
+  const legacy = asJsonString(p.isolatedSpace);
+  return legacy === undefined ? [] : [legacy];
 }
 
 function coerceBeltScale(raw: JsonValue | undefined): BeltScale {
@@ -183,7 +216,7 @@ export function coerceDashPrefs(raw: JsonValue | undefined): DashPrefs {
     // nothing here — an older version's stored blob still carries the key, and it is simply ignored,
     // the same way any other unknown field in a persisted object would be.
     recentDir: p.recentDir === "oldest" || p.recentDir === "newest" ? p.recentDir : DEFAULTS.recentDir,
-    isolatedSpace: asJsonString(p.isolatedSpace) ?? DEFAULTS.isolatedSpace,
+    isolatedSpaces: coerceIsolatedSpaces(p),
     hiddenSpaces: Array.isArray(p.hiddenSpaces)
       ? p.hiddenSpaces.flatMap((k) => {
           const key = asJsonString(k);
@@ -204,6 +237,7 @@ export function coerceDashPrefs(raw: JsonValue | undefined): DashPrefs {
     showCompactions: asJsonBoolean(p.showCompactions) ?? DEFAULTS.showCompactions,
     paneOrder: coercePaneOrder(p.paneOrder),
     paneView: coercePaneView(p.paneView),
+    zoomPill: coerceZoomPill(p.zoomPill),
   };
 }
 
@@ -239,7 +273,7 @@ export interface UseDashPrefsReturn {
   setShellsOpen: (open: boolean) => void;
   setLaunchOpen: (open: boolean) => void;
   setRecentDir: (dir: RecentDir) => void;
-  setIsolatedSpace: (key: string | null) => void;
+  setIsolatedSpaces: (keys: readonly string[]) => void;
   toggleHiddenSpace: (key: string) => void;
   setChangesNested: (nested: boolean) => void;
   setChangesDepth: (depth: number) => void;
@@ -253,6 +287,7 @@ export interface UseDashPrefsReturn {
   setShowCompactions: (show: boolean) => void;
   setPaneOrder: (order: PaneOrder) => void;
   setPaneView: (view: PaneView) => void;
+  setZoomPill: (choice: ZoomPill) => void;
 }
 
 export function useDashPrefs(): UseDashPrefsReturn {
@@ -284,6 +319,7 @@ export function useDashPrefs(): UseDashPrefsReturn {
   const setShowCompactions = useCallback((showCompactions: boolean) => update({ showCompactions }), [update]);
   const setPaneOrder = useCallback((paneOrder: PaneOrder) => update({ paneOrder }), [update]);
   const setPaneView = useCallback((paneView: PaneView) => update({ paneView }), [update]);
+  const setZoomPill = useCallback((zoomPill: ZoomPill) => update({ zoomPill }), [update]);
 
   const setBeltScale = useCallback(
     (scale: number) => update({ beltScale: coerceBeltScale(scale) }),
@@ -293,7 +329,10 @@ export function useDashPrefs(): UseDashPrefsReturn {
   const setDashView = useCallback((dashView: DashView) => update({ dashView }), [update]);
   const setNeedsYouOnly = useCallback((needsYouOnly: boolean) => update({ needsYouOnly }), [update]);
 
-  const setIsolatedSpace = useCallback((isolatedSpace: string | null) => update({ isolatedSpace }), [update]);
+  const setIsolatedSpaces = useCallback(
+    (keys: readonly string[]) => update({ isolatedSpaces: [...new Set(keys)] }),
+    [update],
+  );
   const toggleHiddenSpace = useCallback((key: string) => {
     setPrefs((p) => {
       const hiddenSpaces = p.hiddenSpaces.includes(key)
@@ -311,7 +350,7 @@ export function useDashPrefs(): UseDashPrefsReturn {
     setShellsOpen,
     setLaunchOpen,
     setRecentDir,
-    setIsolatedSpace,
+    setIsolatedSpaces,
     toggleHiddenSpace,
     setChangesNested,
     setChangesDepth,
@@ -325,5 +364,6 @@ export function useDashPrefs(): UseDashPrefsReturn {
     setShowCompactions,
     setPaneOrder,
     setPaneView,
+    setZoomPill,
   };
 }

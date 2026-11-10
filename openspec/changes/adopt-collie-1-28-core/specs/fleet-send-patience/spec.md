@@ -12,3 +12,17 @@ The phone's request for a Send Protocol send (on a local pane, or through the re
 #### Scenario: Upstream adds a late-probe recovery window
 - **WHEN** a send consumes that window or its permitted retry in addition to ordinary steps and write costs
 - **THEN** neither caller abandons it before its full bounded result, and no caller silently replays an uncertain send
+
+## REMOVED Requirements
+
+### Requirement: A probe character that lands late is removed
+**Reason**: Collie 1.28.0 now owns late-probe waiting, cleanup and fresh-baseline recovery; the former downstream refusal-only workaround is superseded.
+**Migration**: Reuse upstream recovery and its existing regression corpus, with Fleet's longer polling windows and complete caller budgets. Do not retain a second cleanup implementation.
+
+### Requirement: A lone probe character is not a person's draft
+**Reason**: Upstream's residue and stale-frame handling now cover this case, including plain-text Core screens, so Fleet no longer owns a separate implementation.
+**Migration**: Preserve unresolved draft guards and use the adopted upstream recovery without duplicating its requirements here.
+
+### Requirement: A key token outlives a slow record write
+**Reason**: Upstream now mints the token after the durable record write, eliminating the I/O-driven expiry that required a longer downstream lifetime.
+**Migration**: Retain upstream's bounded single-use, revision-checked token and post-record minting; drop the longer-lifetime import and constant.

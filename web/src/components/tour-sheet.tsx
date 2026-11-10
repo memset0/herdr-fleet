@@ -1,5 +1,6 @@
 import * as React from "react";
-import { KeyRound, MonitorDown, SquarePlus, BellRing } from "lucide-react";
+import { Icon } from "@/components/icons/icon";
+import type { IconKey } from "@/components/icons/keys";
 
 import { Button } from "@/components/ui/button";
 import { useNav } from "@/hooks/use-nav";
@@ -16,6 +17,7 @@ import { reasonText } from "@/lib/push-copy";
 import type { EnableResult, PushState } from "@/lib/push";
 import type { HomeData } from "@/lib/loaders";
 import { leadHost, hostName, paneScope } from "@/lib/hosts";
+import { groupByHost } from "@/lib/machines";
 import { useMuxName } from "@/lib/mux-capability";
 import { homePath, newPath, pairedDevicesPath, panePath } from "@/lib/nav";
 import { triage } from "@/lib/triage";
@@ -100,7 +102,7 @@ export interface TourSheetProps {
 /** One "Do this next" row: a fact, a remedy, and one button that carries it out. */
 interface NextCard {
   id: "pair" | "space" | "push" | "install";
-  icon: typeof KeyRound;
+  icon: IconKey;
   title: string;
   body: string;
   action: React.ReactNode;
@@ -172,7 +174,7 @@ export function TourSheet({
   if (readOnly) {
     next.push({
       id: "pair",
-      icon: KeyRound,
+      icon: "pairing",
       title: t("tour.pair.title"),
       body: t("tour.pair.body"),
       action: (
@@ -185,7 +187,7 @@ export function TourSheet({
   if (panes === 0) {
     next.push({
       id: "space",
-      icon: SquarePlus,
+      icon: "new-space",
       title: t("tour.space.title"),
       body: t("tour.space.body"),
       action: (
@@ -202,7 +204,7 @@ export function TourSheet({
   if (pushOffer) {
     next.push({
       id: "push",
-      icon: BellRing,
+      icon: "notifications",
       title: t("tour.pushCard.title"),
       body: t("tour.pushCard.body"),
       action: <TourPushBlock busy={pushBusy} onEnable={onEnablePush} />,
@@ -211,7 +213,7 @@ export function TourSheet({
   if (installOffer) {
     next.push({
       id: "install",
-      icon: MonitorDown,
+      icon: "install-app",
       title: t("tour.install.title"),
       body: t("tour.install.body"),
       action: (
@@ -283,7 +285,7 @@ export function TourSheet({
                 <Card key={card.id} className="gap-0 py-0">
                   <div className="flex items-center justify-between gap-4 p-4">
                     <div className="flex min-w-0 items-start gap-3">
-                      <card.icon className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
+                      <Icon name={card.icon} className="mt-0.5 size-5 shrink-0 text-muted-foreground" />
                       <div className="min-w-0">
                         <div className="font-medium">{card.title}</div>
                         <p className="text-sm text-muted-foreground">{card.body}</p>
@@ -478,7 +480,9 @@ function FirstRunLive({ home, onClosed }: { home: HomeData; onClosed: () => void
       host={host}
       panes={home.agents.length}
       needsYou={needs.length}
-      machines={home.servers.length}
+      // Machines, not members (M77): two Collies on one host are one machine. A crew of older builds,
+      // which report no host, groups to exactly its rows.
+      machines={groupByHost(home.servers).length}
       readOnly={isReadOnly(home.device)}
       pushState={state}
       pushBusy={busy}

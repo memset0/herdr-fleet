@@ -38,7 +38,7 @@ function leadAnswer(): EnrollResponse {
     { fingerprint: material("peer").fingerprint, certPem: material("peer").certPem, address: "127.0.0.1:19791", label: "peer" },
     T0,
   );
-  if (enrolled === null) throw new Error("the fixture lead could not enrol");
+  if (enrolled === null || !("result" in enrolled)) throw new Error("the fixture lead could not enrol");
   return enrolled.result;
 }
 

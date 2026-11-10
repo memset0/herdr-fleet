@@ -38,9 +38,19 @@ export interface Dismissal {
 //   (c) bundle             this bundle is behind the bridge and the page may reload onto it
 //   (a) available          a newer release exists upstream
 //
-// The two download states stay here because they are about the PWA and not about a run: with no run
-// to be about, the sheet shows nothing and this row is the whole story (2026-09-12). The sheet shows
-// this device's download only as part of a run.
+// The two download states stay in this READING because they are about the PWA and not about a run,
+// and because the download still outranks everything below it: while it is on, nothing else in this
+// list is the band's to say (2026-09-12). The sheet shows this device's download only as part of a
+// run.
+//
+// ── BUT THE BAND NO LONGER DRAWS THEM (2026-11-06) ──────────────────────────
+// Altan asked for the header mark to carry a bundle being applied, every bead turning in the update
+// colour, and for the dashboard's update line to say what is happening. So `UpdateRibbon` posts
+// nothing for (i) and (c) ({@link carriedByMark}); `lib/bundle-apply.ts` is the fact the mark and
+// the dashboard read. The kinds and their precedence stay here unchanged, rather than leaving the
+// reading through a new input, for two reasons. The download still has to outrank (f) and (a): a
+// peer failure or an offer posted under a turning mark would be the band and the mark talking about
+// two updates at once. And every precedence case below stays pinned exactly as it was.
 //
 // ── THE BUNDLE AND COLLIE ARE TWO DIFFERENT UPDATES ──────────────────────────
 // `lib/self-update.ts` updates the BUNDLE; the update card updates COLLIE. The band renders both,
@@ -386,21 +396,15 @@ export function dismissTarget(view: RibbonView): Dismissal | null {
 }
 
 /**
- * The states put down in THIS DOCUMENT rather than on the bridge (2026-09-12).
+ * The states the HEADER MARK carries in place of the band (2026-11-06).
  *
- * `bundle-installing` is the only one, and it is not in {@link dismissTarget} on purpose: nothing
- * was declined. The install goes on in the background, the controller swap still reloads the page
- * when it lands, and a version posted to `dismissUpdate` would tell the machine the operator said
- * no to a release they are in fact downloading.
- *
- * It is closable at all because the download is the one band state that can wait forever. A worker
- * stuck in `installing` on a dead link is waited on with no timer and no forced reload — deliberate,
- * since the page must not reload before the new worker is in control — so the escape is the other
- * one: put the row down and keep using the app you already have. The close hides the row for this
- * document only, and a LATER worker raises it again.
+ * Both bundle states. The download and the reload are the app on this phone changing, which the mark
+ * now says by turning every bead in the update colour, and the dashboard's update line says in
+ * words. `UpdateRibbon` posts no row for either, so the band and the mark never say it twice. This
+ * replaced `dismissesLocally`: the download row's own close went with the row.
  */
-export function dismissesLocally(view: RibbonView): boolean {
-  return view.kind === "bundle-installing";
+export function carriedByMark(view: RibbonView): boolean {
+  return view.kind === "bundle-installing" || view.kind === "bundle";
 }
 
 /** The version a failed leg's close is keyed by: what the run was heading for when a record names it,
@@ -432,6 +436,16 @@ export function crewFailureDismissed(
   const closedAt = input.dismissedCrewAt ?? null;
   if (closedAt === null || settledAt === null) return true;
   return settledAt <= closedAt;
+}
+
+/**
+ * IS A RELEASE ON OFFER, and not yet put down? The one test behind the band's offer states and the
+ * dot on the Settings gear, so the two cannot disagree about whether there is something to tell.
+ * A different version than the dismissed one is a new offer, as in {@link RibbonInput}.
+ */
+export function releaseOffered(update: UpdateInfo | undefined, dismissedVersion: string | null | undefined): boolean {
+  const latest = update?.latest ?? null;
+  return update?.releaseAvailable === true && latest !== null && latest !== (dismissedVersion ?? null);
 }
 
 /** The whole band, decided once. See the precedence in this file's header. */
@@ -476,13 +490,14 @@ export function ribbonView(input: RibbonInput): RibbonView {
   if (input.bundleStale) return { kind: "bundle" };
 
   // (a) — an offer, and only an offer. The tap navigates; nothing here starts anything.
-  const latest = input.update?.latest ?? null;
-  if (input.update?.releaseAvailable === true && latest !== null && latest !== input.dismissedVersion) {
+  const offered = input.update;
+  const latest = offered?.latest ?? null;
+  if (offered !== undefined && latest !== null && releaseOffered(offered, input.dismissedVersion)) {
     // A PACKAGED host cannot take the tap: `collie update` refuses there and the page shows a
     // command where the button would be (ADR 0035). So the band says what is true on that machine
     // and names the manager that owns it, rather than offering an update it cannot perform.
-    if (input.update.installKind === "packaged") {
-      return { kind: "available-packaged", version: latest, manager: managerOf(input.update.packageCommand) };
+    if (offered.installKind === "packaged") {
+      return { kind: "available-packaged", version: latest, manager: managerOf(offered.packageCommand) };
     }
     return { kind: "available", version: latest };
   }

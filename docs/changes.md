@@ -74,6 +74,58 @@ It reads the newest commit only. There is no history browser.
   screen do not change under you.
 - When new uncommitted changes appear, **New uncommitted changes** takes you back to the list.
 
+## Comment on lines
+
+Pick lines in a diff, write a note on them, and bring all your notes to the agent as one block of text.
+
+1. Open a changed file's **Diff**, from the list or from the last commit.
+2. Tap the lines you mean, and each picked line takes a tint.
+3. Tap **Comment on selected (3)**, with the number of picked lines.
+4. Write your note under the quoted lines, and tap **Add comment**.
+5. Repeat on other lines and in other files, in any repo of the workspace.
+6. Tap **Pending comments (2) · Bring to agent**, with the number of notes.
+7. Tap **Bring to claude draft (2)**, with the agent's name and the number of notes.
+
+Collie puts the notes into the agent's draft in its pane and opens the pane. It does not send them.
+Read the draft and tap Send when you are ready.
+
+- **Picking lines.** A tap picks a line and a second tap lets it go. The lines can be far apart, and
+  the note keeps them in file order, for example `+2, +10`. Context, added and removed lines can be
+  picked. A hunk header cannot. **Clear (3)** drops the whole pick. A pick belongs to one file and to one
+  version of its diff. It does not carry to another file, and it clears when the diff changes under
+  you.
+- **A note on screen.** A saved note shows as a pill under its last line, with the line numbers and
+  the start of the text. Tap the pill to edit the text with **Save comment**, or to **Delete** it.
+  A note whose lines the diff no longer holds shows at the end of the file's diff.
+- **The list.** The **Pending comments** bar shows when nothing is picked. It opens the list of all
+  notes with their file, lines and text, and each has **Delete**.
+- **Which agent.** Opened from a pane, the notes go to that pane's agent. Opened from the
+  dashboard's Files tab on a workspace with several agents, the list shows **Target agent in this
+  workspace**, and you tap the agent that gets them. On a [crew](crew.md), an agent on another
+  machine counts as its own agent, even when two machines share a pane id.
+- **No agent, no comments.** The lines take a tap only when the pane is an agent's pane, or when the
+  workspace has an agent pane. On a shell pane they do nothing.
+
+The draft receives one block for each note, in the order you wrote them. Each block quotes the file
+and the lines with their `+`, `-` or space, and then your text.
+
+```text
+> `src/cart.ts` (+12–13)
+> +  if (items.length === 0) return 0;
+> +  return total(items);
+
+Handle the empty cart before the loop.
+```
+
+The notes go after the text that is already in that pane's draft, with a blank line between. The
+draft keeps its attachments.
+
+**The batch stays when you leave.** Back out of Changes and open it again in the same tab, or reload
+the page, and your notes are still there. They are kept for one pane, or for one workspace when you
+opened Changes from the dashboard. They do not outlive the tab, and ending a pairing clears them.
+Bringing the notes to the agent clears them too. A batch of more than 200 notes is not kept when you
+leave.
+
 ## It stays up to date
 
 An open Changes screen reads git again every 5 seconds while the page is visible. On a diff, the open
@@ -190,6 +242,40 @@ and the source shows instead.
 
 In **Changes**, a changed file whose type has a preview, and that is not deleted, shows a
 **Preview** button in the header of its diff. It opens the same file screen on Preview.
+
+### Equations
+
+Turn math on under **Settings → Appearance → Math**. It is a per-device setting, and it is off
+by default.
+
+| Engine | What it draws |
+| --- | --- |
+| Off | Nothing. `$` is a dollar sign, and no engine is downloaded. |
+| KaTeX | Fast and compact HTML, with its own web fonts. |
+| MathJax | Broader TeX support, drawn as SVG. A larger download, fetched in pieces. |
+
+With an engine chosen, Chat, History, Full reply and Markdown previews render LaTeX. Write
+inline math as `$E = mc^2$` or `\(E = mc^2\)`. A display equation sits on its own lines:
+
+```text
+$$
+\sum_{i=1}^{n} i = \frac{n(n+1)}{2}
+$$
+```
+
+`\[` and `\]` also delimit a display equation. Inside a line, such as a list item or a quote,
+`$$E = mc^2$$` is a display equation too; `\[` there stays an escaped bracket. A blank line ends
+an unclosed `$$`. Fractions, matrices and `aligned` environments work in both engines. A wide equation scrolls sideways within the page, and a display
+equation's Copy button copies its original source, including the delimiters.
+
+Code spans and fenced code blocks stay literal. Write `\$` for a literal dollar sign; prices
+such as `$5 and $10` stay text. Incomplete delimiters, unsupported TeX and oversized
+expressions stay readable as source. A macro defined in one equation never applies to another.
+
+> **Note.** The engines are a separate download to the host, one tap on the same card
+> ([Math](configure.md#math)). The phone fetches the engine from the host the first time it draws
+> an equation, and keeps it for offline use. After an update it fetches it again on first use;
+> until then, offline, equations show as their TeX source.
 
 ### Paths the agent prints
 

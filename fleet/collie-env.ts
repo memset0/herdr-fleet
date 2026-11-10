@@ -44,6 +44,7 @@ export const FLEET_OWNED_COLLIE_SETTINGS = [
   "COLLIE_SERVE_PORT",
   "COLLIE_SKIP_SERVE",
   "COLLIE_STATE_DIR",
+  "COLLIE_TELEMETRY",
   "COLLIE_TAILSCALE_HOSTS",
   "COLLIE_TRUSTED_USER",
   "COLLIE_TRUSTED_USER_OPTIONAL",
@@ -62,9 +63,12 @@ export function collieChildEnv(
   // The adopted Collie resolves its state directory from this one name. It is the directory Fleet
   // validates the trust state in and the one an explicit enrolment writes, so both read one store.
   env.COLLIE_STATE_DIR = collieStateDir;
+  Object.assign(env, coreBackendEnv(config, inherited));
   env.COLLIE_HOST = config.collie.host;
   env.COLLIE_PORT = String(config.collie.port);
   env.COLLIE_SKIP_SERVE = "1";
+  // Preserve Fleet’s existing no-egress posture when adopting upstream’s anonymous ping.
+  env.COLLIE_TELEMETRY = "false";
   if (isFleetLeadConfig(config)) {
     env.COLLIE_PUBLIC_HOSTS = config.public.host;
     env.COLLIE_ALLOWED_ORIGINS = config.public.origin;
@@ -126,4 +130,14 @@ export function assertCollieConfigFilesCede(
     const setting = settingByKey(section, problem.key);
     if (setting !== undefined && owned.has(setting.env)) refuse(problem.file, setting);
   }
+}
+
+/** One configured backend for every local child; never inherit another Core terminal selector. */
+export function coreBackendEnv(config: FleetConfig, inherited: NodeJS.ProcessEnv): NodeJS.ProcessEnv {
+  if (config.collie.mux !== "herdr-core") return {};
+  const env: NodeJS.ProcessEnv = { COLLIE_MUX: "herdr-core", HC_SESSION: config.collie.coreSession ?? "default", HC_TERMINAL_ID: undefined, HC_SOCKET: config.collie.coreSocket };
+  // The adapter's explicit endpoint wins over ambient selectors.
+  env.COLLIE_MUX_ENDPOINT_HERDR_CORE = config.collie.coreSocket;
+  void inherited;
+  return env;
 }

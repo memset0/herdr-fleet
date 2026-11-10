@@ -1,4 +1,3 @@
-import { Crown, Server, Shield } from "lucide-react";
 
 import { useLocale } from "@/hooks/use-locale";
 import { hostHealth, linkPresentation, type HostHealth } from "@/lib/host-health";
@@ -6,6 +5,7 @@ import { HOST_TEXT_CLASSES, countsFor, hostSlot, type HostCounts } from "@/lib/h
 import { t, tn } from "@/lib/i18n";
 import type { CrewMemberStatus, CrewStatusResponse, ServerSummary } from "@/lib/types";
 import { cn } from "@/lib/utils";
+import { Icon } from "@/components/icons/icon";
 
 // The crew census drawn as a FORMATION rather than listed as rows.
 //
@@ -158,6 +158,9 @@ export function asServerSummary(m: CrewMemberStatus): ServerSummary {
     // value has to stay absent all the way to `linkPresentation` or this page would invent a
     // distinction the lead never made.
     linkState: m.linkState,
+    // The two facts the crew page groups and names instances by (M77), carried as they came.
+    mux: m.mux,
+    host: m.host,
   };
 }
 
@@ -454,7 +457,8 @@ function FormationNodeMark({
           HostChip, and a separate coloured dot would be a second mark for the same fact. It is the
           RING that carries health, in the status vocabulary, and the two never share a colour: the
           host hues are chosen to avoid every status hue (index.css). */}
-      <Server
+      <Icon
+        name="machine"
         x={node.x - 9}
         y={node.y - 9}
         width={18}
@@ -474,7 +478,8 @@ function FormationNodeMark({
             className="fill-muted"
           />
           {node.role === "lead" ? (
-            <Crown
+            <Icon
+              name="role-lead"
               x={node.x - badge / 2 + 6}
               y={node.y - NODE_R - 25}
               width={11}
@@ -482,7 +487,8 @@ function FormationNodeMark({
               className="text-muted-foreground"
             />
           ) : (
-            <Shield
+            <Icon
+              name="role-deputy"
               x={node.x - badge / 2 + 6}
               y={node.y - NODE_R - 25}
               width={11}

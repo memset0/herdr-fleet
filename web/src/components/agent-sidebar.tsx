@@ -1,8 +1,7 @@
-import { Loader2, Play, TerminalSquare } from "lucide-react";
 
 import { cn } from "@/lib/utils";
-import { AgentIcon } from "@/components/agent-icon";
 import { CacheChip } from "@/components/cache-chip";
+import { HostChip } from "@/components/host-chip";
 import { PaneOrderToggle } from "@/components/pane-order-toggle";
 import { SectionHeader } from "@/components/section-header";
 import { StatusCounts, StatusSummaryLine } from "@/components/status-counts";
@@ -14,12 +13,16 @@ import { pinMatcher, type Pin } from "@/lib/pins";
 import { paneName, panePlaceParts } from "@/lib/pane-name";
 import { paneSubtitle } from "@/lib/pane-marks";
 import { PaneBadge } from "@/components/pane-badge";
+import { PaneGlyph } from "@/components/ui/pane-glyph";
+import { UnseenMark } from "@/components/ui/unseen-mark";
 import { shortenHome } from "@/lib/shorten-home";
-import { bucketOf, isAttention, worstTriage, type TriageKey } from "@/lib/triage";
-import type { AgentStatus, AgentView, Launcher, ServerSummary, TabView } from "@/lib/types";
+import { bucketOf, isAttention, isUnseen, worstTriage, type TriageKey } from "@/lib/triage";
+import type { AgentStatus, AgentView, Launcher, ServerSummary, SessionSummary, TabView, WorkspaceView } from "@/lib/types";
+import type { Scope } from "@/lib/scope";
 import { t } from "@/lib/i18n";
 import { useFrozenRanks } from "@/hooks/use-frozen-ranks";
 import { useLocale } from "@/hooks/use-locale";
+import { Icon } from "@/components/icons/icon";
 
 interface ThreadSidebarProps {
   agents: AgentView[];
@@ -42,6 +45,16 @@ interface ThreadSidebarProps {
   tabs?: readonly TabView[];
   /** The snapshot's machine list, for the order machines run in: the lead first. */
   servers?: readonly ServerSummary[] | undefined;
+  /**
+   * The snapshot's spaces (`root.workspaces`). With them a linked git worktree folds under its open
+   * root workspace, as on the dashboard, and one whose root is not open is headed `repo › slug`
+   * (issue #666). Omit and every workspace stays its own group.
+   */
+  workspaces?: readonly WorkspaceView[] | undefined;
+  /** The view's address (`?h=` and `?s=`), so `workspaces` is matched to the session it describes. */
+  scope?: Scope | undefined;
+  /** The snapshot's session registry, to find each machine's primary session when matching `workspaces`. */
+  sessions?: readonly SessionSummary[] | undefined;
   /** Whether the Shells section is expanded, and how to fold it. Omit to leave it always open. */
   shellsOpen?: boolean;
   onShellsOpenChange?: (open: boolean) => void;
@@ -81,6 +94,12 @@ interface ThreadSidebarProps {
   onOrderChange?: (order: PaneOrder) => void;
   /** Override the list container padding (e.g. flush inside a bottom sheet). */
   className?: string;
+  /**
+   * The large screen's standing sidebar (ADR 0120), not the switcher sheet: rows on a 16px inset with
+   * more air, the space headings in the quiet voice (muted, the name's own case), and badges in the
+   * muted ink, so the pane's name is the one thing in full ink.
+   */
+  roomy?: boolean;
 }
 
 // The pane switcher behind the swipe-up "Switch pane" sheet: every agent pane under the WORKSPACE it
@@ -130,6 +149,9 @@ export function ThreadSidebar({
   onSelect,
   tabs,
   servers,
+  workspaces,
+  scope,
+  sessions,
   shellsOpen = true,
   onShellsOpenChange,
   pins = NO_PINS,
@@ -143,6 +165,7 @@ export function ThreadSidebar({
   order = "place",
   onOrderChange,
   className,
+  roomy = false,
 }: ThreadSidebarProps) {
   useLocale();
   // THE ORDER, AND WHY IT IS READ ONCE: see `useFrozenRanks` and the long note below. Called here, above
@@ -162,7 +185,8 @@ export function ThreadSidebar({
   }
 
   // The dashboard's grouping, so the switcher and the dashboard list the same panes in the same place.
-  const groups = groupPanesByWorkspace(agents, [], { order: "fixed", tabs, servers });
+  const groupOptions = { order: "fixed" as const, tabs, servers, workspaces, scope, sessions };
+  const groups = groupPanesByWorkspace(agents, [], groupOptions);
   // PINNED LEADS (ADR 0070): the dashboard's place order over agents AND shells (a shell sits after
   // its tab's agents, as on the dashboard), so the two surfaces agree by construction. Each pinned
   // pane then leaves its workspace section or Shells: listed once. A workspace section left with no
@@ -171,7 +195,7 @@ export function ThreadSidebar({
   const pinned =
     pins.length === 0
       ? NO_PANES
-      : pinnedRows(groupPanesByWorkspace(agents, shellPanes, { order: "fixed", tabs, servers }), isPinned);
+      : pinnedRows(groupPanesByWorkspace(agents, shellPanes, groupOptions), isPinned);
   const sections = shownGroups(groups, false, isPinned);
   const shellRows = pins.length === 0 ? shellPanes : shellPanes.filter((p) => !isPinned(p));
 
@@ -216,7 +240,7 @@ export function ThreadSidebar({
   };
 
   return (
-    <div className={cn("flex flex-col gap-4 px-2 py-3", className)}>
+    <div className={cn("flex flex-col px-2 py-3", roomy ? "gap-6" : "gap-4", className)}>
       {noPanes && (
         <p className="px-2 py-2 text-sm text-muted-foreground">{t("home.empty.noAgents")}</p>
       )}
@@ -231,7 +255,7 @@ export function ThreadSidebar({
           own while there are agents, so the rows below never shift when the first pane needs you or
           the last one is answered. */}
       {(agents.length > 0 || (onOrderChange && !noPanes)) && (
-        <div className="flex items-center justify-between gap-2 px-2">
+        <div className={cn("flex items-center justify-between gap-2 px-2", roomy && "min-h-11")}>
           {agents.length > 0 ? (
             <StatusSummaryLine
               panes={urgent}
@@ -250,6 +274,8 @@ export function ThreadSidebar({
                 onOrderChange(next);
               }}
               compact
+              // The large screen's icon buttons are 20px glyphs in 44px boxes, these three too.
+              {...(roomy ? { iconClassName: "size-5" } : {})}
             />
           )}
         </div>
@@ -258,7 +284,7 @@ export function ThreadSidebar({
       {/* The Pinned section, in the section voice Shells and Launch wear, with no dot and no count,
           and it does not fold: a pin is the one thing this sheet was opened to reach. */}
       {pinned.length > 0 && (
-        <Section id="switch-pinned" headingId="switch-pinned-heading" label={t("home.pinned.title")}>
+        <Section id="switch-pinned" roomy={roomy} headingId="switch-pinned-heading" label={t("home.pinned.title")}>
           {pinnedShown.map((a) => (
             <PaneRow
               key={paneRowKey(a)}
@@ -266,6 +292,7 @@ export function ThreadSidebar({
               pane={a}
               active={paneRowKey(a) === currentPaneKey}
               onSelect={onSelect}
+              roomy={roomy}
             />
           ))}
         </Section>
@@ -280,10 +307,11 @@ export function ThreadSidebar({
         // The heading NAMES THE ORDER, which is what pays for the compact glyphs in the row above.
         rankedRows.length > 0 && (
           <Section
+            roomy={roomy}
             id="switch-activity"
             label={t(order === "cache" ? "paneOrder.coldest" : "paneOrder.recent")}
             count={rankedRows.length}
-            tone="strong"
+            tone={roomy ? "quiet" : "strong"}
           >
             {rankedRows.map((a) => (
               <PaneRow
@@ -292,6 +320,7 @@ export function ThreadSidebar({
                 pane={a}
                 active={paneRowKey(a) === currentPaneKey}
                 onSelect={onSelect}
+                roomy={roomy}
               />
             ))}
           </Section>
@@ -300,10 +329,11 @@ export function ThreadSidebar({
         <>
           {sections.map(({ group: g, rows }) => (
             <Section
+              roomy={roomy}
               key={g.key}
               id={`switch-ws-${g.key.replace(/[^A-Za-z0-9_-]/gu, "_")}`}
-              label={g.label}
-              tone="strong"
+              label={g.heading ?? g.label}
+              tone={roomy ? "quiet" : "strong"}
               mark={worstTriage(g.panes) === "needs" ? "blocked" : undefined}
               trailing={<StatusCounts panes={g.panes} className="shrink-0 text-[11px] text-muted-foreground" />}
             >
@@ -314,6 +344,7 @@ export function ThreadSidebar({
                   pane={a}
                   active={paneRowKey(a) === currentPaneKey}
                   onSelect={onSelect}
+                  roomy={roomy}
                 />
               ))}
             </Section>
@@ -321,6 +352,7 @@ export function ThreadSidebar({
 
           {shellRows.length > 0 && (
             <Section
+              roomy={roomy}
               id="switch-shells"
               label={t("home.sidebar.shells")}
               count={shellRows.length}
@@ -330,9 +362,11 @@ export function ThreadSidebar({
               {shellRows.map((p) => (
                 <PaneRow
                   key={paneRowKey(p)}
+                  id={rowDomId(p)}
                   pane={p}
                   active={paneRowKey(p) === currentPaneKey}
                   onSelect={onSelect}
+                  roomy={roomy}
                 />
               ))}
             </Section>
@@ -342,6 +376,7 @@ export function ThreadSidebar({
 
       {launchers.length > 0 && onLaunch && (
         <Section
+          roomy={roomy}
           id="switch-launch"
           label="Launch"
           count={launchers.length}
@@ -378,6 +413,7 @@ function Section({
   trailing,
   open,
   onToggle,
+  roomy,
   children,
 }: {
   id: string;
@@ -390,10 +426,12 @@ function Section({
   mark?: AgentStatus | undefined;
   /** A plain status-palette bullet, for a section that is a kind of thing (Shells, Launch). */
   dot?: string | undefined;
-  tone?: "muted" | "strong";
+  tone?: "muted" | "strong" | "quiet";
   trailing?: React.ReactNode;
   open?: boolean;
   onToggle?: (open: boolean) => void;
+  /** The large screen's sidebar: a hairline between rows. */
+  roomy: boolean;
   children: React.ReactNode;
 }) {
   const foldable = open !== undefined && onToggle !== undefined;
@@ -411,22 +449,35 @@ function Section({
         {...(trailing !== undefined ? { trailing } : {})}
         {...(foldable ? { open, onToggle, controls: id } : {})}
       />
-      {(!foldable || open) && <div id={id}>{children}</div>}
+      {(!foldable || open) && (
+        <div id={id} className={roomy ? ROW_RULES : undefined}>
+          {children}
+        </div>
+      )}
     </section>
   );
 }
+
+// THE HAIRLINE BETWEEN ROWS (DESIGN.md §4: a boundary is drawn once). Each row after the first draws
+// it on its own top edge, inside the 1px its transparent border already reserves, so it costs no
+// height and never meets the alarm edge's colour. Inset to the rows' 16px text line.
+const ROW_RULES =
+  "[&>*+*]:relative [&>*+*]:before:pointer-events-none [&>*+*]:before:absolute [&>*+*]:before:inset-x-2 [&>*+*]:before:-top-px [&>*+*]:before:h-px [&>*+*]:before:bg-rule";
 
 function PaneRow({
   id,
   pane,
   active,
   onSelect,
+  roomy,
 }: {
-  /** The row's DOM id, for the summary line's jump. Shell rows need none. */
+  /** The row's DOM id, for the summary line's jump. Every row has one, shells too. */
   id?: string;
   pane: AgentView;
   active: boolean;
   onSelect: (pane: AgentView) => void;
+  /** The large screen's sidebar ({@link ThreadSidebarProps.roomy}). */
+  roomy: boolean;
 }) {
   const isShell = pane.kind === "shell";
   // ONE NAME, ONE PLACE (lib/pane-name.ts), the same way round as every other row in the app: the
@@ -442,6 +493,10 @@ function PaneRow({
     <button
       id={id}
       type="button"
+      // The row's full identity (paneRowKey), read back by a large screen's row gestures (a hold
+      // opens "Open here" and "Open beside", a drag carries the row into the strip, ADR 0120). The
+      // gestures sit on a host around this list, so the list itself takes only the tap.
+      data-pane-key={paneRowKey(pane)}
       onClick={() => onSelect(pane)}
       aria-current={active ? "page" : undefined}
       className={cn(
@@ -449,12 +504,14 @@ function PaneRow({
         // changes the paint. Added by state it would pull the text 1px in and grow the row 2px,
         // which is the zig-zag every switcher row above and below it would then sit out of line
         // with. This is a gap list, not a divide-y one, so a four-sided edge is the right mark.
-        "flex w-full min-w-0 items-center gap-2.5 rounded-lg border border-transparent px-2.5 py-2 text-left transition-colors",
+        "flex w-full min-w-0 items-center gap-2.5 rounded-lg border border-transparent text-left transition-colors",
+        // The sidebar's 16px inset is the list's 8 plus the row's 8, and its 44px floor a little more air.
+        roomy ? "min-h-11 px-2 py-2.5" : "px-2.5 py-2",
         active ? "bg-accent text-accent-foreground" : "hover:bg-muted/60 active:bg-muted",
         // The switcher is exactly where you jump TO the thing that needs you, so it must be able to
-        // SHOW that — it renders every pane identically otherwise. Staying denser than the dashboard
-        // is fine; being unable to mark a blocked pane is not. (isAttention, so the rule isn't
-        // re-derived here.)
+        // SHOW that across the whole row, not only in the mark on the logo. Staying denser than the
+        // dashboard is fine; being unable to mark a blocked pane is not. (isAttention, so the rule
+        // isn't re-derived here.)
         //
         // The border is applied even to the ACTIVE row, so the two cues compose: the pane you're in
         // AND blocked keeps both its accent fill and its alarm edge. Only the fill is withheld,
@@ -464,22 +521,33 @@ function PaneRow({
       )}
     >
       {isShell ? (
-        <TerminalSquare className="size-3.5 shrink-0 text-muted-foreground" />
+        <Icon name="shell-pane" className="size-3.5 shrink-0 text-muted-foreground" />
       ) : (
-        // Status is conveyed by the row's alarm edge and the heading's dot; the row leads with the logo.
-        <AgentIcon agent={pane.agent} className="size-5" />
+        // EVERY ROW SAYS ITS OWN STATUS (issue #695): the mark on the logo's corner, as the closed rail
+        // draws it. Before ADR 0063 the row's section said it. The heading's counts say how many panes
+        // work or wait, not which ones, so four panes in one space left the reader to open each one.
+        // The mark repaints and never moves the row. Its backing is the surface under it: the sidebar
+        // and the sheet are both on `--card`, the current row on `--accent`. A shell row keeps the bare
+        // glyph, as on the dashboard: nobody waits on a shell's status.
+        <PaneGlyph pane={pane} className="size-5" markOn={active ? "bg-accent" : "bg-card"} named />
       )}
       <div className="min-w-0 flex-1">
         <div className="flex min-w-0 items-baseline gap-1">
-          <span className="min-w-0 truncate text-sm font-medium">{name}</span>
-          <PaneBadge pane={pane} className="shrink-0 self-center" />
+          <span className={cn("min-w-0 truncate text-sm font-medium", roomy && "leading-5", roomy && !active && "text-foreground")}>{name}</span>
+          <PaneBadge pane={pane} className={cn("shrink-0 self-center", roomy && "text-muted-foreground")} />
+          {/* A finished pane nobody opened: the dashboard's square, after the name, so a row agrees with
+              the heading's `■` count. The slot is kept on every agent row, so a name truncates at one
+              width whether the mark is drawn or not (DESIGN.md §2). */}
+          {!isShell && <UnseenMark on={isUnseen(pane)} reserve />}
           {/* The cache reading trails the name, same corner as the dashboard row (agent-card.tsx,
-              via PaneMeta), but without PaneMeta's host and session chips: this sheet asked for the
-              cache reading alone, and a crew-wide switcher row is a separate call. `row`, not
-              `button` — the whole row is already a `<button>`, and a button cannot nest inside one. */}
+              via PaneMeta), but without PaneMeta's session chip. `row`, not `button` — the whole row
+              is already a `<button>`, and a button cannot nest inside one. The machine is the glyph
+              at the end of the place line below, not a chip here. */}
           <CacheChip cache={pane.cache} variant="row" className="ml-auto shrink-0" />
         </div>
-        <div className="flex min-w-0 items-baseline gap-1 text-[11px] text-muted-foreground">
+        {/* `leading-4` on the large screen: a stated line box, so the second line always fits inside
+            the row and its descenders are never clipped by the truncation. */}
+        <div className={cn("flex min-w-0 items-baseline gap-1 text-[11px] text-muted-foreground", roomy && "leading-4")}>
           <span className="max-w-[45%] shrink truncate">{space}</span>
           {tab && (
             <>
@@ -499,6 +567,13 @@ function PaneRow({
               </span>
             </>
           )}
+          {/* WHICH MACHINE, as its tint and its glyph alone (Altan, 2026-10-21): on a crew this sheet
+              lists every machine's panes, and in activity order there is no heading to say whose. A
+              word would be a third thing on a line that already carries the place, so the machine is
+              the one mark the dashboard row and the pane header already use for it, with the name in
+              the label. Hidden on a one-machine install by HostChip's own rule, so a solo row is
+              byte-identical. `self-center`: a glyph has no baseline to stand on. */}
+          <HostChip host={pane.host} variant="glyph" className="ml-auto self-center" />
         </div>
         {/* A durable program's own line, when it set one (WIRE.md 7.11). A third line only for such a pane. */}
         {subtitle !== null && (
@@ -546,9 +621,9 @@ function LaunchRow({
       className="flex w-full min-h-11 items-center gap-2.5 rounded-lg border border-transparent px-2.5 py-2 text-left transition-colors hover:bg-muted/60 active:bg-muted disabled:opacity-60"
     >
       {busy ? (
-        <Loader2 className="size-4 shrink-0 animate-spin text-muted-foreground" aria-hidden />
+        <Icon name="busy" className="size-4 shrink-0 animate-spin text-muted-foreground" aria-hidden />
       ) : (
-        <Play className="size-4 shrink-0 text-muted-foreground" aria-hidden />
+        <Icon name="launch" className="size-4 shrink-0 text-muted-foreground" aria-hidden />
       )}
       <span className="flex min-w-0 flex-col">
         <span className="flex min-w-0 items-baseline gap-1.5">

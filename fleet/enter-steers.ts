@@ -20,6 +20,7 @@ export function withEnterSubmit(profile: Profile): Profile {
 }
 
 /** Whether a text into a running turn goes in with the submit keys: they are Enter, and Enter steers. */
-export function steersWithEnter(keys: Profile["keys"]): boolean {
+export function steersWithEnter(keys: Profile["keys"], profileId?: string): boolean {
+  if (profileId !== undefined && !ENTER_STEERS_PROFILES.has(profileId)) return false;
   return keys.enterWhileRunning === "steers" && keys.submit.includes("Enter");
 }

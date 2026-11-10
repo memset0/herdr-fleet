@@ -32,7 +32,7 @@ Use validated deployment configuration to select Core mode, with one endpoint re
 
 Resolve local pane addresses with the native Core client, verify live state and reject remote addresses. Attach the terminal through the native Core attach command (its CLI is `attach <terminal>`, not the TUI's `terminal attach --takeover`), retaining the existing ttyd/Gateway transport and browser exclusivity. Preserve endpoint selection in the spawned environment; requests do not choose executable arguments or sockets. Manual fit uses a retained native attachment/connection with current row geometry; test against an isolated real Core before accepting its ownership/geometry semantics.
 
-Bind associations to the permanent Core id returned by hello, its session and local terminal address. Hash opaque references through owned binding utilities. Never convert old TUI references by matching an address or label. Identity, resize and attachment changes remain in owned modules; introduce an upstream port only where the current generic snapshot cannot carry the necessary identity, and record it in FORK.toml with a focused verification.
+Bind associations to the permanent Core id returned by hello and its local terminal address. Each selected Core server owns one session; hashing its permanent identity supplies the association session scope without coupling identity to a client alias or socket path. Hash opaque references through owned binding utilities. Never convert old TUI references by matching an address or label. Identity, resize and attachment changes remain in owned modules; introduce an upstream port only where the current generic snapshot cannot carry the necessary identity, and record it in FORK.toml with a focused verification.
 
 ### 4. Review and shrink the fork boundary deliberately
 
@@ -60,3 +60,11 @@ Upstream ADRs remain its text. Preserve the adopted upstream changelog as a verb
 ## Todoist retirement
 
 The owner explicitly selected removal in the same 4.0.0 release. Delete the owned Todoist service, OAuth/callback/API routes, sidebar/settings/task-send UI, translations and dedicated tests/assets. Remove only its fork entries and narrow ports; retain shared bindings, favorites and tags. Existing external tasks, credentials and association files remain operator-owned and are not deleted or revoked. Inventory every live source reference and pass both typechecks plus boundary checks after removal. This is the major-change simplification review’s largest removal.
+
+## Upstream adoption details
+
+Upstream’s anonymous install ping defaults on in 1.28. Fleet preserves its existing no-egress rule through its owned child environment (`COLLIE_TELEMETRY=false`), without editing upstream telemetry code. Upstream Web profile fixtures select their original profiles through an owned test setup; Fleet UI fixtures opt in through the existing Fleet build flag. The manual-fit extension is inactive outside a Fleet build, avoiding an extra state update during native handover animations.
+
+Both HTTP listeners explicitly outlast the browser send deadline (130 s HTTP > 120 s browser > 110 s forward > 90 s maximum execution). Bun’s default HTTP idle bound is 10 s, so changing only the protocol and callers would still abandon a quiet send. The bridge receives one owned constant at its listener; the Gateway is fully owned. Existing route and upload/body gates remain unchanged.
+
+The bulk adoption also exposed a pipefail/early-grep race in staged-path guards. Here-strings preserve their existing predicates while avoiding a producer SIGPIPE on thousands of staged paths; protocol and changelog guards remain enabled.

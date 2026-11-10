@@ -15,8 +15,10 @@ import {
   SEND_OUTCOMES,
   SEND_CAUSES,
   SEND_REASONS,
+  SEND_LATES,
   readSendCap,
   readSurfaceWords,
+  reservedLead,
   RECEIPT_DETAIL_MAX,
   type SendCap,
   type SendCause,
@@ -28,7 +30,9 @@ import {
   type SendReceiptRow,
   type SendReceiptsAnswer,
   type SendStep,
+  STALE_SCREEN,
 } from "./surface/send";
+import type { ProfileStatus } from "./surface/profile";
 import { ASK_CHANNELS, type Ask, type AskOption, type Surface, type SurfaceComposer, type SurfaceModal, type SurfaceReason, type SurfaceTurn } from "./surface/surface";
 
 /** What the composer needs of an answer. The receipt's marks and gaps are for the log. */
@@ -50,6 +54,7 @@ export interface SendReply {
   readonly cause: SendCause | null;
 }
 
+const PROFILE_STATUSES: readonly ProfileStatus[] = ["verified", "provisional", "revoked"];
 const OFFERS: readonly SendOffer[] = ["append", "replace", "cancel", "submit", "discard", "commit", "keys"];
 const TURNS: readonly SurfaceTurn[] = ["idle", "running", "unknown"];
 const COMPOSERS: readonly SurfaceComposer[] = ["empty", "draft", "unreachable", "unknown"];
@@ -98,7 +103,9 @@ export function readSurface(value: JsonValue | undefined): Surface | null {
     modal = { ask };
   }
   const reason = pick(node.reason, REASONS);
-  return reason === null ? { revision, turn, modal, composer } : { revision, turn, modal, composer, reason };
+  const read: Surface = reason === null ? { revision, turn, modal, composer } : { revision, turn, modal, composer, reason };
+  // `staleFrame` (2026-10-25): only `true` is a word; anything else is dropped.
+  return node.staleFrame === true ? { ...read, staleFrame: true } : read;
 }
 
 /** The bridge's answer, field by field; null when it is not one (a proxy page, an old bridge). */
@@ -127,12 +134,14 @@ export function readSendReply(body: JsonValue | undefined): SendReply | null {
 /** A row of the list being built, field by field. */
 type RowDraft = { -readonly [K in keyof SendReceiptRow]: SendReceiptRow[K] };
 
-const STEPS: readonly SendStep[] = ["s0", "clear", "probe", "write", "s1", "commit", "s2"];
+const STEPS: readonly SendStep[] = ["profile", "settle", "s0", "proof", "clear", "probe", "probeWrite", "write", "s1", "commandSettle", "commit", "s2"];
 
 /**
  * The session page's list of recent sends, row by row. A row that is not whole is left out. The wire
- * carries no text and no screen row, and this reads nothing of either: outcome, reason, time, the
- * keys by name and the measured gaps, and on a refusal Collie's own line and four Surface words.
+ * carries no screen row, and this reads none: outcome, reason, time, the keys by name and the measured
+ * gaps, on a refusal Collie's own line and four Surface words, and `line`, the one line of the text
+ * the bridge kept when Sent's rule would (see {@link SendReceiptRow.line}). Any other text field is
+ * not read.
  */
 export function readSendReceipts(body: JsonValue | undefined): SendReceiptsAnswer {
   const list = asJsonObject(body)?.receipts;
@@ -163,11 +172,19 @@ export function readSendReceipts(body: JsonValue | undefined): SendReceiptsAnswe
     const row: RowDraft = { requestId, at, mode, outcome, keys, gapsMs, harness, version: asJsonString(node.version) ?? null };
     if (reason !== null) row.reason = reason;
     if (cap !== null) row.cap = cap;
+    const profileId = asJsonString(node.profileId);
+    if (profileId !== undefined && profileId.length > 0) row.profileId = profileId;
+    const profileStatus = pick(node.profileStatus, PROFILE_STATUSES);
+    if (profileStatus !== null) row.profileStatus = profileStatus;
     if (node.queued === true) row.queued = true;
+    const late = pick(node.late, SEND_LATES);
+    if (late !== null) row.late = late;
     const detail = asJsonString(node.detail);
     if (detail !== undefined && detail.length > 0) row.detail = detail.slice(0, RECEIPT_DETAIL_MAX);
     const saw = readSurfaceWords(node.saw);
     if (saw !== null) row.saw = saw;
+    const line = asJsonString(node.line);
+    if (line !== undefined && line.length > 0) row.line = line;
     receipts.push(row);
   }
   return { receipts };
@@ -194,15 +211,21 @@ export function readHeldCancelAnswer(body: JsonValue | undefined): HeldCancelAns
 export type SendNote =
   | "sent"
   | "queued"
+  | "steered"
+  | "steerUnsupported"
+  | "steerNotAllowed"
   | "held"
   | "expired"
   | "cancelled"
   | "discarded"
   | "draft"
+  | "draftCommand"
   | "typed"
   | "unconfirmed"
   | "noticeKey"
   | "noticeKeyHeld"
+  | "staleScreen"
+  | "staleScreenProbe"
   | "capConfirm"
   | "unknown"
   | "busy"
@@ -296,6 +319,10 @@ function refusalNote(reason: SendReason | null): SendNote {
       return "writeFailed";
     case "id_reused":
       return "idReused";
+    case "steer_unsupported":
+      return "steerUnsupported";
+    case "steer_not_allowed":
+      return "steerNotAllowed";
     default:
       return "refused";
   }
@@ -311,6 +338,8 @@ export function sendNote(outcome: SendOutcome | null, reason: SendReason | null)
     case "sent":
     case "effective":
       return "sent";
+    case "steered":
+      return "steered";
     case "discarded":
       return "discarded";
     case "held":
@@ -326,6 +355,26 @@ export function sendNote(outcome: SendOutcome | null, reason: SendReason | null)
     case "unknown":
     case null:
       return "unknown";
+  }
+}
+
+/**
+ * The catalog key of a note's sentence. Most are under `composer.protocol.*`; the steer ones (M69)
+ * live with their feature. `steered` is a sentence here; Recent sends wears the one word
+ * (`sendReceipts.outcome.steered`), as its other outcomes do.
+ */
+export type NoteKey = `composer.protocol.${Exclude<SendNote, "steered" | "steerUnsupported" | "steerNotAllowed">}` | "composer.steer.unsupported" | "composer.steer.notAllowed" | "composer.steer.steered";
+
+export function noteKey(note: SendNote): NoteKey {
+  switch (note) {
+    case "steered":
+      return "composer.steer.steered";
+    case "steerUnsupported":
+      return "composer.steer.unsupported";
+    case "steerNotAllowed":
+      return "composer.steer.notAllowed";
+    default:
+      return `composer.protocol.${note}`;
   }
 }
 
@@ -348,7 +397,8 @@ export function capSentence(cap: SendCap, say: (vars: { count: string; harness: 
  * no row label of its own; it wears the Discard button's word, so the list never calls it "Sent".
  */
 export function receiptLabelKey(outcome: SendOutcome): "composer.protocol.discard" | `sendReceipts.outcome.${Exclude<SendOutcome, "discarded">}` {
-  return outcome === "discarded" ? "composer.protocol.discard" : `sendReceipts.outcome.${outcome}`;
+  if (outcome === "discarded") return "composer.protocol.discard";
+  return `sendReceipts.outcome.${outcome}`;
 }
 
 /**
@@ -358,15 +408,19 @@ export function receiptLabelKey(outcome: SendOutcome): "composer.protocol.discar
  */
 export function receiptSentence(
   row: SendReceiptRow,
-  say: (key: `composer.protocol.${SendNote}` | "sendReceipts.queued", vars?: Record<string, string>) => string,
+  say: (key: NoteKey | "sendReceipts.queued" | "sendReceipts.returned", vars?: Record<string, string>) => string,
 ): string | null {
   if (row.outcome === "discarded") return say("composer.protocol.discarded");
+  // Stop gave the queued text back to the box (ADR 0122): the row is still `sent`, but not waiting.
+  if (row.late === "returned") return say("sendReceipts.returned");
   if (row.queued === true) return say("sendReceipts.queued");
   if (row.reason === undefined) return null;
   if (row.outcome === "refused" && row.reason === "unconfirmed" && row.cap !== undefined) {
     return capSentence(row.cap, (vars) => say("composer.protocol.capConfirm", vars));
   }
-  return say(`composer.protocol.${sendNote(row.outcome, row.reason)}`);
+  // A steered row wears its one word, like Sent; the sentence is the status line's under the box.
+  if (row.outcome === "steered") return null;
+  return say(noteKey(sendNote(row.outcome, row.reason)));
 }
 
 /** The verdict half of a reading: whether the draft goes, the sentence, the offers. */
@@ -378,16 +432,23 @@ function noteAndOffers(reply: SendReply, offers: readonly SendOffer[]): Verdict 
   // A send of one of the digits a notice above the box printed: the sentence says the digit would answer it.
   // With no commit offered (a running turn, a Replace) it names the card and the turn's end, not Type here.
   if (reply.outcome === "refused" && reply.cause === "notice_key") return { clear: false, note: offers.includes("commit") ? "noticeKey" : "noticeKeyHeld", offers };
+  // A box that did not take the probe, and a second read of the same rows (2026-10-25). A line longer
+  // than the plain one says a probe character may remain in the live editor: that has its own sentence.
+  if (reply.outcome === "refused" && reply.cause === "stale_screen") return { clear: false, note: reply.detail === null || reply.detail === STALE_SCREEN ? "staleScreen" : "staleScreenProbe", offers };
   const note = sendNote(reply.outcome, reply.reason);
   // A discard has its own outcome: the box emptied, but nothing went to the agent, so the phone's draft stays.
   // A send queued behind the running turn went out all the same: it clears, and its sentence says it waits.
   if (note === "sent") return { clear: true, note: reply.queued ? "queued" : note, offers: [] };
+  // A steer the witness saw land: the text went into the running turn, so the draft goes like a send's.
+  if (note === "steered") return { clear: true, note, offers: [] };
   if (note === "discarded") return { clear: false, note, offers: [] };
   // A held send is the bridge's to keep: its text now lives in the queued row above the box, so the
   // draft goes. Not a refusal, so it carries no offers. `expired` and `cancelled` end a held send and
   // answer a DELETE or a snapshot row, not a POST; they are read here for a receipt that arrives late.
   if (note === "held") return { clear: true, note, offers: [] };
   if (note === "expired" || note === "cancelled") return { clear: false, note, offers: [] };
+  // A command onto a draft is offered Replace and Cancel, not Add (the bridge's list): the sentence names only those.
+  if (note === "draft" && offers.includes("replace") && !offers.includes("append")) return { clear: false, note: "draftCommand", offers };
   return { clear: false, note, offers };
 }
 
@@ -418,13 +479,18 @@ export function readSend(reply: SendReply): SendReading {
  * the reasons whose bridge line repeats the phone's sentence: `unconfirmed`, `stale_surface`, `busy`,
  * `pane_gone`, `draft_present`, and `not_free` when the line is the plain one. Every other reason,
  * and every outcome that is no refusal, keeps the line: it says what the phone's sentence does not
- * (a `not_free` that names what is open, a dialog that Enter may have answered).
+ * (a `not_free` that names what is open, a dialog that Enter may have answered). An `unconfirmed`
+ * with the `short_pane` cause keeps it too: the line names the rows read and what to resize. A
+ * `probe_failed` with the `late_keys` cause keeps it as every `probe_failed` does: the line says the
+ * agent showed Collie's keys late and to wait, which the phone's sentence does not (#623).
  */
 const REPEATS_THE_NOTE: ReadonlySet<SendReason> = new Set(["unconfirmed", "stale_surface", "busy", "pane_gone", "draft_present"]);
 const PLAIN_NOT_FREE = "The input box is not free.";
 
 function ownSentence(reply: SendReply): boolean {
   if (reply.outcome !== "refused" || reply.reason === null) return false;
+  if (reply.cause === "stale_screen") return true;
+  if (reply.cause === "short_pane") return false;
   if (REPEATS_THE_NOTE.has(reply.reason)) return true;
   return reply.reason === "not_free" && reply.detail === PLAIN_NOT_FREE;
 }
@@ -448,8 +514,11 @@ export function offerMode(offer: SendOffer, text = ""): SendMode | null {
 /** The leads a text is a command by: a slash command, a shell line, a file mention at the start. */
 export const COMMAND_LEADS = ["/", "!", "@"] as const;
 
-/** Whether a text is sent as a `command` (it starts with a reserved lead), not as a plain `send`. */
+/**
+ * Whether a text is sent as a `command` (it starts with a reserved lead), not as a plain `send`. It
+ * reads the lead with the bridge's own rule (`reservedLead`), so a text whose first word is the path
+ * of a saved upload (an image attached first) is a message, never a slash command.
+ */
 export function isCommand(text: string): boolean {
-  const head = text.trimStart();
-  return COMMAND_LEADS.some((lead) => head.startsWith(lead));
+  return reservedLead(text, COMMAND_LEADS) !== null;
 }

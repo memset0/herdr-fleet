@@ -2,23 +2,16 @@
 //
 // The journal answers in `TranscriptEntry[]` — one turn holding several parts — and a card draws ONE
 // thing. This is the whole distance between the two, and it is small on purpose: the tool vocabulary
-// on both sides is already the same nine kinds (`bridge/journal/tool-call.ts`), so what is left is a
+// on both sides is already the same ten kinds (`bridge/journal/tool-call.ts`), so what is left is a
 // role-to-kind table, an `output` field, and a status.
 //
 // It lives beside the cards rather than in the bridge because it is a VIEW decision. Whether a
-// compaction summary reads as speech or as a notice, whether a picture the agent drew becomes a line
-// of text, and whether a denied call is drawn like a failed one are all questions about what the
+// compaction summary reads as speech or as a notice, whether a picture the agent drew is drawn inline,
+// and whether a denied call is drawn like a failed one are all questions about what the
 // reader sees; the bridge has already said everything it knows by the time an entry gets here.
 //
 // Nothing in it is async, touches the DOM or imports React, so every rule in it is table-testable.
-//
-// It resolves ONE string, and only because it is the one block here that is a sentence rather than a
-// fact: a journal part that is a picture has no image block to become, so it becomes a notice naming
-// the reference. `t()` is a synchronous lookup in a module store — no DOM, no React, no promise — so
-// the sentence above still holds. A view that MEMOISES the result must key that memo on the locale
-// revision (`useLocale().revision`), which `components/session-stream.tsx` does.
 
-import { t } from "./i18n";
 import type { ToolCall, TranscriptEntry, TranscriptPart } from "./types";
 import { firstLine, parseEnvelopeHeader, type EnvelopeHeader } from "./walky";
 
@@ -28,9 +21,10 @@ export type ChatToolStatus = "running" | "done" | "failed" | "denied";
 /**
  * The five kinds whose card can show what the call PRINTED, given the room.
  *
- * The other three have nothing to print: an edit draws its diff, a read draws its range, and a
- * delete leaves no output at all. Writing the union as a conditional over {@link ToolCall} rather
- * than as a second list of branches is what stops the two from drifting when a tenth kind lands.
+ * The others have nothing to print: an edit draws its diff, a read draws its range, a delete leaves
+ * no output at all, and a plan's result is the list the card already draws (ADR 0119). Writing the
+ * union as a conditional over {@link ToolCall} rather than as a second list of branches is what stops
+ * the two from drifting when another kind lands.
  */
 type WithOutput<T> = T extends { kind: "execute" | "search" | "fetch" | "task" | "other" }
   ? T & { output?: string }
@@ -60,7 +54,9 @@ export type ChatItem =
   // asked for it (Settings → Appearance → Compaction summaries); without it the item is a one-line
   // marker, so the recap's thousands of characters are never built into a block at all.
   | { id: string; ts?: string; kind: "compacted"; text?: string }
-  | { id: string; ts?: string; kind: "tool"; tool: ChatToolCall; status: ChatToolStatus };
+  // `image`: a picture the call returned (a `Read` of an image, a screenshot), drawn under its card.
+  | { id: string; ts?: string; kind: "tool"; tool: ChatToolCall; status: ChatToolStatus; image?: string }
+  | { id: string; ts?: string; kind: "image"; url: string };
 
 /**
  * The item as a finished text: `partial` dropped. A text the program was writing when the pane stopped working will not
@@ -91,6 +87,7 @@ export function withToolOutput(call: ToolCall, output: string): ChatToolCall {
       return { ...call, output };
     case "other":
       return { ...call, output };
+    // A plan has no output to print: its result only echoes the list the card draws row by row.
     default:
       return call;
   }
@@ -122,6 +119,8 @@ export function toolStatus(part: Extract<TranscriptPart, { kind: "tool" }>): Cha
   if (result === undefined) return "running";
   if (result.denied) return "denied";
   if (result.isError) return "failed";
+  // A background job or sub-agent answers "started" at once; the call says it has not ended.
+  if (part.call && "ongoing" in part.call && part.call.ongoing === true) return "running";
   return "done";
 }
 
@@ -181,14 +180,14 @@ export function itemsOf(entry: TranscriptEntry, showCompactions = false): ChatIt
         if (part.text.trim()) items.push({ id, ts, kind: "thinking", text: part.text, ...grows });
         return;
       case "image":
-        // There is no image block. A notice naming the URL is visible and honest; dropping the part
-        // would hide a picture the agent drew, which is the one thing the journal can see and the
-        // mirror cannot (pi draws by direct Kitty placement).
-        items.push({ id, ts, kind: "notice", text: t("chat.card.image", { url: part.url }) });
+        items.push({ id, ts, kind: "image", url: part.url });
         return;
-      case "tool":
-        items.push({ id, ts, kind: "tool", tool: toolOf(part), status: toolStatus(part) });
+      case "tool": {
+        const item: ChatItem = { id, ts, kind: "tool", tool: toolOf(part), status: toolStatus(part) };
+        if (part.result?.imageUrl) item.image = part.result.imageUrl;
+        items.push(item);
         return;
+      }
     }
   });
   return items;

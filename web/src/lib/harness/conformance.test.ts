@@ -29,6 +29,14 @@ const PANES_DIR = join(import.meta.dirname, "..", "..", "fixtures", "panes");
 // `claude--working.txt` left this set on 2026-10-19: the rating survey over its box is a notice now
 // (ADR 0109), and lifts its card.
 const NEUTRAL = new Set([
+  // herdr-core captures (M78 spec 04), plain text: an empty box, a draft, two paragraphs and a running
+  // turn, each under a live box. Composer chrome, never a dialog.
+  "claude--v21314-core-idle--w120.txt",
+  "claude--v21314-core-idle--w60.txt",
+  "claude--v21314-core-draft--w120.txt",
+  "claude--v21314-core-draft--w60.txt",
+  "claude--v21314-core-draft-two-paragraphs--w120.txt",
+  "claude--v21314-core-working--w120.txt",
   // The default footer's own hints ("esc to interrupt", "↓ to manage") sit under a live box.
   "claude--working-esc-to-interrupt.txt",
   "claude--idle-background-shell.txt",
@@ -123,6 +131,28 @@ const NEUTRAL = new Set([
   "claude--v2301-usage-panel-over-box--w82.txt",
   "claude--v2301-working-draft--w100.txt",
   "claude--v2301-working-queued-message--w100.txt",
+  // Claude Code 2.1.312: a two-paragraph draft with an upload path kept as text (2026-10-30 lab). A draft, no dialog.
+  "claude--v2312-draft-upload-path--w100.txt",
+  // Claude Code 2.1.312: a fresh empty box with the usage row under its footer (live check 2026-10-30). No dialog.
+  "claude--v2312-weekly-limit-row--w120.txt",
+  // Claude Code 2.1.317 with the next-steps plugin (discussion 659, 2026-11-03): `next:` rows over a box holding a ghost suggestion or a draft. No dialog.
+  "claude--v2317-next-steps-suggestions-dismissed--w100.txt",
+  "claude--v2317-next-steps-suggestions-empty-box--w100.txt",
+  "claude--v2317-next-steps-suggestions-one-line-draft--w100.txt",
+  // Claude Code 2.1.309 after Escape and after a refused permission (live rerun 2026-10-23):
+  // `Interrupted · What should Claude do instead?` over an empty box. An ordinary box, no dialog.
+  "claude--v2-1-309-interrupted--w120.txt",
+  "claude--v2-1-309-permission-denied--w120.txt",
+  // The same in a fresh session under the fullscreen TUI (second live pass), blank rows over the box.
+  "claude--v2-1-309-interrupted-fresh-session--w120.txt",
+  "claude--v2-1-309-permission-denied-fresh-session--w120.txt",
+  // Escape before the first token (second live pass): the prompt back in the box as a draft, no dialog.
+  "claude--v2-1-309-stopped-prompt-restored--w120.txt",
+  // Claude Code 2.1.310 turns under the transcript's echo of a sent prompt (live 2026-10-25): a long
+  // echo wrapped to column 2, with a numbered or a bullet answer, and a one-row echo. An ordinary box.
+  "claude--v2-1-310-working-echo-bullets--w120.txt",
+  "claude--v2-1-310-working-echo-numbered--w120.txt",
+  "claude--v2-1-310-working-echo-one-line--w120.txt",
   "claude--v2301-working-quiet--w100.txt",
   // Claude Code 2.1.302 turns with a list, a menu and a "(y/n)" line in the answer above the box (the
   // 2026-10-17 field case): the answer streaming with no spinner, and a running turn over the agents
@@ -327,6 +357,8 @@ describe("the walk-pair table", () => {
         "claude | trust | Quick safety check",
         "codex | trust | Trust this folder?",
         "omp | select | Pick a colour",
+        "omp | select | What work should I plan?",
+        "omp | select | Which of these would be most useful for your work right now?",
         "pi | select | 1",
         "pi | select | Auth",
         "pi | select | Which package manager do you want to use?",

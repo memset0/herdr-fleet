@@ -28,6 +28,7 @@ import type { PreviewSelectModel } from "./harness/preview-model";
 import type { MultiSelectModel } from "./harness/multi-select-model";
 import type { MenuModel } from "./harness/menu-model";
 import type { AutocompleteModel } from "./harness/autocomplete-model";
+import type { BoxTextModel } from "./harness/box-text-model";
 import type { UnreadDialogModel } from "./harness/unread-dialog-model";
 
 // Re-export every dialog model so consumers (the block components, the race guards) have one import
@@ -54,6 +55,7 @@ export type {
 } from "./harness/multi-select-model";
 export type { MenuModel, MenuAction, MenuNav, MenuLeftRight } from "./harness/menu-model";
 export type { AutocompleteModel, AutocompleteEntry } from "./harness/autocomplete-model";
+export type { BoxTextModel, BoxTextRun } from "./harness/box-text-model";
 export type { UnreadDialogModel } from "./harness/unread-dialog-model";
 
 /** One visual line: the styled segments that make it up, with the line-terminating "\n" removed. */
@@ -129,15 +131,28 @@ export interface MenuBlock {
 
 /**
  * The agent's own COMPLETION POPUP while the operator types into its input box (Claude's slash-command
- * menu). Unlike every other non-`raw` kind this one is PRESENTATIONAL: it emits no keystrokes and has
- * no row in harness/dialog-contract.ts, because nothing on that screen owns the keyboard — the input
- * box is live underneath it and the composer must stay free to type. `lines` is the popup's own region
- * (provenance; the block renders the parsed entries, not the text) and is not part of the find
- * haystack.
+ * menu). Like `box-text` and unlike every other non-`raw` kind, it is PRESENTATIONAL: it emits no
+ * keystrokes and has no row in harness/dialog-contract.ts, because nothing on that screen owns the
+ * keyboard — the input box is live underneath it and the composer must stay free to type. `lines` is
+ * the popup's own region (provenance; the block renders the parsed entries, not the text) and is not
+ * part of the find haystack.
  */
 export interface AutocompleteBlock {
   kind: "autocomplete";
   autocomplete: AutocompleteModel;
+  lines: StyledLine[];
+}
+
+/**
+ * A titled box the agent draws over its live input box to print text (Claude's Authentication box
+ * while `awsAuthRefresh` runs). PRESENTATIONAL like `autocomplete`: it emits no keystrokes and has no
+ * row in harness/dialog-contract.ts, because the input box is live underneath it. `lines` is the box's
+ * own region (provenance; the block renders the parsed rows, not the text) and is not part of the find
+ * haystack.
+ */
+export interface BoxTextBlock {
+  kind: "box-text";
+  boxText: BoxTextModel;
   lines: StyledLine[];
 }
 
@@ -168,6 +183,7 @@ export type Block =
   | MultiSelectBlock
   | MenuBlock
   | AutocompleteBlock
+  | BoxTextBlock
   | UnreadDialogBlock;
 
 /**
@@ -328,7 +344,7 @@ function styledLine(segments: AnsiSegment[]): StyledLine {
   return { segments };
 }
 
-// The two generic StyledLine probes. They live HERE, in the core AST module that imports nothing
+// The generic StyledLine probes. They live HERE, in the core AST module that imports nothing
 // from harness/, because they are properties of a StyledLine and of no grammar: the renderer
 // (components/ansi-output.tsx) and every harness adapter need them, and a second copy in a
 // harness-specific module would make a neutral consumer import a harness. harness/claude/markers
@@ -354,6 +370,13 @@ const QUESTION_MARK = /[?\uFF1F\u061F]/;
  *  dialog's question by this, so a question that ends in "？" is still a question. */
 export function hasQuestionMark(text: string): boolean {
   return QUESTION_MARK.test(text);
+}
+
+/** The index of the last row holding visible text, or -1 when every row is blank. */
+export function lastNonBlankIndex(texts: readonly string[]): number {
+  let i = texts.length - 1;
+  while (i >= 0 && isBlank(texts[i]!)) i--;
+  return i;
 }
 
 /** Drop a trailing run of blank lines (keeps the raw block above the buttons tight). Exported for the

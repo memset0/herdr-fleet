@@ -117,6 +117,29 @@ describe("the held-send card", () => {
     expect(document.querySelector('[data-slot="held-card"]')).toHaveAttribute("data-mode", "single");
   });
 
+  it("a held row says what holds it: the turn, something open at the box, or a draft", () => {
+    const cases: [HeldRow["cause"], string][] = [
+      ["turn_running", "Queued. Sends when the turn ends."],
+      [undefined, "Queued. Sends when the turn ends."],
+      ["not_free", "Held. Something is open at the box; sends when it clears."],
+      ["bound", "Held. Something is open at the box; sends when it clears."],
+      ["probe_failed", "Held. Something is open at the box; sends when it clears."],
+      ["draft_present", "Held. Sends when the box is empty."],
+    ];
+    for (const [cause, sentence] of cases) {
+      renderComposer({ held: [row("req00001", "held", cause === undefined ? {} : { cause })] });
+      expect(document.querySelector('[data-slot="held-row"]')).toHaveTextContent(sentence);
+      cleanup();
+    }
+  });
+
+  it("a row held for a turn only because the agent's version could not be read says so (#594)", () => {
+    renderComposer({ held: [row("req00001", "held", { cause: "turn_running", versionUnread: true })] });
+    expect(document.querySelector('[data-slot="held-row"]')).toHaveTextContent(
+      "Queued. Collie could not read this agent's version, so it sends when the turn ends. Run collie doctor to see why.",
+    );
+  });
+
   it("two held rows start collapsed: a count, the first text on two lines, a Show all toggle and no Cancel", () => {
     renderComposer({ held: [row("req00001", "held"), row("req00002", "held", { text: "second\nline" })] });
     const card = document.querySelector('[data-slot="held-card"]')!;
@@ -329,14 +352,36 @@ describe("the held-send card", () => {
     expect(screen.queryByRole("button", { name: "Resend the message" })).toBeNull();
   });
 
-  it("a crew member's pane shows its rows with no row buttons, collapsed or open: the cancel route does not cross a link", async () => {
+  // Issue 740: on a crew member's pane the yellow cards had no buttons, so an expired row stood until the
+  // reporter deleted the hold files by hand. Cancel and Dismiss now go through the pane route the lead forwards.
+  it("a crew member's pane keeps Cancel and Dismiss, and draws no Resend, Submit or Discard (issue 740)", async () => {
     const user = userEvent.setup();
-    renderComposer({ scope: { host: "badger" }, held: [row("req00001", "held"), row("req00002", "ended", { outcome: "expired" })] });
-    expect(screen.queryByRole("button", { name: /cancel|resend|dismiss|submit|discard/i })).toBeNull();
-    // Show all is a view, not an act on the queue, so it stays and the rows can still be read.
+    renderComposer({
+      scope: { host: "badger" },
+      held: [row("req00001", "held"), row("req00002", "ended", { outcome: "expired" }), row("req00003", "ended", { outcome: "typed_not_submitted" })],
+    });
     await user.click(showAll());
-    expect(document.querySelectorAll('[data-slot="held-row"]')).toHaveLength(2);
-    expect(screen.queryByRole("button", { name: /cancel|resend|dismiss|submit|discard/i })).toBeNull();
+    expect(document.querySelectorAll('[data-slot="held-row"]')).toHaveLength(3);
+    expect(screen.getByRole("button", { name: "Cancel the queued message" })).toBeInTheDocument();
+    expect(screen.getAllByRole("button", { name: "Dismiss the message" })).toHaveLength(2);
+    expect(screen.queryByRole("button", { name: /resend|submit|discard/i })).toBeNull();
+  });
+
+  it("Dismiss on a crew member's pane goes to the pane route with the host, never to /api/send (issue 740)", async () => {
+    const user = userEvent.setup();
+    const local = fakeDelete({ body: { result: "dismissed" } });
+    const forwarded: string[] = [];
+    server.use(
+      http.delete("/api/pane/:pane/held", ({ request, params }) => {
+        forwarded.push(`${String(params.pane)}${new URL(request.url).search}`);
+        return HttpResponse.json({ result: "dismissed" });
+      }),
+    );
+    renderComposer({ scope: { host: "badger" }, held: [row("req00002", "ended", { outcome: "expired" })] });
+    await user.click(screen.getByRole("button", { name: "Dismiss the message" }));
+    await waitFor(() => expect(forwarded).toHaveLength(1));
+    expect(forwarded[0]).toMatch(/\?request=req00002&host=badger$/u);
+    expect(local).toEqual([]);
   });
 
   it("a locked composer shows its rows with no buttons", () => {

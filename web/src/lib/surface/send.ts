@@ -16,8 +16,10 @@ import { modalWord, type Surface, type SurfaceReason } from "./surface";
  * bridge keeps it and sends it, under the same request id, once the pane reads free. A held request
  * ends like any other send, or `expired` (nobody could send it within 30 minutes; the text is kept for
  * a Resend), or `cancelled` (the person took it back before it went out).
+ * `steered` (M69) ends a steer (`when: "steer"`): the harness drew its own sign that the text went into
+ * the running turn. A steer the harness queued instead ends `sent` with `queued`, as a queued send does.
  */
-export const SEND_OUTCOMES = ["effective", "sent", "discarded", "typed_not_submitted", "refused", "unknown", "held", "expired", "cancelled"] as const;
+export const SEND_OUTCOMES = ["effective", "sent", "discarded", "typed_not_submitted", "refused", "unknown", "held", "expired", "cancelled", "steered"] as const;
 export type SendOutcome = (typeof SEND_OUTCOMES)[number];
 
 /**
@@ -49,6 +51,11 @@ export const SEND_REASONS = [
   "modal_cue",
   "stale_token",
   "submit_failed",
+  // typed_not_submitted (M69, counsel on the Edge 5 candidate): a steer's read after its pause and
+  // before the steer key showed a dialog (`dialog_open`: the key would answer it), or no box, or a
+  // modal it cannot tell (`unreadable`). The text is in the box; no key was pressed.
+  "dialog_open",
+  "unreadable",
   // unknown: the request ended without evidence either way. `bound` also refuses: an S0 past its own
   // bound (2 reads, 1200 ms) ends `refused(bound)`, since nothing was written yet.
   "bound",
@@ -58,6 +65,12 @@ export const SEND_REASONS = [
   // unknown: a send queued behind a running turn met a dialog as its Enter went out; the dialog may
   // have taken the Enter, so the person checks the card before answering it
   "dialog_after_enter",
+  // refused (M69): a steer on a pane whose profile names no steer key, on a version Collie may not
+  // trust with a running turn, or for a text that is no message (a command)
+  "steer_unsupported",
+  // refused (M69): a steer from a caller that is not a person's send from the phone (walky talky, a
+  // hook, the CLI): an agent's text never steers a turn
+  "steer_not_allowed",
 ] as const;
 export type SendReason = (typeof SEND_REASONS)[number];
 
@@ -87,6 +100,14 @@ export function takesManualSend(surface: Surface): boolean {
   return surface.modal === "unknown" || surface.modal === "unreadable";
 }
 
+/**
+ * When a send goes into a running turn (M69). `steer`: into the turn the agent runs now, with the
+ * profile's steer key (`keys.steer`). Absent: as before, queued for after the turn (or held). A steer
+ * is the person's explicit choice per send; nothing makes it the default.
+ */
+export const SEND_WHENS = ["steer"] as const;
+export type SendWhen = (typeof SEND_WHENS)[number];
+
 /** A next action the answer offers, each a new request with a new id (`cancel` and `keys` send nothing). */
 export type SendOffer = "append" | "replace" | "cancel" | "submit" | "discard" | "commit" | "keys";
 
@@ -108,6 +129,12 @@ export interface SendRequestBody {
    * itself once it took the new request. The phone never sends a row's text back (it may be masked).
    */
   readonly resendOf?: string | undefined;
+  /**
+   * `steer` (M69): a send into a running turn steers it instead of queueing (the Send button's long
+   * press, only where the pane view says `canSteer`). Absent: exactly the send as before. On an idle
+   * turn a steer goes as a plain send and its receipt says `sent`.
+   */
+  readonly when?: SendWhen | undefined;
 }
 
 /**
@@ -143,8 +170,19 @@ export interface ReadMark {
   readonly hash: string;
 }
 
-/** The steps whose time a receipt measures. */
-export type SendStep = "s0" | "clear" | "probe" | "write" | "s1" | "commit" | "s2";
+/**
+ * The steps whose time a receipt measures. `profile` is the wait for the harness's profile and binary
+ * version before S0 (#594): the send's bound starts after it, so it is measured and never counted.
+ * `proof`: the probe of a draft S0 read, with its second S0 read where it needed one (2026-10-25); S0's gap leaves it out.
+ * `settle`: an S0 whose screen geometry was in flux (a resize between its reads, or a torn read), and the
+ * pause before the one more S0 that was judged (2026-10-26); S0's gap leaves it out too.
+ * `commandSettle`: a command on a harness with a command list, from the S1 read that first passed to the
+ * read at least the settle interval later that agreed with it on the rows under the box (2026-10-26); S1's
+ * gap ends at the first of the two.
+ * `probeWrite`: the multiplexer's time for the probe character's write and its Backspace (2026-10-30); the
+ * probe's gap leaves it out, as the probe's read bound does.
+ */
+export type SendStep = "profile" | "settle" | "s0" | "proof" | "clear" | "probe" | "probeWrite" | "write" | "s1" | "commandSettle" | "commit" | "s2";
 
 /**
  * The receipt, a closed list of fields. It is written to disk, so it holds no screen text and no
@@ -156,9 +194,18 @@ export interface SendReceipt {
   readonly paneId: string;
   readonly paneGeneration: string;
   readonly harness: string;
+  /** The harness's version: of the pane's own program when the bridge could see it ({@link binary}), else of the binary on its PATH. */
   readonly version: string | null;
   readonly profileId: string | null;
   readonly profileStatus: ProfileStatus | null;
+  /**
+   * The file whose version was read, when the read ran the pane's own program (its foreground process,
+   * ADR 0124): an absolute path, a local fact. A pane whose argv[0] is a bare `omp` carries it too, by
+   * its executable, which may be the same file the PATH holds. Absent when the bridge's PATH lookup
+   * answered (no pane, no foreground read, a file it could not stat, a pane over its read limit). The
+   * recent-sends rows, and so a problem report, do not carry it.
+   */
+  readonly binary?: string;
   readonly textHash: string;
   readonly textLength: number;
   readonly s0: ReadMark | null;
@@ -176,6 +223,13 @@ export interface SendReceipt {
    * profile says Enter queues while running). Absent on every other receipt.
    */
   readonly queued?: true;
+  /**
+   * Set later on a `queued` or `steered` receipt whose text came back: the harness put it back into its
+   * input box (a Stop ended the turn and the harness returned its queue and its steers to the box), and
+   * it never became a prompt. The receipt keeps its outcome and `queued`, which were true when it
+   * settled; this says what happened after (ADR 0122). Absent on every other receipt.
+   */
+  readonly late?: SendLate;
   /**
    * Set on a send a program session took (M56 spec 14): the request id the program acknowledged.
    * The driver passes the request id to the program unchanged, so it equals `requestId`. Absent on
@@ -195,6 +249,16 @@ export interface SendReceipt {
    */
   readonly saw?: SurfaceWords;
 }
+
+/** What may happen to a settled receipt later (see {@link SendReceipt.late}). One word today. */
+export const SEND_LATES = ["returned"] as const;
+
+/**
+ * The receipt detail when Discard on a returned queued card (ADR 0122) found the box changed: nothing
+ * was pressed and only the card went. The bridge writes it; the phone reads it to say so in its own words.
+ */
+export const RETURNED_CARD_DROPPED = "The box no longer holds this message. Collie removed its card and pressed nothing.";
+export type SendLate = (typeof SEND_LATES)[number];
 
 /** The longest {@link SendReceipt.detail} a receipt keeps. */
 export const RECEIPT_DETAIL_MAX = 240;
@@ -239,8 +303,8 @@ export function surfaceWords(surface: Surface): SurfaceWords {
 
 /**
  * One row of a pane's recent sends, for the session page (M56 spec 09): the receipt's outcome, reason,
- * time, keys by name and measured gaps. No text, no hash of the text and no screen row: a receipt is
- * shown the way it is stored.
+ * time, keys by name and measured gaps, and the text as the one line the bridge kept of it, when it
+ * kept one. No hash of the text and no screen row: a receipt is shown the way it is stored.
  */
 export interface SendReceiptRow {
   readonly requestId: string;
@@ -253,14 +317,28 @@ export interface SendReceiptRow {
   readonly gapsMs: Readonly<Partial<Record<SendStep, number>>>;
   readonly harness: string;
   readonly version: string | null;
+  /**
+   * The reader profile the bridge used for this send and its status, when it had one (ADR 0123: the
+   * setup block of a report names them). Absent on a pane with no profile and from a bridge before 1.24.1.
+   */
+  readonly profileId?: string;
+  readonly profileStatus?: ProfileStatus;
   /** The cap's numbers, on the cap's refusal only (see {@link SendReceipt.cap}). */
   readonly cap?: SendCap;
   /** Set when the send was queued behind a running turn (see {@link SendReceipt.queued}). */
   readonly queued?: true;
+  /** Set when a queued send came back to the box and never became a prompt (see {@link SendReceipt.late}). */
+  readonly late?: SendLate;
   /** The line of a refusal or a `typed_not_submitted` (see {@link SendReceipt.detail}). */
   readonly detail?: string;
   /** What the bridge saw at that end, four words (see {@link SendReceipt.saw}). */
   readonly saw?: SurfaceWords;
+  /**
+   * The text that was sent, as the one line the bridge keeps when Sent's own rule would keep it
+   * (`bridge/secret-line.ts`): absent for a text that looked like a secret, ran over several lines or
+   * was too long. The row prints it so ten rows can be told apart; it is never searched.
+   */
+  readonly line?: string;
 }
 
 /** Where a held request stands (M56 spec 15): waiting, going out now, or closed with its text kept. */
@@ -272,6 +350,14 @@ export type HeldState = "held" | "running" | "ended";
  * (`expired`, `refused`, `typed_not_submitted`, `unknown`); its text stays for a Resend until the
  * person dismisses it. A request that went out, or that the person cancelled, has no row.
  */
+/**
+ * What holds a held request now: the refusal it was held from (a running turn, something open at the
+ * box, a box that did not read twice the same in time, a probe that found the box not free, a draft).
+ * The phone picks the row's sentence by it.
+ */
+export const HELD_CAUSES = ["turn_running", "not_free", "bound", "draft_present", "probe_failed"] as const;
+export type HeldCause = (typeof HELD_CAUSES)[number];
+
 export interface HeldRow {
   readonly requestId: string;
   readonly mode: SendMode;
@@ -284,6 +370,13 @@ export interface HeldRow {
   /** On an `ended` row: how it closed. */
   readonly outcome?: SendOutcome;
   readonly reason?: SendReason;
+  /** What holds it ({@link HeldCause}); absent on a row a bridge before 1.24.1 held. */
+  readonly cause?: HeldCause;
+  /**
+   * Held for a running turn only because Collie could not read the harness's version (#594): the
+   * profile would take a message in a turn, but not on a version it cannot name. `collie doctor` says why.
+   */
+  readonly versionUnread?: true;
 }
 
 /** What `DELETE /api/send/<id>` answers (M56 spec 15): a held request cancelled, or an ended row dismissed. */
@@ -328,14 +421,31 @@ export interface SendAnswer {
 
 /**
  * The rules an answer may name beside its reason. `notice_key`: the send's whole text is one of the
- * keys a notice above the box printed, which a box holding it alone would answer.
+ * keys a notice above the box printed, which a box holding it alone would answer. `stale_screen`: the
+ * input box on the screen does not take keys (a probe character landed elsewhere or nowhere) and a
+ * second S0 read showed the same rows, so the screen is a stale image (2026-10-25). `short_pane`: the
+ * read holds fewer rows than the profile's input box takes, so the pane is too short to draw it (a
+ * Herdr tab full of splits squeezed a Claude Code pane to two rows, 2026-10-30); the bridge's detail
+ * names the rows and the fix, and the phone shows it under its sentence. `late_keys`: the box held only
+ * Collie's earlier probe characters, which the agent drew after the probe had stopped looking, and its
+ * proof did not show in time either (Claude Code 2.1.314 busy under its agents footer, #623); the
+ * bridge's detail says to wait and send again, and the phone shows it under its sentence.
  */
-export const SEND_CAUSES = ["notice_key"] as const;
+export const SEND_CAUSES = ["notice_key", "stale_screen", "short_pane", "late_keys"] as const;
 export type SendCause = (typeof SEND_CAUSES)[number];
 
-/** The offers that go with an outcome and reason. A pane with no frame cannot prove a draft, so it gets the key pad instead. */
-export function offersFor(outcome: SendOutcome, reason: SendReason | undefined, framed: boolean): SendOffer[] {
-  if (outcome === "refused" && reason === "draft_present") return framed ? ["append", "replace", "cancel"] : ["keys"];
+/**
+ * The bridge's line for a `stale_screen` refusal (2026-10-25). The phone says it in its own words; a
+ * line that adds to it (a probe character that may remain in the box) gets its own sentence too.
+ */
+export const STALE_SCREEN = "The screen shows an input box that does not take keys. The pane may need a redraw; focus it on the desktop or resize it.";
+
+/**
+ * The offers that go with an outcome and reason. A pane with no frame cannot prove a draft, so it gets the key pad instead.
+ * A command onto a draft (`command`) is offered Replace and Cancel only: Add would send the draft with the command at its end.
+ */
+export function offersFor(outcome: SendOutcome, reason: SendReason | undefined, framed: boolean, command = false): SendOffer[] {
+  if (outcome === "refused" && reason === "draft_present") return framed ? (command ? ["replace", "cancel"] : ["append", "replace", "cancel"]) : ["keys"];
   if (outcome === "refused" && reason === "unconfirmed") return ["commit", "keys"];
   // Every reason: the person reads the screen and decides; with no frame the bridge binds both to the rows hash.
   if (outcome === "typed_not_submitted") return ["submit", "discard", "keys"];
@@ -369,10 +479,25 @@ export function sendLines(text: string): string[] {
   return lines;
 }
 
-/** The reserved lead a text starts with (after leading blanks), or null. */
+/**
+ * The first word of a text is a file the bridge saved from an upload: an absolute path whose last two
+ * segments are `uploads/<pane>-<base36 time>-<8 hex>.<ext>` (the name `bridge/server.ts` gives it).
+ * Pure and shape only, so the phone and the bridge agree and neither touches the disk. A real command
+ * name never holds a second slash.
+ */
+export function startsWithUploadPath(text: string): boolean {
+  const word = text.trimStart().split(/\s/u, 1)[0] ?? "";
+  return /^\/(?:[^/]+\/)*uploads\/[A-Za-z0-9_-]+-[a-z0-9]+-[0-9a-f]{8}\.[A-Za-z0-9]+$/u.test(word);
+}
+
+/**
+ * The reserved lead a text starts with (after leading blanks), or null. A text whose first word is
+ * the path of a saved upload (a screenshot sent with no words) starts with `/` but is no command.
+ */
 export function reservedLead(text: string, leads: readonly string[]): string | null {
   const head = text.trimStart();
-  return leads.find((lead) => head.startsWith(lead)) ?? null;
+  const lead = leads.find((candidate) => head.startsWith(candidate)) ?? null;
+  return lead === "/" && startsWithUploadPath(head) ? null : lead;
 }
 
 /** The text with every white-space character removed: the compare form for wrapped rows. */

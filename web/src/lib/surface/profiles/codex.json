@@ -24,7 +24,7 @@
         "blank": true
       },
       "prompt": {
-        "pattern": "^›(?: (?!\\d{1,2}\\. )(?<draft>.*))?$",
+        "pattern": "^[›»](?: (?!\\d{1,2}\\. )(?<draft>.*))?$",
         "column": 0
       },
       "bottom": {
@@ -37,6 +37,9 @@
     },
     "placeholders": {
       "texts": [],
+      "patterns": [
+        "^Ask Codex to do anything$"
+      ],
       "sgr": 2
     },
     "volatile": {
@@ -48,16 +51,18 @@
         "maxRows": 2,
         "footerMaxRows": 2,
         "hints": [
-          "^\\s*← for agents · \\? for shortcuts$",
-          "^\\s*\\? for shortcuts$",
-          "^\\s*[Tt]ab to queue message$"
+          "^\\s*← for agents · \\? for shortcuts(?:\\s{2,}\\S.*)?$",
+          "^\\s*\\? for shortcuts(?:\\s{2,}\\S.*)?$",
+          "^\\s*[Tt]ab to queue message$",
+          "^\\s*⚠ \\d+(?: warnings?)? · f2(?: to view)?$"
         ]
       }
     },
     "runningRows": [
       "\\s·\\s[⠀-⣿]$",
       "^\\s*[Tt]ab to queue message\\b",
-      "^\\s*(?:shift\\+←|alt \\+ ↑) edit last queued message$"
+      "^\\s*(?:shift\\+←|alt \\+ ↑) edit last queued message$",
+      "^\\s*• Messages to be submitted after next tool call\\b"
     ]
   },
   "keys": {
@@ -92,7 +97,23 @@
       "pattern": "^\\s*↳ (?<text>\\S.*?)\\s*$",
       "hint": "^\\s*(?:shift\\+←|alt \\+ ↑) edit last queued message\\s*$",
       "hintGap": 0
-    }
+    },
+    "steer": [
+      "Enter"
+    ],
+    "steerDelayMs": 1000,
+    "steerWitness": [
+      {
+        "pattern": "^\\s*↳ (?<text>\\S.*?)\\s*$",
+        "hint": "^\\s*• Messages to be submitted after next tool call\\b",
+        "hintGap": 0,
+        "hintAbove": true
+      },
+      {
+        "pattern": "^[›»] (?<text>\\S.*?)\\s*$",
+        "transcript": true
+      }
+    ]
   },
   "collapse": {
     "pattern": "\\[Pasted Content (?<chars>\\d+) chars\\]"

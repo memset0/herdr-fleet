@@ -5,7 +5,8 @@ import { OPERATOR_FONT_PREFIX, type OperatorFontFace } from "@/lib/operator-font
 import { SHIPPED_FONTS, isShippedFont, type ShippedFont } from "@/lib/shipped-fonts";
 import { DEFAULT_THEME_ID, isThemeId } from "@/lib/theme/schema";
 
-// The device's own look — today one field, `font`, and the shape is an OBJECT on purpose.
+// The device's own look — its face, its colour theme, its math engine — and the shape is an OBJECT on
+// purpose.
 //
 // WHY AN OBJECT FOR ONE FIELD. This is the seed of theming: an accent colour, a density, a corner
 // radius are all the same kind of decision and all belong in the same key. A bare string here would
@@ -31,7 +32,7 @@ const STORAGE_KEY = "collie:design:v1";
 export { SHIPPED_FONTS, isShippedFont, type ShippedFont };
 
 /** The face a device gets before it says otherwise. */
-export const DEFAULT_FONT: ShippedFont = "aldrich";
+export const DEFAULT_FONT: ShippedFont = "atkinson";
 
 export interface DesignPrefs {
   /** A {@link ShippedFont}, or `op:<basename>`. Never validated by its type — always by a predicate. */
@@ -56,6 +57,42 @@ export interface DesignPrefs {
    * tomorrow is honoured, and `lib/theme/store.ts` falls back to `collie` while it is gone.
    */
   theme?: string;
+  /**
+   * Which engine typesets LaTeX in Markdown (Chat, History, the Files preview). Absent means off: the
+   * parser reads `$` as a dollar, as it did before math existed, and neither engine is downloaded.
+   * Like `theme`, the default is the absence of the field, so a device that goes back to off stores
+   * what a device that never chose stores.
+   */
+  math?: Exclude<MathEngine, "off">;
+}
+
+/** The math renderers a device may choose. `off` is the default and is never stored. */
+export const MATH_ENGINES = ["off", "katex", "mathjax"] as const;
+export type MathEngine = (typeof MATH_ENGINES)[number];
+
+export function isMathEngine(value: string): value is MathEngine {
+  return value === "off" || value === "katex" || value === "mathjax";
+}
+
+/**
+ * The id of the shipped theme that was folded into `collie` (the theme "Collie New" became the
+ * default look under the name "Collie"). A device that stored it is moved to `collie` on first read.
+ */
+export const RETIRED_THEME_ID = "collie-new";
+
+/** The library's storage key (lib/theme/store.ts holds the same string; design.test.ts keeps them equal). */
+const LIBRARY_KEY = "collie:themes:v1";
+
+/** True when the imported library holds a theme with this id. Total: any failure reads as "no". */
+function libraryHas(id: string): boolean {
+  try {
+    const doc = parseJsonObject(localStorage.getItem(LIBRARY_KEY) ?? "");
+    const list = doc?.themes;
+    if (!Array.isArray(list)) return false;
+    return list.some((entry) => asJsonString(asJsonObject(entry)?.id) === id);
+  } catch {
+    return false;
+  }
 }
 
 const DEFAULT_PREFS: DesignPrefs = { font: DEFAULT_FONT };
@@ -71,7 +108,7 @@ export function isDesignFont(value: string): boolean {
 /**
  * The class `<html>` should carry for `font`, or `""` for the default (which wears none).
  *
- * The one place a stored string turns into a class name, and it can only ever return one of five
+ * The one place a stored string turns into a class name, and it can only ever return one of seven
  * literals spelled right here. public/theme-init.js holds the pre-paint twin of this function —
  * minus the operator branch, which has no pre-paint path by design.
  */
@@ -80,19 +117,26 @@ export function fontClass(font: string): string {
   if (font === "grotesk") return "font-grotesk";
   if (font === "plex") return "font-plex";
   if (font === "geist") return "font-geist";
-  if (font === "atkinson") return "font-atkinson";
+  if (font === "nunito") return "font-nunito";
+  if (font === "aldrich") return "font-aldrich";
   if (font.startsWith(OPERATOR_FONT_PREFIX)) return "font-operator";
   return "";
 }
 
-const FONT_CLASSES = ["font-system", "font-grotesk", "font-plex", "font-geist", "font-atkinson", "font-operator"] as const;
+const FONT_CLASSES = ["font-system", "font-grotesk", "font-plex", "font-geist", "font-nunito", "font-aldrich", "font-operator"] as const;
 
 function load(): DesignPrefs {
   try {
     if (typeof localStorage === "undefined") return DEFAULT_PREFS;
     const raw = localStorage.getItem(STORAGE_KEY);
     if (raw === null) return DEFAULT_PREFS;
-    return parseDesignPrefs(raw);
+    const parsed = parseDesignPrefs(raw);
+    if (parsed.theme !== RETIRED_THEME_ID || libraryHas(RETIRED_THEME_ID)) return parsed;
+    // The retired shipped id: `collie` now wears that look. Drop the field and write it back, once.
+    const kept: DesignPrefs = { font: parsed.font };
+    if (parsed.operatorFont !== undefined) kept.operatorFont = parsed.operatorFont;
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(kept));
+    return kept;
   } catch {
     return DEFAULT_PREFS; // private mode / SSR
   }
@@ -121,6 +165,8 @@ export function parseDesignPrefs(raw: string): DesignPrefs {
   if (face !== undefined) next.operatorFont = face;
   const theme = asJsonString(doc.theme);
   if (theme !== undefined && isThemeId(theme) && theme !== DEFAULT_THEME_ID) next.theme = theme;
+  const math = asJsonString(doc.math);
+  if (math !== undefined && isMathEngine(math) && math !== "off") next.math = math;
   return next;
 }
 
@@ -177,8 +223,9 @@ export function setDesignFont(font: string, face?: OperatorFontFace): void {
   if (face !== undefined) next.operatorFont = face;
   // A shipped choice drops the mirror: keeping a face nobody is using would leave the next cold load
   // injecting an `@font-face` for a font it does not render. The theme is another field entirely and
-  // survives a change of face.
+  // survives a change of face, and so does the math engine.
   if (prefs.theme !== undefined) next.theme = prefs.theme;
+  if (prefs.math !== undefined) next.math = prefs.math;
   prefs = next;
   persist();
   applyFontClass(prefs.font);
@@ -195,9 +242,30 @@ export function setDesignTheme(id: string): void {
   const next: DesignPrefs = { font: prefs.font };
   if (prefs.operatorFont !== undefined) next.operatorFont = prefs.operatorFont;
   if (id !== DEFAULT_THEME_ID) next.theme = id;
+  if (prefs.math !== undefined) next.math = prefs.math;
   prefs = next;
   persist();
   for (const fn of listeners) fn();
+}
+
+/**
+ * Choose the math engine. `off` is the absence of the field (see {@link DesignPrefs.math}); a value
+ * that is not an engine is ignored, and every other field is kept as it is.
+ */
+export function setDesignMath(engine: string): void {
+  if (!isMathEngine(engine)) return;
+  const next: DesignPrefs = { font: prefs.font };
+  if (prefs.operatorFont !== undefined) next.operatorFont = prefs.operatorFont;
+  if (prefs.theme !== undefined) next.theme = prefs.theme;
+  if (engine !== "off") next.math = engine;
+  prefs = next;
+  persist();
+  for (const fn of listeners) fn();
+}
+
+/** The engine this device chose, `off` when it chose none. */
+export function mathEngineOf(p: DesignPrefs): MathEngine {
+  return p.math ?? "off";
 }
 
 function subscribe(fn: () => void): () => void {

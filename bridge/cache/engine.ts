@@ -47,6 +47,11 @@ export interface CacheProbe {
    */
   selectedModel?: string;
   /**
+   * Epoch ms of the record that chose {@link selectedModel}, by the transcript's own clock. The pane's
+   * label weighs it against the start hook's model (bridge/pane-model.ts). Absent: the turn's time.
+   */
+  selectedModelAt?: number;
+  /**
    * The effort the next turn runs at, in the harness's own word: pi's thinking level, Claude's
    * `/effort`, Codex's reasoning effort, opencode's variant (`high`, `xhigh`, `max`). A level set after
    * the turn above wins, as {@link selectedModel} does. Display only: no rule and no TTL reads it.
@@ -54,6 +59,26 @@ export interface CacheProbe {
   effort?: string;
   /** Subscription or API key, where the transcript says so. */
   tier?: Tier;
+  /**
+   * What the turn above carried into the model, in tokens: its input plus what it read from and wrote
+   * to the cache, in the harness's own fields (.adr/0115, amended 2026-10-25). The phone's context dot
+   * divides it by {@link contextWindow}. Absent when the log does not say, or when a compaction came
+   * after the turn, so the next turn has not measured the new context yet. Display only: no rule and
+   * no TTL reads it.
+   */
+  contextTokens?: number;
+  /**
+   * The model's context window in tokens, when the log itself names it (Codex) or the harness's own
+   * model catalog on disk does (pi, OMP, OpenCode). Never a guess: absent means no context dot.
+   */
+  contextWindow?: number;
+  /**
+   * What the whole session has cost so far, in US dollars, as the harness's own log states it: the sum
+   * of the cost every assistant message carries (pi, Oh My Pi, OpenCode). Collie prices nothing. Absent
+   * when the log states none, when the sum is zero (a session of aborted turns, a free model) and for a
+   * harness whose log has no cost (Codex). Display only: no rule and no TTL reads it.
+   */
+  costUsd?: number;
   /**
    * Every reset-rule match from just after the PREVIOUS turn to the end of what was read, oldest first.
    * One flat list: {@link evaluate} decides which are pending (newer than `lastRequestAt`) and which
@@ -64,6 +89,19 @@ export interface CacheProbe {
   measuredAt?: number;
   /** One line naming what was read, for a doctor line and a log. Never transcript content. */
   evidence: string;
+}
+
+/**
+ * A read that found no turn, but choices the operator made before the first one: Claude's `/model` or
+ * `/effort` in a session with no message yet, which Claude Code writes to the transcript at once. It
+ * names the model and the effort for the pane's label and says nothing about the cache. Produced by
+ * `JournalAdapter.choiceProbe`, only when the cache probe found no turn.
+ */
+export interface ChoiceOnly {
+  selectedModel?: string;
+  /** Epoch ms of the record that chose it, by the transcript's own clock. */
+  selectedModelAt?: number;
+  effort?: string;
 }
 
 /** What the tracker remembers about one session between polls. In memory only. */

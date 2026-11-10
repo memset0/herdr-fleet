@@ -158,6 +158,8 @@ export type BeaconReading =
       readonly harness: string;
       readonly session: AgentSessionRef;
       readonly markers: readonly BeaconMarker[];
+      /** The process that wrote it is still running: it expired on the heartbeat alone. */
+      readonly running: boolean;
     };
 
 // ── HOOK EDGES (M56 spec 11) ──────────────────────────────────────────────────────────────────────
@@ -207,4 +209,10 @@ export interface EdgeRecord {
    * never ends it. Absent from an older emitter, whose tool edges then end no hold.
    */
   readonly inputHash?: string;
+  /**
+   * The model the session starts on, as the harness's start hook names it (`claude-opus-5-5[1m]`), on a
+   * start edge only. It lets the pane name its model before the transcript holds a turn. Absent from an
+   * older emitter, from every other edge, and from a start that named none (`claude -p` sends none).
+   */
+  readonly model?: string;
 }

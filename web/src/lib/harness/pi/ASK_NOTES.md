@@ -18,6 +18,7 @@ and the live probes.
 | PR 397 extension, Review page | `←→ tabs • Enter submit • Esc cancel` | review (Enter, Escape) | `pi--v110-review-complete.txt` |
 | OmO ask, one question | `↑↓ move  1-9 select  space select  enter next  tab next question  c comment  esc cancel` | (b) digit | `pi--omo-v5130-single-described*`; probe below |
 | gentle-pi `ask_user_choice`, unnumbered, no status row | `↑↓ navigate • Enter select • Esc cancel` | (a) walk | `pi--v130-gentle-choice.txt`; source below |
+| gentle-pi review consent, numbered, NO rule frame, footer last | `↑↓ choose · Enter confirm · Esc cancel · D details` | (a) walk | `pi--v130-gentle-review-consent.txt`; "A dialog with no rules" below |
 | pi's own selector (`ctx.ui.confirm`, `ctx.ui.select`), unnumbered | `↑↓ navigate  enter select  escape/ctrl+c cancel` | (a) walk | built from source in `ask.test.ts` |
 | pi's own selector with a title of several rows: the stock `permission-gate` example, the command quoted further in | the same | (a) walk | `pi--v0871-permission-gate*`; live taps below |
 
@@ -76,6 +77,18 @@ Read from source, not captured:
 Unnumbered rows are read at column 1 only, never beside a tab strip, with no trailer row (a label
 long enough to wrap comes back at column 1 and declines), and lift by plan (a) only.
 
+A description long enough to wrap (issue 746, gentle-pi 4.7.0 on pi 1.5.0, the report's options had
+two to six rows each) is read from source, not captured. gentle-pi 4.7.0 `lib/native-choice-list.ts`
+still draws `${prefix}${label}\n   ${description}` in a `Text` with one column of padding, and pi-tui
+1.5.0's `wrapTextWithAnsi` breaks between words, drops the space it broke on and keeps no indent, so
+the first description row stands four columns in and every later one at column 1, the padding column.
+Until then `readUnnumbered` stopped at that row and the screen read as an unread dialog: no option in
+the dock. A row at column 1 now joins the description when a description row stands right over it
+(`WRAPPED_DESCRIPTION_ROW`); straight under a label it is still a wrapped label and declines.
+`unnumberedStart` crosses such a run going up only when a description row tops it, so the title over
+the first option stays the question. The screen in the tests is the capture with long descriptions
+wrapped as the source draws them (`web/src/test/pi-wrapped-choice.ts`).
+
 ### pi's permission gate: a title of several rows (2026-10-17)
 
 pi's stock example `examples/extensions/permission-gate.ts` (the same file in 0.87.1 and 1.3.0) asks
@@ -103,6 +116,44 @@ the card read Yes, No and Cancel, and a tap through `POST /api/ask/<id>` sent `E
 file went from 644 to 777) and printed `Blocked by user` after No.
 `ask_user_question` (`❯` rows, a tab strip) is read from source only and stays raw with the Escape
 card.
+
+## A dialog with no rules: the review-consent screen
+
+Captured 2026-10-18 with pi 1.3.0 and gentle-pi 4.2.0 (`herdr pane read --format ansi`, CRLF rows):
+`pi--v130-gentle-review-consent.txt`. Measured shape, bottom up: there is NO rule frame and NO editor
+or status row under the dialog, so the footer is the last non-blank row of the screen.
+
+- the footer, painted (rgb 127), at column 0: `↑↓ choose · Enter confirm · Esc cancel · D details`;
+- a blank row, one painted description paragraph at column 0 (`Effect: …`, it describes the pointed
+  option), a blank row; both optional, the paragraph at most three rows (`framelessNote`);
+- three numbered options, `N. label`, exactly one `→` at column 0 (rgb 157, the pointed row), the
+  others indented by two spaces;
+- two prose rows, then the bold painted title row, then a blank row and the transcript (`⠙ Working`).
+
+`ask.ts` (`framelessFrame`) reads it only when the footer parses and is painted and the last row, a
+`1.` row stands above it with a header block over it whose first row is painted, and no rule is among
+the rows. The tail decides, as ever: a dialog quoted in prose sits above pi's real editor, whose
+rules make `statusTailBottom` take the tail first, and a plain footer fails `footerAt`. `choose` is
+taught to `parsePiFooter` as moving the pointer and `confirm` as Enter's select; `D details` is a
+letter key the plan never emits. The plan is the walk (arrows, verify the pointer, Enter), and the
+card's last row is `Cancel`, Escape, in the footer's words. Unnumbered rows never lift frameless (a
+column-0 `→ name` is pi's palette).
+
+The second capture, `pi--v130-gentle-review-consent-moved.txt` (after `herdr pane send-keys <pane> Down`),
+has `→` on option 2 and an `Effect:` paragraph that now describes option 2. That paragraph follows the
+pointer, so `coreSignature` blanks the note rows; without it the walk pair would read as a changed
+dialog. The pair is in `walk-pairs.ts`.
+
+Not proven: a walked tap on this screen end to end through the phone.
+
+gentle-pi 4.6.0 on pi 1.5.0 (issue 712, `pi--v150-gentle-review-consent-*.txt`) changed two things, and
+`ask.ts` reads both by shape. The `Effect:` paragraph wraps under its label, so a continuation row hangs
+by the label's width (`Effect: ` is eight columns) and `framelessNote` accepts rows at exactly that
+indent, inside the same three-row cap. And one status row stands under the footer: `framelessFooter`
+takes the row above one painted status row (as `paintedStatus` says, no rule, not ending like a shell
+prompt), with at most one blank row between; the status row is outside the signature. A widget row
+at an indent straight over the title no longer joins the header block. With Gentle Shell's side rail
+beside the dialog (issue 710, open) the rows are cut by the rail and the screen stays raw.
 
 ## OmO, probed by the PR 412 author
 

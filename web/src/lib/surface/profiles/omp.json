@@ -20,12 +20,13 @@
     "frame": {
       "walk": "interior",
       "top": {
-        "pattern": "^(?:╭─{2}.*|(?:\\u{E0B6} |\\s?)(?:π|\\u{F0D57}|[⠀-⣿]\\s+\\d+[smh])\\s.*(?:▶|\\u{E0B0})─.*|\\s?(?:\\u{E0B6} )?(?:(?![\\u{E0A0}-\\u{E0D7}])[\\p{Co}\\p{So}π]|pi|[⠀-⣿]\\s+\\d+[smh])\\s.*(?:─{3}|-{3}).*)$",
+        "pattern": "^(?:╭─{2}.*|(?:\\u{E0B6} |\\s?)(?:π(?:-\\S+)?|\\u{F0D57}|[⠀-⣿]\\s+\\d+[smh])\\s.*(?:▶|\\u{E0B0})─.*|\\s?(?:\\u{E0B6} )?(?:(?![\\u{E0A0}-\\u{E0D7}])[\\p{Co}\\p{So}]|(?:π|pi)(?:-\\S+)?|\\[[^\\]\\s]{1,5}\\]|host|git:|NORMAL|INSERT|VISUAL|V-LINE|REPLACE|[NIVLR]|[⠀-⣿\\\\|/-]\\s+\\d+[smh])\\s.*(?:[─-]{3}|[─-]\\d[\\d.]*%[─-]|[\\dKMB][─-]\\d+%|(?<=[\\s▶>\\u{E0B0}])[─-]{1,2}(?=\\s|$|[◀<\\u{E0B2}])).*)$",
         "column": 0,
-        "maxColumn": 1
+        "maxColumn": 1,
+        "note": "The status row above the box: the first visible left segment, the gauge, an optional right group. First token: a unicode or nerd icon, pi or the brand glyph with a profile tag (pi-work), an ascii icon in brackets ([M] [D] [wt] [T], thinking glyphs [min] [low] [med] [high] [xhi] [max] [~]), host, git:, a vim mode (NORMAL, INSERT, VISUAL, V-LINE, REPLACE or N I V L R), or the running spinner and the turn timer. Gauge, the context line between the two groups (the rule glyph is - in the ascii symbol preset): a run of three rule glyphs; the percent label between rule glyphs (-5%-), which is all the full preset keeps at 80 columns (the percent, a compaction tick and the window label shrink to ─5%─┃200K─); the window label before an overflow percent (200K-120%); or one or two rule glyphs after a space or a cap, when the groups leave that little. Read from pi-tui status-line component.ts (#buildContextGaugeFill, embeddedContextGaugeMinWidth), presets.ts, separators.ts and symbols.ts of OMP 18.12.6, and checked by rendering its own status line through every preset (default, minimal, compact, full, nerd, ascii) with every separator (powerline, powerline-thin, slash, pipe, block, none, ascii), symbol preset (unicode, nerd, ascii) and context line mode (off, percentage, annotated, embedded), at 26 widths from 8 to 200 columns, named and unnamed session, box and band layout, solid and transparent: 262,080 rows, every one matches this pattern and rows (omp-gang 11-geometry, 2026-10-25)."
       },
       "prompt": {
-        "pattern": "^(?:╰─|│) {0,2}(?<draft>(?:(?!\\s{8,}\\S).)*?)(?:\\s{8,}\\S.*?)?(?:\\s*(?:│|█|─?╯))?$",
+        "pattern": "^(?:╰─|│) {0,2}(?<draft>(?:(?!\\s{8,}\\S).)*?)(?:\\s{8,}\\S.*?)?(?<border>\\s*(?:│|█|─?╯))?$",
         "column": 0
       },
       "bottom": {
@@ -34,11 +35,17 @@
         "maxColumn": 3,
         "open": true
       },
-      "rows": "^(?:(?:\\u{E0B6} |\\s?)(?:π|\\u{F0D57}|[⠀-⣿]\\s+\\d+[smh])\\s.*(?:▶|\\u{E0B0}).*|\\s?(?:\\u{E0B6} )?(?:(?![\\u{E0A0}-\\u{E0D7}])[\\p{Co}\\p{So}π]|pi|[⠀-⣿]\\s+\\d+[smh])\\s.*(?:─{3}|-{3}).*|╭─.*|╰─.*|│.*|\\s{3}.*|\\s*)$",
-      "continuation": "^(?:│|╰─)? ?(?<text>.*?)(?:\\s*(?:│|█|─?╯))?$",
+      "rows": "^(?:(?:\\u{E0B6} |\\s?)(?:π(?:-\\S+)?|\\u{F0D57}|[⠀-⣿]\\s+\\d+[smh])\\s.*(?:▶|\\u{E0B0}).*|\\s?(?:\\u{E0B6} )?(?:(?![\\u{E0A0}-\\u{E0D7}])[\\p{Co}\\p{So}]|(?:π|pi)(?:-\\S+)?|\\[[^\\]\\s]{1,5}\\]|host|git:|NORMAL|INSERT|VISUAL|V-LINE|REPLACE|[NIVLR]|[⠀-⣿\\\\|/-]\\s+\\d+[smh])\\s.*(?:[─-]{3}|[─-]\\d[\\d.]*%[─-]|[\\dKMB][─-]\\d+%|(?<=[\\s▶>\\u{E0B0}])[─-]{1,2}(?=\\s|$|[◀<\\u{E0B2}])).*|╭─.*|╰─.*|│.*|\\s{3}.*|\\s*)$",
+      "continuation": "^(?:│|╰─)? ?(?<text>.*?)(?<border>\\s*(?:│|█|─?╯))?$",
       "continuationIndent": 0,
+      "draftIndent": 3,
       "maxDraftRows": 40,
-      "maxTailRows": 3
+      "maxTailRows": 3,
+      "maxWidgetRows": 12,
+      "scroll": {
+        "keeps": "tail",
+        "rows": 17
+      }
     },
     "frameAlternates": [
       {
@@ -126,6 +133,64 @@
         "continuationIndent": 2,
         "maxDraftRows": 40,
         "maxTailRows": 3
+      },
+      {
+        "walk": "interior",
+        "top": {
+          "pattern": "^$",
+          "column": 0,
+          "blank": true,
+          "note": "composer.shape field (OMP 18.12.6 pi-tui editor, settings composer.shape): no rule, no border, no glyph row above. Each draft row opens with the block ▐ and closes with ▌ on the last column; the empty box is one ▐ row with the hint (⇧⇥ to change thinking effort) before the cap. A blank row and the status row follow. The box is the run of ▐ rows under a blank row (omp-gang 11-geometry W5, 2026-10-25)."
+        },
+        "prompt": {
+          "pattern": "^▐(?: (?<draft>(?:(?!\\s{8,}\\S).)*))?(?:\\s{8,}\\S.*|\\s*▌)?$",
+          "column": 0
+        },
+        "bottom": {
+          "pattern": "^",
+          "column": 0,
+          "maxColumn": 3,
+          "open": true
+        },
+        "rows": "^(?:▐.*|\\s*)$",
+        "continuation": "^▐ ?(?<text>(?:(?!\\s{8,}\\S).)*)(?:\\s{8,}\\S.*|\\s*▌)?$",
+        "continuationIndent": 0,
+        "maxDraftRows": 40,
+        "maxTailRows": 3
+      },
+      {
+        "walk": "interior",
+        "note": "The prompt-style answer editor (pi-tui overlays/hook-editor.ts, promptStyle) that the ask tool opens for `Other (type your own)` and `n note`, in the composer's place. Captured on OMP 18.4.4, 18.4.10 and 18.16.0 (issue 704, 2026-11-05): the title border, a spacer, the `> ` gutter row and its wrapped rows indented by the gutter's width, a spacer, the hint `<enter> or <follow-up> submit  <cancel> cancel  <external> external editor`, a spacer and a closed bottom border. Only the prompt-style branch prints ` or ` before `submit`: the hook-style editor, whose Enter inserts a newline, joins its keys with `/`, so that row is what names this box. The title is not read. Ctrl+Q, the follow-up chord, submits in both editor modes, and a raw line feed (Ctrl+J) submits this one too, so a text of more than one line is refused.",
+        "top": {
+          "pattern": "^╭─ \\S.*─╮$",
+          "column": 0
+        },
+        "prompt": {
+          "pattern": "^│ > (?<draft>.*?)(?<border>\\s*│)$",
+          "column": 0
+        },
+        "bottom": {
+          "pattern": "^╰─+╯$",
+          "minCells": 8,
+          "column": 0
+        },
+        "rows": "^(?:╭─ \\S.*─╮|│.*│)$",
+        "trailer": {
+          "row": "^│ \\S.*? or \\S.*? submit(?:\\s.*)?│$",
+          "pad": "^│\\s*│$",
+          "maxPad": 1,
+          "hint": true
+        },
+        "continuation": "^│ {3}(?<text>.*?)(?<border>\\s*│)$",
+        "continuationIndent": 2,
+        "ownPrompt": true,
+        "maxDraftRows": 60,
+        "maxTailRows": 0,
+        "answers": true,
+        "submit": [
+          "ctrl+q"
+        ],
+        "newlineSubmits": true
       }
     ],
     "placeholders": {
@@ -134,7 +199,8 @@
     },
     "volatile": {
       "above": {
-        "maxRows": 6
+        "maxRows": 6,
+        "ticks": true
       },
       "below": {
         "maxRows": 2,
@@ -144,11 +210,58 @@
           "sides": [
             "under"
           ],
-          "pointer": "^(?:❯|\\u{F054}) (?:[^\\x00-\\x7F\\s]\\S* {1,2})?(?<command>\\w[\\w:.-]*)(?: {2,}\\S.*)?$",
+          "pointer": "^(?:❯|\\u{F054}|>) (?:[^\\x00-\\x7F\\s]\\S* {1,2})?(?<command>\\w[\\w:.-]*)(?: {2,}\\S.*)?$",
+          "pointerNote": "The list cursor is the theme symbol nav.cursor, which the symbol preset sets: ❯ (unicode), U+F054 (nerd) and > (ascii). OMP 18.12.6 pi-tui theme/symbols.ts and tui-adapters.ts (select list theme cursor), omp-gang 11-geometry W3, 2026-10-25. A custom theme may override the symbol; that is not read.",
           "entry": "^ {2}(?:[^\\x00-\\x7F\\s]\\S* {1,2})?(?<command>\\w[\\w:.-]*)(?: {2,}\\S.*)?$",
           "wrapped": "^ {8,}\\S",
           "namespaces": [
             "skill:"
+          ],
+          "argumentList": true,
+          "footer": {
+            "pattern": "^ ?\\S",
+            "maxRows": 13
+          },
+          "footerNote": "The rows an extension keeps under the list: a widget of up to idle.frame.maxWidgetRows painted rows (drawn with a leading space) and one flush-left status row. A flush-left row or a row with one leading space that is no list row starts it (a list entry has two), then painted rows to the screen's end with no blank row, as widgetRun accepts a widget under an open box. maxRows = maxWidgetRows + 1 (omp-gang three S2, 2026-10-26; before, ^\\S and 4 rows read a flush-left status row only).",
+          "leadOpens": true,
+          "staleWhenEmpty": true,
+          "notForText": "^\\s*@?(?:~|\\.{1,2}|/[^\\s/]+)/"
+        },
+        "popups": {
+          "submitIgnores": true,
+          "maxRows": 10,
+          "rules": [
+            {
+              "name": "issue",
+              "text": "(?:^|\\s)#\\S*$",
+              "rows": "^(?:(?<pointer>❯|\\u{F054}) | {2})(?:PR|Issue) #\\d+ {2,}GitHub (?:pull request|issue)$",
+              "staleWhenEmpty": true
+            },
+            {
+              "name": "emoji",
+              "text": "(?:^|[\\s(\\[{>]):[A-Za-z0-9_+-]+$",
+              "rows": "^(?:(?<pointer>❯|\\u{F054}) | {2})[^\\x00-\\x7F]\\S* {1,2}\\S+$",
+              "staleWhenEmpty": true
+            },
+            {
+              "name": "file",
+              "text": "^(?!\\s*/)[\\s\\S]*(?:^|\\s)@\\S*$",
+              "rows": "^(?:(?<pointer>❯|\\u{F054}) | {2})\\S.*$",
+              "staleWhenEmpty": true
+            },
+            {
+              "name": "path",
+              "text": "^\\s*(?:~|\\.{1,2}|/[^\\s/]+)/\\S*$",
+              "rows": "^(?:(?<pointer>❯|\\u{F054}) | {2})(?<entry>\\S.*)$",
+              "staleWhenEmpty": true,
+              "closedWhenTyped": true
+            },
+            {
+              "name": "actions",
+              "text": "(?:^|\\s)#$",
+              "rows": "^(?:(?<pointer>❯|\\u{F054}) | {2})\\S+(?: \\S+)* {2,}\\S.*$",
+              "staleWhenEmpty": true
+            }
           ]
         }
       }
@@ -156,11 +269,15 @@
     "runningRows": [
       "^\\s*[⠀-⣿] Working…",
       "^\\s*⎋ Working…",
+      "^\\s*[⠀-⣿] Running… \\(⎋ to cancel\\)\\s*$",
       "^(?:\\u{E0B6} |\\s?)[⠀-⣿]\\s+\\d+[smh]\\s.*(?:▶|\\u{E0B0})",
-      "^\\s?(?:\\u{E0B6} )?[⠀-⣿]\\s+\\d+[smh]\\s.*(?:─{3}|-{3})",
+      "^\\s?(?:\\u{E0B6} )?[⠀-⣿\\\\|/-]\\s+\\d+[smh]\\s.*(?:[─-]{3}|[─-]\\d[\\d.]*%[─-]|[\\dKMB][─-]\\d+%|(?<=[\\s▶>\\u{E0B0}])[─-]{1,2}(?=\\s|$|[◀<\\u{E0B2}]))",
       "^╭─{2} [⠀-⣿] \\d+[smh] "
     ],
     "dialogsInBox": true,
+    "overlayRows": [
+      "^\\s*\\d+/\\d+\\s{2}↑/↓ step\\s{2}←/→ user turns\\s{2}f filter\\s{2}.*\\brewind\\b.*\\bcancel\\s*$"
+    ],
     "inlineHint": {
       "fg": [
         "rgb(107,114,128)"
@@ -184,6 +301,10 @@
       "key": "Backspace",
       "slack": 16
     },
+    "clearAll": {
+      "key": "ctrl+c"
+    },
+    "clearAllNote": "OMP 18.6.1 and 18.12.6 (pi-coding-agent input-controller handleCtrlC, pi-tui custom-editor #normalizeQueuePrefix): after each edit OMP puts a newline back behind a bare -> or =>, so Backspace never removes that prefix, and the box keeps its Queueing label (omp gang 13-drafts, cases 35a to 35b, 2026-10-25). Ctrl+C is OMP's app.clear: on a box that holds text it empties the editor with no other effect, but a second Ctrl+C within 500 ms of the first quits OMP, and the bridge must never press it on an empty box. Collie presses it once, after a fresh read showed a draft and two Backspace batches left it unchanged.",
     "navigation": {
       "up": "Up",
       "down": "Down",
@@ -192,19 +313,59 @@
     },
     "enterWhileRunning": "steers",
     "queueKey": "ctrl+q",
+    "neverHeld": [
+      "/exit",
+      "/quit",
+      "/q",
+      "/restart"
+    ],
+    "commandsRunInTurn": [
+      "/goal"
+    ],
+    "commandsRunInTurnNote": "Measured on OMP 18.12.2 through Herdr 0.9.5 with the probe, the text and Enter while a goal turn streamed. Lab 2026-10-19: /goal status, /goal pause, /goal resume and a bare /goal each ran at once and none became a steering row; a prompt-template command (/labnote) became a Steering row. Lab 2026-10-22 ran /goal pause, /goal resume and a bare /goal again and kept every screen the send reads (web/src/fixtures/panes/omp--v18-12-2-goal-*): OMP printed Goal mode paused. and Goal mode resumed., the status segment went from 🎯 Goal to ⏸ Goal and back, the turn kept running, and the bare /goal opened the goal menu. With /goal pause or /goal resume typed OMP draws the argument's own list under the box, the pointer on the argument typed; commandList.argumentList reads that list as the typed command's own.",
     "queuedRow": {
       "pattern": "^\\s*\\d+\\. (?<text>\\S.*?)\\s*$",
       "hint": "^\\s*└ Alt\\+↑ to edit\\s*$",
-      "hintGap": 0
-    }
+      "hintGap": 0,
+      "between": "^\\s*Steering · \\d+\\s*$",
+      "header": "^\\s*After yield · \\d+\\s*$"
+    },
+    "steer": [
+      "Enter"
+    ],
+    "steerWitness": [
+      {
+        "pattern": "^\\s*│\\s*Backgrounded early to handle an incoming message\\b"
+      },
+      {
+        "pattern": "^ (?<text>\\S.*?)\\s*$",
+        "transcript": true
+      },
+      {
+        "pattern": "^\\s*\\d+\\. (?<text>\\S.*?)\\s*$",
+        "hint": "^\\s*└ Alt\\+↑ to edit\\s*$",
+        "hintGap": 0,
+        "between": "^\\s*After yield · \\d+\\s*$",
+        "header": "^\\s*Steering · \\d+\\s*$"
+      }
+    ]
   },
   "collapse": {
-    "pattern": "(?:📄|🖼|\\u{F15C}|\\u{F03E}) #\\d+"
+    "pattern": "(?:📄|🖼|📷|\\u{F15C}|\\u{F03E}) #\\d+|✦ \\S+(?: [\\s\\S]*)?",
+    "refuseLiteral": true,
+    "refuseLiteralNote": "OMP 18.6.1 and 18.12.6 (pi-tui editor insertAtom and registerAtom): a pasted body stays registered under its chip after the chip label is deleted, and clearDraft resets it only on a submit. A later typed token such as 📄 #1 then expands to that cleared body in the journal (omp gang 13-drafts, case 37, 2026-10-25). A literal [Paste #1, +3 lines] marker is safe."
   },
   "reservedLeads": [
     "/",
-    "!"
+    "!",
+    "->",
+    "=>"
   ],
+  "reservedLeadNotes": {
+    "->": "OMP reads a leading -> as its queue prefix and rewrites the box, so this text cannot be typed as written. Start the text with a word.",
+    "=>": "OMP reads a leading => as its queue prefix and rewrites the box, so this text cannot be typed as written. Start the text with a word."
+  },
+  "reservedLeadsNote": "Read from OMP 18.6.1 and 18.12.6 source. Rewrites the box as typed: -> and => only (pi-tui prompt/queue-input QUEUE_PREFIXES, custom-editor #normalizeQueuePrefix puts a newline behind a bare prefix and draws a Queueing label). Commands: / (slash command), ! and !! (shell line). Not listed: $ and $$ (Python line) are read only when Enter submits, and a plain Collie send goes out with Ctrl+Q (follow-up), which never runs them (gang case 34, sent exact). # @ ^ and :name: only open completion lists and do not rewrite the typed text, except :name: which becomes an emoji (a mismatch the send reports, gang case 36).",
   "probe": {
     "char": "⌁",
     "status": "provisional",

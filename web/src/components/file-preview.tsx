@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
-import { ChevronDown, ChevronRight, Loader2 } from "lucide-react";
+import { Icon } from "@/components/icons/icon";
 
 import { MarkdownText, type ImageResolver, type LinkResolver } from "@/components/markdown-text";
 import { TokenLine } from "@/components/changes-view";
@@ -55,7 +55,7 @@ export function FilesLoading() {
   useLocale();
   return (
     <div className="flex items-center justify-center gap-2 py-16 text-sm text-muted-foreground">
-      <Loader2 className="size-4 animate-spin" />
+      <Icon name="busy" className="size-4 animate-spin" />
       {t("files.loading")}
     </div>
   );
@@ -298,7 +298,6 @@ function JsonNode({ name, value, depth }: { name: string | null; value: JsonValu
     );
   }
   const count = isArray ? tn("files.json.items", rows.length) : tn("files.json.keys", rows.length);
-  const Chevron = open ? ChevronDown : ChevronRight;
   return (
     <div>
       <button
@@ -307,7 +306,7 @@ function JsonNode({ name, value, depth }: { name: string | null; value: JsonValu
         onClick={() => setOpen((o) => !o)}
         className="flex min-h-6 w-full items-start gap-1.5 text-left active:bg-muted/50"
       >
-        <Chevron aria-hidden className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
+        <Icon name={open ? "expand" : "disclosure"} aria-hidden className="mt-1 size-3.5 shrink-0 text-muted-foreground" />
         {label ?? <span className="text-muted-foreground">{brackets}</span>}
         {/* The count stays on the row open or folded, so folding repaints and moves nothing. */}
         <span className="text-muted-foreground">{count}</span>
@@ -440,8 +439,8 @@ const IMAGE_MISS_KEY = {
 function ImageMissed({ file, why }: { file: FileText; why: ImageMiss }) {
   return (
     <Quiet>
-      {t("files.binary", { size: formatBytes(file.size) })}
-      <span className="mt-1 block text-xs">{t(IMAGE_MISS_KEY[why])}</span>
+      {file.size > 0 && t("files.binary", { size: formatBytes(file.size) })}
+      <span className={file.size > 0 ? "mt-1 block text-xs" : "block text-xs"}>{t(IMAGE_MISS_KEY[why])}</span>
     </Quiet>
   );
 }
@@ -493,7 +492,7 @@ function ImagePreview({ file, images }: { file: FileText; images: FileImages }) 
   const url = useObjectUrl(now !== null && "blob" in now ? now.blob : null);
   if (now !== null && "miss" in now) return <ImageMissed file={file} why={now.miss} />;
   if (now === null || url === null) return <FilesLoading />;
-  return <PictureView file={file} url={url} type={now.type} />;
+  return <PictureView file={file.size > 0 ? file : { ...file, size: now.blob.size }} url={url} type={now.type} />;
 }
 
 /**

@@ -6,12 +6,14 @@ import { isAbsolute, join } from "node:path";
 // The version resolver itself lives in `bridge/version.ts` (the bridge answers `hello` with it and
 // cannot import from `cli/`); `collieVersion*` are re-exported from here, so these cases exercise
 // one implementation either way.
+import { hostFor } from "../bridge/host.ts";
 import { bareVersionFrom } from "../bridge/version.ts";
 import {
   collieVersion,
   collieVersionBare,
   collieVersionFrom,
   deriveSettings,
+  drivesCore,
   effectiveServePort,
   parseEnvFile,
   parseServePort,
@@ -539,5 +541,43 @@ describe("deriveSettings — COLLIE_BASE_PATH", () => {
     expect(deriveSettings({}, HOME).basePath).toBe("/");
     expect(deriveSettings({ COLLIE_BASE_PATH: "collie" }, HOME).basePath).toBe("/collie/");
     expect(deriveSettings({ COLLIE_BASE_PATH: "/apps/collie/" }, HOME).basePath).toBe("/apps/collie/");
+  });
+});
+
+// A herdr-core host has no Herdr plugin registry, so the config dir lookup never asks `herdr` there
+// (M74 spec 04). The lookup itself needs no change: with no Herdr answer, Collie's own dir stands.
+describe("config dir on a herdr-core host", () => {
+  // The host is injected: the real platform would make the first three lines fail on Windows.
+  test("drivesCore: named, picked from the sockets, or neither", () => {
+    const linux = hostFor("linux");
+    const core = "/run/user/7/herdr-core/default.sock";
+    expect(drivesCore({ COLLIE_MUX: "herdr-core" }, HOME, () => false, linux)).toBe(true);
+    expect(drivesCore({ COLLIE_MUX: "herdr" }, HOME, (p) => p === core, linux)).toBe(false);
+    expect(drivesCore({ XDG_RUNTIME_DIR: "/run/user/7" }, HOME, (p) => p === core, linux)).toBe(true);
+    expect(drivesCore({ XDG_RUNTIME_DIR: "/run/user/7" }, HOME, () => true, linux)).toBe(false);
+  });
+
+  test("drivesCore: a Herdr TUI install is never the core, even while its socket is gone (mid-update)", () => {
+    const linux = hostFor("linux");
+    const core = "/run/user/7/herdr-core/default.sock";
+    const env = { XDG_RUNTIME_DIR: "/run/user/7" };
+    const tuiConfig = `${HOME}/.config/herdr/config.toml`;
+    const plugins = `${HOME}/.config/herdr/plugins/config`;
+    const none = (): readonly string[] => [];
+    expect(drivesCore(env, HOME, (p) => p === core || p === tuiConfig, linux, none)).toBe(false);
+    expect(drivesCore(env, HOME, (p) => p === core, linux, (dir) => (dir === plugins ? ["herdr.collie"] : []))).toBe(false);
+    // The instance's own name still wins over the marker.
+    expect(drivesCore({ ...env, COLLIE_MUX: "herdr-core" }, HOME, (p) => p === core || p === tuiConfig, linux, none)).toBe(true);
+    expect(drivesCore(env, HOME, (p) => p === core, linux, none)).toBe(true);
+  });
+
+  test("drivesCore: Windows has no core, named or picked", () => {
+    const win = hostFor("win32");
+    expect(drivesCore({ COLLIE_MUX: "herdr-core" }, HOME, () => true, win)).toBe(false);
+    expect(drivesCore({ XDG_RUNTIME_DIR: "/run/user/7" }, HOME, () => true, win)).toBe(false);
+  });
+
+  test("with no Herdr answer and no .env, the dir is ~/.config/collie", () => {
+    expect(resolve({ herdr: null }).dir).toBe(join(HOME, ".config", "collie"));
   });
 });

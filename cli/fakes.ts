@@ -89,6 +89,12 @@ export interface FakeExec extends Exec {
    * test can tell "passed nothing" from "passed an empty override" only by its absence here.
    */
   overrides: { call: string; env: EnvOverride }[];
+  /**
+   * Every {@link Exec.inherit} or {@link Exec.runIn} call that was told to point the child's stdout at
+   * stderr, as {@link FakeExec.calls} spells it. The real one runs a child that prints on its own;
+   * this is how a test sees the run asked for the redirect.
+   */
+  stdoutToStderr: string[];
 }
 
 /**
@@ -171,6 +177,10 @@ export function fakeExec(scripted: Scripted = {}): FakeExec {
     return { code: 0, stdout: "", stderr: "", found: true };
   };
   const overrides: { call: string; env: EnvOverride }[] = [];
+  const stdoutToStderr: string[] = [];
+  const noteStdout = (stdout: "stderr" | undefined): void => {
+    if (stdout === "stderr") stdoutToStderr.push(calls.at(-1) ?? "");
+  };
   const noteOverride = (env: EnvOverride | undefined): void => {
     if (env !== undefined) overrides.push({ call: calls.at(-1) ?? "", env });
   };
@@ -183,6 +193,7 @@ export function fakeExec(scripted: Scripted = {}): FakeExec {
     ran,
     timeouts,
     overrides,
+    stdoutToStderr,
     which: (tool) => (absent.has(tool) ? null : `/fake/${tool}`),
     capture: (tool, args, timeoutMs, envAdd, envOverride) => {
       const r = answer(tool, args, undefined, undefined, envAdd);
@@ -190,10 +201,15 @@ export function fakeExec(scripted: Scripted = {}): FakeExec {
       if (timeoutMs !== undefined) timeouts.push({ call: [tool, ...args].join(" "), ms: timeoutMs });
       return r;
     },
-    inherit: (tool, args) => answer(tool, args),
-    runIn: (tool, args, cwd, pathPrefix, envOverride) => {
+    inherit: (tool, args, stdout) => {
+      const r = answer(tool, args);
+      noteStdout(stdout);
+      return r;
+    },
+    runIn: (tool, args, cwd, pathPrefix, envOverride, stdout) => {
       const r = answer(tool, args, cwd, pathPrefix);
       noteOverride(envOverride);
+      noteStdout(stdout);
       return r;
     },
     runLogged(command, opts) {
@@ -332,6 +348,12 @@ export function fakeFiles(seed: SeededFiles = {}): FakeFiles {
     exists: (p) => under(p).length > 0,
     executable: (p) => under(p).length > 0 && !notExecutable.has(p),
     read: (p) => entries.get(p)?.text ?? null,
+    tail: (p, maxBytes) => {
+      const text = entries.get(p)?.text;
+      if (text === undefined) return null;
+      const bytes = Buffer.from(text, "utf8");
+      return bytes.subarray(Math.max(0, bytes.length - maxBytes)).toString("utf8");
+    },
     digest: (p) => {
       const text = entries.get(p)?.text;
       return text === undefined ? null : new Bun.CryptoHasher("sha256").update(text).digest("hex");
@@ -406,6 +428,7 @@ export function fakeFiles(seed: SeededFiles = {}): FakeFiles {
     exists: one(raw.exists),
     executable: one(raw.executable),
     read: one(raw.read),
+    tail: one(raw.tail),
     digest: one(raw.digest),
     entryType: one(raw.entryType),
     list: one(raw.list),
@@ -547,7 +570,11 @@ export const PROBE_FIELDS = [
   "curl",
   "tar",
   "sha256",
+  "hc",
+  "hcversion",
+  "hccore",
   "configdir",
+  "configsource",
   "envhost",
   "envport",
   "envmux",
@@ -581,7 +608,12 @@ export function probeDefaults() {
     curl: "/usr/bin/curl",
     tar: "/usr/bin/tar",
     sha256: "/usr/bin/sha256sum",
+    // A Herdr TUI host with no Herdr core: the shape every case before M84 assumed.
+    hc: "",
+    hcversion: "",
+    hccore: "",
     configdir: `${HOME}/.config/herdr/plugins/config/herdr.collie`,
+    configsource: "herdr",
     envhost: "",
     envport: "",
     envmux: "herdr",

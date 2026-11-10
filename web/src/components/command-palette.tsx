@@ -1,5 +1,4 @@
 import { useEffect, useState } from "react";
-import { CornerDownLeft, Pencil } from "lucide-react";
 
 import { cn } from "@/lib/utils";
 import { SearchField } from "@/components/ui/search-field";
@@ -13,6 +12,7 @@ import type { Scope } from "@/lib/scope";
 import type { OperatorCommand } from "@/lib/types";
 import { t } from "@/lib/i18n";
 import { useLocale } from "@/hooks/use-locale";
+import { Icon } from "@/components/icons/icon";
 
 interface CommandPaletteProps {
   open: boolean;
@@ -32,7 +32,7 @@ interface CommandPaletteProps {
 }
 
 /**
- * Reads the skills and commands a Claude Code pane would load off disk whenever `active` turns on
+ * Reads the skills and commands the pane's agent would load off disk whenever `active` turns on
  * and no operator `commands.toml` rows replace the palette for this pane (ADR 0018).
  */
 export function useClaudeCommands(
@@ -46,16 +46,19 @@ export function useClaudeCommands(
     key: "",
     rows: [],
   });
-  const isClaude = canonicalAgent(agent?.toLowerCase().trim() ?? "") === "claude";
+  const family = canonicalAgent(agent?.toLowerCase().trim() ?? "");
+  // A pane with no agent (a plain shell) has nothing to load; every agent pane asks, and the bridge
+  // answers an empty list for one it has no loader for.
+  const readsFound = family !== "";
   const hasOperatorRows = rowsFor(mine, agent, (row) => row.command).length > 0;
   const host = scope?.host ?? "";
   const session = scope?.session ?? "";
-  const targetKey = `${host}\0${session}\0${paneId ?? ""}`;
+  const targetKey = `${host}\0${session}\0${paneId ?? ""}\0${family}`;
 
   // Asked on every open, because a skill installed a minute ago should be there; a failed read
   // (an older bridge, a crew member) clears any stale rows from an earlier open and keeps the catalog.
   useEffect(() => {
-    if (!active || !isClaude || hasOperatorRows || paneId === undefined) return;
+    if (!active || !readsFound || hasOperatorRows || paneId === undefined) return;
     const ac = new AbortController();
     const requestScope: Scope = {};
     if (host !== "") requestScope.host = host;
@@ -70,7 +73,7 @@ export function useClaudeCommands(
     };
     void run();
     return () => ac.abort();
-  }, [active, isClaude, hasOperatorRows, paneId, host, session, targetKey]);
+  }, [active, readsFound, hasOperatorRows, paneId, host, session, targetKey]);
 
   return !hasOperatorRows && state.key === targetKey ? state.rows : [];
 }
@@ -178,9 +181,9 @@ export function CommandPalette({
               {isPending ? (
                 <span className="shrink-0 text-xs font-medium text-destructive">{t("commands.confirm")}</span>
               ) : c.takesArg ? (
-                <Pencil className="size-4 shrink-0 text-muted-foreground" />
+                <Icon name="command-takes-arg" className="size-4 shrink-0 text-muted-foreground" />
               ) : (
-                <CornerDownLeft className="size-4 shrink-0 text-muted-foreground" />
+                <Icon name="run-command" className="size-4 shrink-0 text-muted-foreground" />
               )}
             </button>
           );

@@ -1,0 +1,19 @@
+❯ Start sleep 1800 in the background, then launch one general-purpose subagent in the background. Reply only "launched".
+
+● Bash(sleep 1800)
+  ⎿  Running in the background (↓ to manage)
+
+● Agent(Watch the build and report) Sonnet 5.5
+  ⎿  Backgrounded agent (↓ to manage · ctrl+o to expand)
+
+● launched
+
+✻ Waiting for 1 background agent to finish
+
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+❯ ⌁⌁⌁
+──────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────────
+  ⏵⏵ auto mode on · 1 shell                                                                                                                                                                                                                       ✔ Update installed · Restart to update
+
+  ● main
+  ◯ general-purpose  Loading Monitor tool schema                                                                                                                                                                                                                11m 11s · ↓ 66.0k tokens

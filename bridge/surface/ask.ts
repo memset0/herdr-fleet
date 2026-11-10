@@ -65,6 +65,16 @@ export function askBinding(generation: string, dialog: LiftedDialog): string {
   return shortHash(`${generation}\n${dialog.hash}\n${dialog.region ?? ""}`);
 }
 
+/**
+ * The detail of an answer whose committing keys the multiplexer did not confirm in time, and whose
+ * dialog still shows after them. The keys may still land, so they are never sent again (MuxRefusal,
+ * `unconfirmed`): the receipt says `unknown`, never a failure.
+ */
+export const UNCONFIRMED_COMMIT_DETAIL = "The keys were not confirmed in time and the dialog still shows. They may still arrive, so Collie did not send them again.";
+
+/** The detail of a walk whose arrows were not confirmed in time and whose highlight did not reach the choice. */
+export const UNCONFIRMED_WALK_DETAIL = "The arrow keys were not confirmed in time and the highlight did not reach your choice, so Enter was not sent. Check the screen before you tap again.";
+
 /** The detail of a refused tap on a dialog whose top edge Collie did not find. */
 export const NO_EDGE_DETAIL = "Collie did not find the top edge of this dialog, so it does not answer it from here. Use the screen and the keys.";
 
@@ -212,7 +222,7 @@ export function planFor(dialog: LiftedDialog, index: number): AskPlan | null {
     }
     case "wizard": {
       const m = dialogModelOf(block, "wizard");
-      if (m === null || m.phase !== "question") return null;
+      if (m === null || m.phase !== "question" || m.field?.focused === true) return null;
       const option = m.options[index];
       if (option === undefined) return null;
       const split = splitWalk(option.keys);
@@ -322,10 +332,13 @@ export interface AskDeps {
   readonly locks: SessionLocks;
   readonly book: AskBook;
   readonly ring?: RowRing;
-  readonly profile: (harness: string) => Promise<ProfileMatch | null>;
+  /** The harness's profile; with `paneId`, at the version of the pane's own program when the bridge can see it (SendDeps.profile). */
+  readonly profile: (harness: string, paneId?: string) => Promise<ProfileMatch | null>;
   readonly generation: (paneId: string) => string | null;
   readonly now?: () => number;
   readonly sleep?: (ms: number) => Promise<void>;
+  /** Where a refused tap is told, one line each. Defaults to `console.log`. */
+  readonly log?: (line: string) => void;
 }
 
 /** One read as the answerer sees it. */
@@ -349,6 +362,8 @@ interface AskRun {
   readonly deadline: number;
   readonly marks: { check: AskSnap | null; readBack: AskSnap | null; after: AskSnap | null };
   readonly keys: string[];
+  /** The steps whose keys left and the multiplexer did not confirm in time: they may still land. */
+  readonly unconfirmed: Set<"walk" | "commit">;
 }
 
 class AskEnded extends Error {
@@ -395,10 +410,12 @@ export class AskAnswerer {
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly inFlight = new Map<string, Promise<AskReply>>();
+  private readonly log: (line: string) => void;
 
   constructor(private readonly deps: AskDeps) {
     this.now = deps.now ?? (() => Date.now());
     this.sleep = deps.sleep ?? ((ms) => new Promise((resolve) => setTimeout(resolve, ms)));
+    this.log = deps.log ?? ((line) => console.log(line));
   }
 
   /** The receipt an answer that never settled gets after a restart (RequestStore.recoverAsks). */
@@ -422,12 +439,26 @@ export class AskAnswerer {
     };
   }
 
-  /** One answer, start to receipt. Never throws for a pane's state; every end is a reply. */
+  /**
+   * One answer, start to receipt. Never throws for a pane's state; every end is a reply. A refused tap
+   * leaves one log line with the ask id, the pane and the reason, so a refusal the phone showed can be
+   * found in the bridge's log (M78 spec 03: a `no_plan` refusal left none).
+   */
   async handle(answer: Answer, target: AskTarget): Promise<AskReply> {
+    const reply = await this.answerOnce(answer, target);
+    const { receipt } = reply;
+    if (receipt?.outcome === "refused" && reply.replayed !== true) {
+      const detail = reply.detail === undefined ? "" : `: ${reply.detail}`;
+      this.log(`[ask] ${receipt.askId} on pane ${receipt.paneId} refused (${receipt.reason ?? "no reason"})${detail}`);
+    }
+    return reply;
+  }
+
+  private async answerOnce(answer: Answer, target: AskTarget): Promise<AskReply> {
     const running = this.inFlight.get(answer.askId);
     if (running !== undefined) {
       await running;
-      return this.handle(answer, target);
+      return this.answerOnce(answer, target);
     }
     // A hook-held permission (M56 spec 12) is answered through its hook. It never reaches the keys.
     const held = this.deps.book.holds?.byAskId(answer.askId);
@@ -569,11 +600,12 @@ export class AskAnswerer {
       target,
       record: accepted.record,
       entry: undefined,
-      match: await this.deps.profile(target.harness),
+      match: await this.deps.profile(target.harness, target.paneId),
       lockKey,
       deadline,
       marks: { check: null, readBack: null, after: null },
       keys: [],
+      unconfirmed: new Set(),
     };
     try {
       if (held.dialog !== null) {
@@ -692,7 +724,7 @@ export class AskAnswerer {
   }
 
   private async run(answer: Answer, target: AskTarget, record: AskRecord, entry: AskEntry | undefined): Promise<AskReply> {
-    const match = await this.deps.profile(target.harness);
+    const match = await this.deps.profile(target.harness, target.paneId);
     const state: AskRun = {
       answer,
       target,
@@ -703,6 +735,7 @@ export class AskAnswerer {
       deadline: record.acceptedAt + ASK_LOCK_MS,
       marks: { check: null, readBack: null, after: null },
       keys: [],
+      unconfirmed: new Set(),
     };
     const { locks } = this.deps;
     if (!locks.acquire(state.lockKey, record.id, state.deadline, this.now())) {
@@ -787,7 +820,9 @@ export class AskAnswerer {
       });
       state.marks.readBack = back.snap;
       if (back.verdict !== "pass" || back.snap === null) {
-        throw new AskEnded("refused", "ask_mismatch", { snap: back.snap, ask: back.snap === null ? null : askOf(back.snap.surface.modal) });
+        const ask = back.snap === null ? null : askOf(back.snap.surface.modal);
+        if (state.unconfirmed.has("walk")) throw new AskEnded("refused", "ask_mismatch", { snap: back.snap, ask, detail: UNCONFIRMED_WALK_DETAIL });
+        throw new AskEnded("refused", "ask_mismatch", { snap: back.snap, ask });
       }
       bound = back.snap;
     } else {
@@ -802,7 +837,9 @@ export class AskAnswerer {
 
     const after = await this.poll(state, "after", ASK_BOUNDS.after, (snap) => (snap.dialog === null || snap.dialog.hash !== bound.dialog!.hash ? "pass" : "wait"));
     state.marks.after = after.snap;
-    if (after.verdict !== "pass") throw new AskEnded("unknown", "no_evidence", { detail: "The keys went out, but the dialog did not show it was answered." });
+    if (after.verdict === "pass") return;
+    if (state.unconfirmed.has("commit")) throw new AskEnded("unknown", "no_evidence", { detail: UNCONFIRMED_COMMIT_DETAIL });
+    throw new AskEnded("unknown", "no_evidence", { detail: "The keys went out, but the dialog did not show it was answered." });
   }
 
   /**
@@ -822,7 +859,7 @@ export class AskAnswerer {
       const grid = await Promise.race([this.deps.mux.readGrid(target.paneId, { scope: "viewport", lines: ASK_READ_LINES, styling: "preserve" }), late]);
       if (grid === null || !grid.ok) return null;
       const dialog = liftDialog(readerBlocks(splitLines(parseAnsi(grid.value.text)), target.harness));
-      const match = await this.deps.profile(target.harness);
+      const match = await this.deps.profile(target.harness, target.paneId);
       return this.deps.book.publish(target.paneId, generation, dialog, askLifetimeOf(match));
     } catch {
       return null;
@@ -839,12 +876,22 @@ export class AskAnswerer {
    * Keys through the gate on a token minted on `snap`'s revision. A gate refusal sends nothing, so it
    * is `refused` (after a walk the arrows moved a highlight at most; nothing was committed). A commit
    * the multiplexer did not answer inside the bound may have gone out: `unknown`.
+   *
+   * Keys the multiplexer took and did not confirm in time (`unconfirmed`) may still land. They count
+   * as sent and are NEVER sent again: the step goes on, and its next read decides. After a walk the
+   * read back must still show the pointer on the choice before Enter goes; after a commit the dialog
+   * must close, or the answer ends `unknown`.
    */
   private async keys(state: AskRun, keys: readonly string[], snap: AskSnap, step: "walk" | "commit"): Promise<void> {
     this.guard(state, "refused");
     const { gate } = this.deps;
     const token = gate.mint(state.target.paneId, keys, snap.gateRevision, "person_tap");
     const result = await this.within(state, gate.commit(token), state.deadline, step === "commit" ? "unknown" : "refused");
+    if (!result.ok && result.reason === "mux" && result.refusal.reason === "unconfirmed") {
+      state.unconfirmed.add(step);
+      state.keys.push(...keys);
+      return;
+    }
     if (!result.ok) {
       const reason: AskReason = result.reason === "mux" ? "write_failed" : result.reason;
       const detail = result.reason === "mux" ? result.refusal.detail : result.detail;

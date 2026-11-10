@@ -61,10 +61,12 @@ else
   #     was never quite true: these files are as test-only as the files that import them, and asking
   #     for a release line about a mock is asking for a line no operator can read. Added 2026-10-01,
   #     when splitting the vitest run into two projects moved the MSW server into a file of its own.
+  #     `scripts/test-preload.ts` is the same thing for `bun test`: the preload that gives each run
+  #     its own temp folder. Added 2026-11-04.
   # None is visible to an operator, so there is nothing for them to read a line about. A commit that
   # touches one of these AND the code under it still records: the source file survives this filter,
   # and the line is about the source.
-  functional="$(echo "$staged" | grep -vE '(\.test\.(ts|tsx|sh)$|^scripts/git-hooks/|^web/src/test/|^cli/fakes\.ts$)' || true)"
+  functional="$(echo "$staged" | grep -vE '(\.test\.(ts|tsx|sh)$|^scripts/git-hooks/|^web/src/test/|^cli/fakes\.ts$|^scripts/test-preload\.ts$)' || true)"
 
   # Bullets under `## [Unreleased]` in the CHANGELOG on stdin. The section runs from that heading
   # to the next `## ` heading. A `### Added` line starts with `#`, never `- `, so a group heading
@@ -103,7 +105,7 @@ else
   # refused before the count below is even read, and the message names the shape rather than the
   # arithmetic. This runs for a doc-only commit too, because a malformed bullet reaches the release
   # either way.
-  if echo "$staged" | grep -qx 'CHANGELOG.md'; then
+  if grep -qx 'CHANGELOG.md' <<< "$staged"; then
     bad="$(git show :CHANGELOG.md | unreleased_shape || true)"
     if [ -n "$bad" ]; then
       {
@@ -131,7 +133,7 @@ else
   fi
 
   # (2)/(3) changelog-on-change — any functional path in this set must land a CHANGELOG line.
-  if echo "$functional" | grep -qE '^(bridge/|cli/|web/src/|web/public/|web/vite\.config\.ts|web/index\.html|web/package\.json|scripts/|systemd/|package\.json|herdr-plugin\.toml)'; then
+  if grep -qE '^(bridge/|cli/|web/src/|web/public/|web/vite\.config\.ts|web/index\.html|web/package\.json|scripts/|systemd/|package\.json|herdr-plugin\.toml)' <<< "$functional"; then
     read_ver() { sed -n 's/^[[:space:]]*version[[:space:]]*=[[:space:]]*"\([^"]*\)".*/\1/p' | head -1; }
     cur="$(read_ver < "$ROOT/herdr-plugin.toml")"
     prev="$(git show HEAD:herdr-plugin.toml 2>/dev/null | read_ver || true)"
@@ -141,7 +143,7 @@ else
         # Ordinary functional commit: no bump, but the staged CHANGELOG must have grown a bullet
         # under `## [Unreleased]` compared with HEAD's.
         now=0; before=0
-        if echo "$staged" | grep -qx 'CHANGELOG.md'; then
+        if grep -qx 'CHANGELOG.md' <<< "$staged"; then
           now="$(git show :CHANGELOG.md | unreleased_bullets)"
           before="$(git show HEAD:CHANGELOG.md 2>/dev/null | unreleased_bullets)"
         fi

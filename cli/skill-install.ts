@@ -115,7 +115,9 @@ export interface SkillTarget {
  * could find again, so it is left out.
  */
 export function claudeProfileDirs(ctx: Pick<CliContext, "home" | "env">): string[] {
-  const dirs = claudeSettingsTargets(ctx).map((t) => t.dir);
+  // `~/.claude` stays in the list even when `CLAUDE_CONFIG_DIR` replaces it in the hooks' targets: the
+  // skill goes beside it as it always did (this change is about where hooks are written).
+  const dirs = [join(ctx.home, ".claude"), ...claudeSettingsTargets(ctx).map((t) => t.dir)];
   const own = ctx.env.CLAUDE_CONFIG_DIR?.trim() ?? "";
   if (own !== "" && isAbsolute(own)) dirs.push(own.replace(/[\\/]+$/u, "") || own);
   return [...new Set(dirs)];
@@ -230,9 +232,9 @@ function findBlock(text: string): BlockLookup {
   const begin = begins[0];
   const end = ends[0];
   if (begins.length !== 1 || ends.length !== 1 || begin === undefined || end === undefined) {
-    return { kind: "damaged", reason: "its walky talky markers are not one begin and one end" };
+    return { kind: "damaged", reason: "its WalkyTalky markers are not one begin and one end" };
   }
-  if (end.index < begin.index) return { kind: "damaged", reason: "its walky talky end marker comes before the begin marker" };
+  if (end.index < begin.index) return { kind: "damaged", reason: "its WalkyTalky end marker comes before the begin marker" };
   return { kind: "span", start: begin.index, end: end.index + end[0].length };
 }
 
@@ -586,7 +588,7 @@ export function cmdSkillUninstall(deps: SkillDeps, args: readonly string[]): num
       failed = true;
       continue;
     }
-    deps.io.out(`✓ ${file.target.harness}: removed the walky talky skill from ${reading.path}; every other line is untouched.`);
+    deps.io.out(`✓ ${file.target.harness}: removed the WalkyTalky skill from ${reading.path}; every other line is untouched.`);
     without.push(file.path);
     removed += 1;
   }
@@ -597,7 +599,7 @@ export function cmdSkillUninstall(deps: SkillDeps, args: readonly string[]): num
     return EXIT.FAIL;
   }
   if (failed) return EXIT.FAIL;
-  if (removed === 0) deps.io.out("nothing to remove: no instruction file here carries the walky talky skill.");
+  if (removed === 0) deps.io.out("nothing to remove: no instruction file here carries the WalkyTalky skill.");
   if (without.length > 0) {
     deps.io.out("  `collie update` and `collie skill sync` leave it out from now on. `collie skill install <harness>` brings it back.");
   }
@@ -679,7 +681,7 @@ export function cmdSkillVerb(deps: SkillDeps, sub: string, rest: readonly string
       deps.io.err(`error: unknown skill subcommand \`${sub}\``);
       deps.io.err(skillUsage());
       deps.io.err("  (no argument)  print the general brief on Collie");
-      deps.io.err("  install        write the walky talky skill: `skill install <harness|all>`");
+      deps.io.err("  install        write the WalkyTalky skill: `skill install <harness|all>`");
       deps.io.err("  uninstall      remove only the file or block Collie wrote");
       deps.io.err("  sync           bring every harness on this machine up to this build's skill (--json, --dry-run)");
       deps.io.err("  status         what each target carries now, and whether it is behind (--check for the exit code)");

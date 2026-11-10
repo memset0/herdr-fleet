@@ -15,7 +15,7 @@ class BindingFixture extends FakeHerdr {
 }
 
 test("identity survives real adapter, engine, wire and peer narrowing", async () => {
-  const mux = new HerdrMux(new BindingFixture(), () => [], "work");
+  const mux = new HerdrMux(new BindingFixture(), () => [], Date.now, "work");
   const engine = new StateEngine(mux, 60_000);
   const next = new Promise<EngineSnapshot>((resolve) => engine.onUpdate(resolve));
   engine.start();

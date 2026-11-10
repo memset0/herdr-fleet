@@ -11,7 +11,10 @@ import { buildBlocks } from "../index";
 import { piAdapter } from "./index";
 import { piView } from "./panel";
 import { idleFor, readScreen } from "../../../test/surface-corpus";
+import { liftDialog } from "../../surface/lift";
+import { stripSgr } from "../../surface/plain";
 import { askOf, modalWord } from "../../surface/surface";
+import { WRAPPED_CHOICES, wrappedChoiceScreen } from "../../../test/pi-wrapped-choice";
 
 const PANES = join(import.meta.dirname, "../../../fixtures/panes");
 const raw = (name: string) => readFileSync(join(PANES, name), "utf8");
@@ -90,6 +93,32 @@ const LIFTS_397 = new Map<string, Expect>([
   ["pi--v0871-permission-gate-moved.txt", "walk"],
   ["pi--v0871-permission-gate-narrow.txt", "walk"],
   ["pi--v0871-permission-gate-narrow-moved.txt", "walk"],
+  // The Gentle AI review-consent screen (gentle-pi 4.2.0, pi 1.3.0): no rule frame, the footer is the
+  // screen's last row (L12 of odd/tasks/gentle-pi-chat-cards.md).
+  ["pi--v130-gentle-review-consent.txt", "walk"],
+  ["pi--v130-gentle-review-consent-moved.txt", "walk"],
+  // gentle-pi 4.6.0 on pi 1.5.0 (issue 712): the Effect paragraph hangs eight columns in, and the extension
+  // draws one status row under the footer, in the three shapes the fixtures README names.
+  ["pi--v150-gentle-review-consent--w119.txt", "walk"],
+  ["pi--v150-gentle-review-consent-fullscreen--w129.txt", "walk"],
+  ["pi--v150-gentle-review-consent-fullscreen--w198.txt", "walk"],
+  ["pi--v150-gentle-review-consent-regular--w69.txt", "walk"],
+  // Derived: the first capture with the pointer on option 2 (fixtures README).
+  ["pi--v150-gentle-review-consent-moved--w119.txt", "walk"],
+  // The Gentle Shell side rail stands over the top rows only, the dialog under it (issue 710): it lifts.
+  ["pi--v150-gentle-review-consent-rail-tall--w198.txt", "walk"],
+  // pi 1.3.0's stock question through a herdr-core bridge: a read with no styling at all (M78 spec 07).
+  ["pi--v130-core-question--w120.txt", "walk"],
+  ["pi--v130-core-question-moved--w120.txt", "walk"],
+  // pi 1.5.0's example permission-gate through herdr-core with a model that has no price: the footer prints
+  // the context usage and no session cost, and the dialog still lifts.
+  ["pi--v150-core-permission-gate-no-cost--w200.txt", "walk"],
+  // The same question with a quoted ` ▎ ` rail in the transcript above it (derived, issue 660 review).
+  ["pi--v130-core-question-quote-rail--w120.txt", "walk"],
+  // A test selector under Gentle Shell 4.5.1 (pi 1.4.0) through herdr-core, in place of its float
+  // editor, its pointer on each of two choices (issue 660).
+  ["pi--v140-gentle-float-dialog--w100.txt", "walk"],
+  ["pi--v140-gentle-float-dialog-moved--w100.txt", "walk"],
 ]);
 /** Screens with a pi modal up that stay raw: the Escape card's evidence. */
 const RAW_MODALS = new Set([
@@ -123,6 +152,8 @@ const RAW_MODALS = new Set([
   "pi--v0871-model-selector-empty--w120.txt",
   "pi--v130-model-selector-empty--w120.txt",
   "pi--v130-settings-screen--w120.txt",
+  // gentle-pi 4.6.0's review consent with Gentle Shell's side rail beside it (issue 710, open): raw.
+  "pi--v150-gentle-review-consent-rail-beside--w198.txt",
   // The model selector under pi-powerline-footer, which replaces pi's editor with its own (issue 544,
   // live 2026-10-20): pi's selector still takes the editor's place in column zero.
   "pi--v130-powerline-model-selector--w120.txt",
@@ -320,6 +351,57 @@ describe("unnumbered rows, and a frame with no status row (issue 455)", () => {
   });
 });
 
+// Issue 746: gentle-pi's ask_user_choice with descriptions longer than the pane. pi-tui wraps the
+// `   description` line with no indent, so every row after the first stands at column 1. Until this the
+// list ended at that row, the dialog read as unreadable, and the dock offered no option. Built from the
+// capture as the source draws it (test/pi-wrapped-choice.ts); no capture of the reporter's screen.
+describe("an unnumbered option whose description wraps (issue 746)", () => {
+  it("lifts every option with its whole description, and walks from the pointer", () => {
+    const lines = linesOf(wrappedChoiceScreen(0));
+    // The wrap is real: each description takes at least two rows, Green's three, Blue's last row is
+    // straight over the footer.
+    const texts = lines.map((l) => lineText(l).trimEnd());
+    expect(texts.filter((t) => /^ \S/.test(t) && !/^ [→↑]/.test(t)).length).toBeGreaterThanOrEqual(5);
+    const model = prompt(lines);
+    expect(model.question).toBe("Pick a color for the Collie probe");
+    expect(model.options).toEqual([
+      ...WRAPPED_CHOICES.map((c, i) => ({ label: c.label, description: c.description, keys: [...Array<string>(i).fill("Down"), "Enter"], keyLabel: i === 0 ? "→" : "" })),
+      { label: "Cancel", keys: ["Escape"], keyLabel: "Esc" },
+    ]);
+    expect(piAdapter.buildBlocks(lines).map((b) => b.kind)).toContain("prompt-select");
+  });
+
+  it("lifts again once the pointer walked past a wrapped description, and the walk keeps the core signature", () => {
+    const before = prompt(linesOf(wrappedChoiceScreen(0)));
+    for (const pointer of [1, 2]) {
+      const moved = prompt(linesOf(wrappedChoiceScreen(pointer)));
+      expect(moved.options.map((o) => o.label)).toEqual(["Red", "Green", "Blue", "Cancel"]);
+      expect(moved.options[pointer]!.keys).toEqual(["Enter"]);
+      expect(moved.signature).not.toBe(before.signature);
+      expect(moved.coreSignature).toBe(before.coreSignature);
+    }
+  });
+
+  it("lifts the same on a read with no styling", () => {
+    const styled = prompt(linesOf(wrappedChoiceScreen(1)));
+    expect(prompt(linesOf(stripSgr(wrappedChoiceScreen(1))))).toEqual(styled);
+  });
+
+  it("still declines a row at column 1 straight under a label: a label wrapped back is not a description", () => {
+    const screen = wrappedChoiceScreen(0);
+    const wrappedLabel = replaceLast(screen, "   Green", "   Green\r\n and the rest of a label too long for the pane");
+    expect(detectPiQuestion(linesOf(wrappedLabel))).toBeNull();
+    expect(piModalOnScreen(linesOf(wrappedLabel))).toBe(true);
+  });
+
+  it("does not take a title row over the first option for a wrapped description", () => {
+    // The title is a row at column 1 too; with no description row over it, it stays the question.
+    const model = prompt(linesOf(wrappedChoiceScreen(2)));
+    expect(model.question).toBe("Pick a color for the Collie probe");
+    expect(model.options[0]!.description).toBe(WRAPPED_CHOICES[0].description);
+  });
+});
+
 // pi's example `permission-gate.ts` asks before a risky bash command with pi's own selector,
 // `ctx.ui.select("⚠️ Dangerous command:\n\n  <command>\n\nAllow?", ["Yes", "No"])`. The title is several
 // rows, and the command row is three columns in, the shape of an unpointed option row. Collie 1.22.0 to
@@ -406,13 +488,140 @@ describe("pi's permission gate: a selector whose title quotes the command", () =
 
   it("declines gentle-pi's list when a label wrapped back to column 1 stands right over the pointer", () => {
     // The wrap reads as a title row, and the rows above it are options, not a quoted block: there is no
-    // blank row between the header and the list, so nothing indented may stand in the header.
+    // blank row between the header and the list, so nothing indented may stand in the header. Green
+    // loses its description here: a row at column 1 under a description row is that description
+    // wrapped, and lifts (issue 746, "an unnumbered option whose description wraps").
     const gentle = raw("pi--v130-gentle-choice.txt");
     const pointed = (label: string) => ` \x1b[0m\x1b[38;2;157;157;157m→ ${label}\x1b[0m`;
     const onBlue = replaceLast(replaceLast(gentle, pointed("Red"), "   Red"), "   Blue", `${pointed("Blue")}`);
-    const wrapped = replaceLast(onBlue, pointed("Blue"), ` continued\n${pointed("Blue")}`);
+    const bare = onBlue
+      .split("\r\n")
+      .filter((row) => !row.includes("Calm and natural"))
+      .join("\r\n");
+    const wrapped = replaceLast(bare, pointed("Blue"), ` continued\n${pointed("Blue")}`);
+    expect(bare).not.toBe(onBlue);
     expect(prompt(linesOf(onBlue)).options.map((o) => o.label)).toEqual(["Red", "Green", "Blue", "Cancel"]);
     expect(detectPiQuestion(linesOf(wrapped))).toBeNull();
+  });
+});
+
+describe("a frameless dialog read by its footer, the last row of the screen", () => {
+  const NAME = "pi--v130-gentle-review-consent.txt";
+  const consent = raw(NAME);
+  const FOOTER = "↑↓ choose · Enter confirm · Esc cancel · D details";
+  /** The pointer moved to option 2: the pointed row is painted, the others are plain. */
+  const onSecond = replaceLast(
+    replaceLast(consent, "\x1b[0m\x1b[38;2;157;157;157m→ 1. Review this change\x1b[0m", "  1. Review this change"),
+    "  2. Skip this time",
+    "\x1b[0m\x1b[38;2;157;157;157m→ 2. Skip this time\x1b[0m",
+  );
+
+  it("lifts the three options with the pointer, the walk's keys and the Escape row", () => {
+    const lines = load(NAME);
+    expect(lineText(lines.at(-1)!).trimEnd()).toBe(FOOTER);
+    const model = prompt(lines);
+    expect(model.family).toBe("select");
+    expect(model.question).toBe(
+      "Review consent Gentle AI can review this change before you call it done. Review can help detect regressions in these changes.",
+    );
+    expect(model.options).toEqual([
+      { label: "Review this change", keys: ["Enter"], keyLabel: "→" },
+      { label: "Skip this time", keys: ["Down", "Enter"], keyLabel: "" },
+      { label: "Review and allow this session", keys: ["Down", "Down", "Enter"], keyLabel: "" },
+      { label: "Cancel", keys: ["Escape"], keyLabel: "Esc" },
+    ]);
+    expect(piModalOnScreen(lines)).toBe(true);
+    expect(piAdapter.composerReady?.(lines)).toBe(false);
+  });
+
+  it("is a prompt-select card whose region starts at the title, the transcript kept above", () => {
+    const blocks = piAdapter.buildBlocks(load(NAME));
+    expect(blocks.map((b) => b.kind)).toEqual(["raw", "prompt-select"]);
+    const card = blocks[1]!;
+    if (card.kind !== "prompt-select") throw new Error("not a prompt-select");
+    expect(lineText(card.lines[0]!).trimEnd()).toBe("Review consent");
+    expect(lineText(card.lines.at(-1)!).trimEnd()).toBe(FOOTER);
+  });
+
+  it("points at option 2 when the pointer is there, and walks from it", () => {
+    const model = prompt(linesOf(onSecond));
+    expect(model.options.map((o) => [o.label, o.keys, o.keyLabel])).toEqual([
+      ["Review this change", ["Up", "Enter"], ""],
+      ["Skip this time", ["Enter"], "→"],
+      ["Review and allow this session", ["Down", "Enter"], ""],
+      ["Cancel", ["Escape"], "Esc"],
+    ]);
+  });
+
+  it("reads the real capture with the pointer on option 2 as option 2, plans [Up, Enter] [Enter] [Down, Enter]", () => {
+    const model = prompt(load("pi--v130-gentle-review-consent-moved.txt"));
+    expect(model.options.map((o) => [o.label, o.keys, o.keyLabel])).toEqual([
+      ["Review this change", ["Up", "Enter"], ""],
+      ["Skip this time", ["Enter"], "→"],
+      ["Review and allow this session", ["Down", "Enter"], ""],
+      ["Cancel", ["Escape"], "Esc"],
+    ]);
+  });
+
+  it("changes the core signature only by the pointer", () => {
+    const a = prompt(load(NAME));
+    const b = prompt(linesOf(onSecond));
+    expect(a.signature).not.toBe(b.signature);
+    expect(a.coreSignature).toBe(b.coreSignature);
+  });
+
+  it("names nothing by title or label: the same shape with other words lifts alike", () => {
+    const reworded = replaceLast(
+      replaceLast(replaceLast(consent, "Review consent", "Deploy gate"), "Skip this time", "Not now"),
+      "Gentle AI can review", "Some tool can review",
+    );
+    expect(prompt(linesOf(reworded)).options.map((o) => o.label)).toEqual([
+      "Review this change", "Not now", "Review and allow this session", "Cancel",
+    ]);
+  });
+
+  it("lifts without the effect paragraph too", () => {
+    const rows = consent.split("\r\n");
+    const effect = rows.findIndex((r) => r.includes("Effect:"));
+    const bare = [...rows.slice(0, effect - 1), ...rows.slice(effect + 1)].join("\r\n");
+    expect(prompt(linesOf(bare)).options).toHaveLength(4);
+  });
+
+  it.each([
+    ["a footer missing Enter confirm", replaceLast(consent, " · Enter confirm", "")],
+    ["Enter named as next", replaceLast(consent, "Enter confirm", "Enter next")],
+    ["arrows named as scroll", replaceLast(consent, "choose", "scroll")],
+    ["a plain (unpainted) footer", replaceLast(consent, "\x1b[0m\x1b[38;2;127;127;127m↑↓", "↑↓")],
+    ["a plain title row", replaceLast(consent, "\x1b[0m\x1b[1m\x1b[38;2;157;157;157mReview consent\x1b[0m", "Review consent")],
+    ["a second pointer", replaceLast(consent, "  2. Skip", "→ 2. Skip")],
+    ["no pointer", replaceLast(consent, "→ 1. Review", "  1. Review")],
+    ["noncontiguous numbers", replaceLast(consent, "  3. Review and", "  5. Review and")],
+    ["a row after the footer", `${consent}\r\n$ `],
+    ["a row of prose between options and footer", replaceLast(consent, "\r\n\r\n\x1b[0m\x1b[38;2;127;127;127m↑↓", "\r\nmore prose here\r\n\r\n\x1b[0m\x1b[38;2;127;127;127m↑↓")],
+  ])("stays raw: %s", (_name, text) => {
+    expect(detectPiQuestion(linesOf(text))).toBeNull();
+    expect(piAdapter.buildBlocks(linesOf(text)).every((b) => b.kind === "raw")).toBe(true);
+  });
+
+  it("keeps the Escape card when only the Enter hint is missing, and never types", () => {
+    const lines = linesOf(replaceLast(consent, " · Enter confirm", ""));
+    expect(piModalOnScreen(lines)).toBe(true);
+    expect(piAdapter.composerReady?.(lines)).toBe(false);
+  });
+
+  it("stays raw when the same rows are quoted in agent prose above pi's real editor", () => {
+    const dialog = consent.slice(consent.lastIndexOf("Review consent") - 20);
+    const editor = load("pi--v110-idle.txt");
+    const quoted = [...linesOf(dialog), ...editor];
+    expect(detectPiQuestion(quoted)).toBeNull();
+    expect(piAdapter.buildBlocks(quoted).every((b) => b.kind === "raw")).toBe(true);
+    expect(piAdapter.composerReady?.(quoted)).toBe(true);
+  });
+
+  it("stays raw when the same rows are quoted with a plain footer at the end of the screen", () => {
+    const plainFooter = replaceLast(consent, "\x1b[0m\x1b[38;2;127;127;127m↑↓", "↑↓");
+    expect(detectPiQuestion(linesOf(plainFooter))).toBeNull();
+    expect(piModalOnScreen(linesOf(plainFooter))).toBe(false);
   });
 });
 
@@ -933,5 +1142,318 @@ describe("transcript text above a real frame", () => {
     expect(piAdapter.extractInputDraft(lines)).toBeNull();
     expect(piAdapter.modalOnScreen?.(lines)).toBe(true);
     expect(actual(lines)).toBe(plan);
+  });
+});
+
+describe("a pi question whose key hint a narrow pane wrapped", () => {
+  const RAW_NARROW = raw("pi--v0871-question-narrow.txt");
+  const HINT_NARROW = " \x1b[0m\x1b[38;2;102;102;102m↑↓ navigate • Enter to select • Esc to cancel\x1b[0m";
+  const dim = (text: string) => ` \x1b[0m\x1b[38;2;102;102;102m${text}\x1b[0m`;
+  const GATE_NARROW = raw("pi--v0871-permission-gate-narrow.txt");
+
+  function questionModel(text: string): PromptModel | null {
+    const found = detectPiQuestion(linesOf(text));
+    return found?.kind === "prompt-select" ? found.model : null;
+  }
+
+  it("reads a two-space footer wrapped between two hints, Escape included", () => {
+    expect(RAW_NARROW).toContain(HINT_NARROW);
+    const wrapped = RAW_NARROW.replace(
+      HINT_NARROW,
+      `${dim("↑↓ navigate  enter select")}\n${dim("escape/ctrl+c cancel")}`,
+    );
+    const model = questionModel(wrapped);
+    expect(model?.options.at(-1)).toMatchObject({ label: "Cancel", keys: ["Escape"] });
+    expect(model?.options.map((o) => o.label).slice(0, 3)).toEqual(["Red", "Green", "Blue"]);
+  });
+
+  it("still reads a footer wrapped inside one hint, as before", () => {
+    const wrapped = RAW_NARROW.replace(
+      HINT_NARROW,
+      `${dim("↑↓ navigate • Enter to")}\n${dim("select • Esc to cancel")}`,
+    );
+    expect(questionModel(wrapped)?.options.at(-1)).toMatchObject({ label: "Cancel", keys: ["Escape"] });
+  });
+
+  it("reads pi's own selector with its hint wrapped below 47 columns, as the permission gate draws it", () => {
+    const rows = GATE_NARROW.split(/\r?\n/);
+    const hint = rows.findIndex((r) => r.includes("escape/ctrl+c"));
+    const cut = rows[hint]!.indexOf("  \x1b[0m\x1b[38;2;102;102;102mescape");
+    expect(cut).toBeGreaterThan(0);
+    rows.splice(hint, 1, rows[hint]!.slice(0, cut), ` ${rows[hint]!.slice(cut + 2)}`);
+    const model = questionModel(rows.join("\n"));
+    expect(model?.options.map((o) => [o.label, o.keys])).toEqual([
+      ["Yes", ["Enter"]],
+      ["No", ["Down", "Enter"]],
+      ["Cancel", ["Escape"]],
+    ]);
+  });
+});
+
+// M78 spec 07: herdr-core's `terminal.read` hands Collie the screen with no styling at all, so every
+// paint test stands for a text fact there (ask.ts header, "A READ WITH NO STYLING"). Styled reads keep
+// every paint test, which the rest of this file pins.
+describe("a read with no styling (herdr-core)", () => {
+  const plain = (name: string) => linesOf(stripSgr(raw(name)));
+  const CORE = "pi--v130-core-question--w120.txt";
+  const text = (row: string): StyledLine => ({ segments: [{ text: row, style: {}, muted: false }] });
+
+  it("lifts pi 1.3.0's question through a core bridge with its options, the pointer's walk and Escape", () => {
+    const model = prompt(load(CORE));
+    expect(model.question).toBe("Which colour should the lab use?");
+    expect(model.options.map((o) => [o.label, o.keys])).toEqual([
+      ["Red", ["Enter"]],
+      ["Green", ["Down", "Enter"]],
+      ["Blue", ["Down", "Down", "Enter"]],
+      ["Cancel", ["Escape"]],
+    ]);
+    expect(model.feedback?.purpose).toBe("free-text");
+    expect(piAdapter.modalOnScreen?.(load(CORE))).toBe(true);
+    expect(piAdapter.composerReady?.(load(CORE))).toBe(false);
+  });
+
+  it("gives the same ask hash on two reads of the same screen, and reads as an ask on the Surface", () => {
+    const first = liftDialog(piAdapter.buildBlocks(load(CORE)));
+    const second = liftDialog(piAdapter.buildBlocks(load(CORE)));
+    expect(first?.hash).toBeDefined();
+    expect(second?.hash).toBe(first?.hash);
+    const read = readScreen(load(CORE), "pi", idleFor("pi"));
+    expect(modalWord(read.surface.modal)).toBe("ask");
+    expect(askOf(read.surface.modal)?.options.map((o) => o.label)).toEqual(["Red", "Green", "Blue", "Cancel"]);
+  });
+
+  it.each([
+    "pi--v0871-question-single.txt",
+    "pi--v110-question-single-moved.txt",
+    "pi--v0871-permission-gate.txt",
+    "pi--omo-v5130-single-described.txt",
+    "pi--v110-questionnaire-single.txt",
+    "pi--v130-gentle-choice.txt",
+  ])("%s stripped lifts the styled read's question, options, keys and signatures", (name) => {
+    const styled = prompt(load(name));
+    const stripped = prompt(plain(name));
+    expect(stripped).toEqual(styled);
+  });
+
+  it("lifts a tab page of several questions uncaptioned, the current chip being a colour only", () => {
+    for (const name of ["pi--v110-questionnaire-tabs.txt", "pi--v110-questionnaire-tabs-second-moved.txt"]) {
+      const styled = prompt(load(name));
+      const stripped = prompt(plain(name));
+      expect(styled.caption, name).toBeDefined();
+      expect(stripped.caption, name).toBeUndefined();
+      expect({ ...stripped, caption: styled.caption }, name).toEqual(styled);
+    }
+  });
+
+  it("lifts the Submit page as the styled read's review: a strip with no option row under it", () => {
+    for (const name of ["pi--v0871-questionnaire-submit-ready.txt", "pi--v110-questionnaire-submit-ready.txt"]) {
+      expect(detectPiQuestion(plain(name)), name).toEqual(detectPiQuestion(load(name)));
+    }
+    // An incomplete Submit page stays raw stripped as styled.
+    expect(detectPiQuestion(plain("pi--v110-questionnaire-submit-incomplete.txt"))).toBeNull();
+  });
+
+  it("keeps a quoted dialog raw: above the editor, and above a shell after pi exited", () => {
+    for (const name of ["pi--prose-quoted-dialog-above-editor.txt", "pi--prose-quoted-omo-dialog-above-editor.txt", "pi--prose-quoted-dialog-in-tool-result.txt", "pi--prose-quoted-dialog-then-shell.txt"]) {
+      expect(detectPiQuestion(plain(name)), name).toBeNull();
+      expect(piAdapter.buildBlocks(plain(name)).every((b) => b.kind === "raw"), name).toBe(true);
+    }
+  });
+
+  it("refuses pi's status rows once a shell prompt or two output rows stand under them", () => {
+    const core = load(CORE);
+    expect(detectPiQuestion(core)?.kind).toBe("prompt-select");
+    for (const shell of ["$ ", "alice@box:~/project$ ", "# ", "❯ "]) {
+      expect(detectPiQuestion([...core, text(shell)]), shell).toBeNull();
+    }
+    expect(detectPiQuestion([...core, text("● Wrote the file"), text("  ⎿  done")])).toBeNull();
+    // The limit, stated: one plain row under stock pi's two is an extension's status row, as on a
+    // styled read (paintedStatus lets the last row be plain), so one output row there still lifts.
+    expect(detectPiQuestion([...core, text("● Wrote the file")])?.kind).toBe("prompt-select");
+  });
+
+  it("refuses status rows that are not pi's own: no working directory first, or neither session cost nor context usage", () => {
+    const core = load(CORE);
+    const bottom = core.findLastIndex((line) => /^─{8,}$/.test(lineText(line).trimEnd()));
+    const frame = core.slice(0, bottom + 1);
+    expect(detectPiQuestion([...frame, text("/tmp/project"), text("↑10 ↓20 $0.000 0.0%/200k (auto)")])?.kind).toBe("prompt-select");
+    expect(detectPiQuestion([...frame, text("↑10 ↓20 $0.000 0.0%/200k (auto)")])).toBeNull();
+    expect(detectPiQuestion([...frame, text("/tmp/project"), text("↑10 ↓20 0.0%/200k (auto)")])?.kind).toBe("prompt-select");
+    expect(detectPiQuestion([...frame, text("/tmp/project"), text("↑10 ↓20 some words")])).toBeNull();
+    // A percentage is not the context usage: it needs the window after the slash.
+    expect(detectPiQuestion([...frame, text("/tmp/project"), text("↑10 ↓20 50% done")])).toBeNull();
+    expect(detectPiQuestion([...frame, text("Agent resumed"), text("done")])).toBeNull();
+    // Nothing under the bottom rule is a frame on a styled read too (issue 455): the same limit.
+    expect(detectPiQuestion(frame)?.kind).toBe("prompt-select");
+  });
+
+  // pi's footer prints the session cost only when the model has a price (or runs on a subscription); the
+  // context usage is always there. The capture is pi 1.5.0's example permission-gate on a model with no
+  // price in models.json, so its stats row is `↑1.0k ↓45 0.4%/272k (auto)` with no `$`.
+  describe("a footer that prints no session cost", () => {
+    const NO_COST = "pi--v150-core-permission-gate-no-cost--w200.txt";
+    const STATS = "↑1.0k ↓45 0.4%/272k (auto)";
+    /** The capture with its stats row replaced. */
+    const withStats = (stats: string) => linesOf(replaceLast(raw(NO_COST), STATS, stats));
+
+    it("lifts the dialog with its options, the walk and Escape, as it does with a cost", () => {
+      const model = prompt(load(NO_COST));
+      expect(model.question).toBe("⚠️ Dangerous command: chmod 777 gate-probe.txt Allow?");
+      expect(model.options.map((o) => [o.label, o.keys])).toEqual([
+        ["Yes", ["Enter"]],
+        ["No", ["Down", "Enter"]],
+        ["Cancel", ["Escape"]],
+      ]);
+      const priced = prompt(withStats("↑1.0k ↓45 $0.004 0.4%/272k (auto)"));
+      expect(promptsEqual(model, priced)).toBe(true);
+      expect(promptsSameIdentity(model, priced)).toBe(true);
+    });
+
+    it("reads as an ask on the Surface, so a phone can tap it", () => {
+      const read = readScreen(load(NO_COST), "pi", idleFor("pi"));
+      expect(modalWord(read.surface.modal)).toBe("ask");
+      expect(askOf(read.surface.modal)?.options.map((o) => o.label)).toEqual(["Yes", "No", "Cancel"]);
+    });
+
+    it.each(["?/272k (auto)", "12.5%/1.0M", "0.0%/200k", "100.0%/8.2k (auto)"])("takes the context usage %s", (usage) => {
+      expect(detectPiQuestion(withStats(`↑1.0k ↓45 ${usage}`))?.kind).toBe("prompt-select");
+    });
+
+    it("still refuses what the cost refused: a shell prompt, output, or no pi stats at all", () => {
+      const core = load(NO_COST);
+      expect(detectPiQuestion(core)?.kind).toBe("prompt-select");
+      for (const shell of ["$ ", "alice@box:~/project$ ", "# ", "❯ "]) {
+        expect(detectPiQuestion([...core, text(shell)]), shell).toBeNull();
+      }
+      expect(detectPiQuestion([...core, text("● Wrote the file"), text("  ⎿  done")])).toBeNull();
+      expect(detectPiQuestion(withStats("nothing pi would print"))).toBeNull();
+      expect(piAdapter.buildBlocks(withStats("nothing pi would print")).every((b) => b.kind === "raw")).toBe(true);
+    });
+
+    it("keeps a quoted dialog above a shell raw when pi's footer, without a cost, is quoted with it", () => {
+      // The same limit the priced footer has (pi--prose-quoted-dialog-then-shell.txt): rows after the
+      // footer that end like a shell prompt are not pi's.
+      const quoted = [...load(NO_COST), text("alice@box:~/project$")];
+      expect(detectPiQuestion(quoted)).toBeNull();
+      expect(piAdapter.buildBlocks(quoted).every((b) => b.kind === "raw")).toBe(true);
+    });
+  });
+
+  it("takes no key hints typed into a draft for a dialog", () => {
+    const typed = replaceLast(stripSgr(raw("pi--v0871-draft.txt")), "collie stock pi draft probe", "see this:\r\n ↑↓ navigate • Enter to select • Esc to cancel");
+    expect(detectPiQuestion(linesOf(typed))).toBeNull();
+  });
+
+  it("states what stays paint-only: a frameless dialog, and an extension footer with no session cost", () => {
+    expect(detectPiQuestion(load("pi--v130-gentle-review-consent.txt"))?.kind).toBe("prompt-select");
+    expect(detectPiQuestion(plain("pi--v130-gentle-review-consent.txt"))).toBeNull();
+    expect(detectPiQuestion(load("pi--v110-single.txt"))?.kind).toBe("prompt-select");
+    expect(detectPiQuestion(plain("pi--v110-single.txt"))).toBeNull();
+  });
+});
+
+// Issue 712: gentle-pi 4.6.0 on pi 1.5.0 wraps the Effect paragraph under its label and draws one status row
+// under the footer. Four captures lift; the two with Gentle Shell's side rail wait for issue 710.
+describe("a frameless dialog with a hanging Effect paragraph and a status row under the footer (issue 712)", () => {
+  const CASES: [string, string][] = [
+    ["pi--v150-gentle-review-consent--w119.txt", "git and context row straight under the footer"],
+    ["pi--v150-gentle-review-consent-fullscreen--w129.txt", "one blank row, then the branch and mode row"],
+    ["pi--v150-gentle-review-consent-fullscreen--w198.txt", "one blank row, then the branch and mode row, wide"],
+    ["pi--v150-gentle-review-consent-regular--w69.txt", "regular mode, a widget row straight over the title"],
+    ["pi--v150-gentle-review-consent-rail-tall--w198.txt", "the side rail above the dialog, not beside it"],
+  ];
+  const LABELS = ["Run the review now", "Not now, just this once", "Review and allow this session", "Cancel"];
+  const FOOTER = "↑↓ choose · Enter confirm · Esc cancel · D details";
+
+  it.each(CASES)("%s lifts the options with the walk to each answer (%s)", (name) => {
+    const lines = load(name);
+    const model = prompt(lines);
+    expect(model.family).toBe("select");
+    expect(model.question.startsWith("Review consent Gentle AI can review this change before you call it done. this change gets")).toBe(true);
+    expect(model.options).toEqual([
+      { label: LABELS[0], keys: ["Enter"], keyLabel: "→" },
+      { label: LABELS[1], keys: ["Down", "Enter"], keyLabel: "" },
+      { label: LABELS[2], keys: ["Down", "Down", "Enter"], keyLabel: "" },
+      { label: "Cancel", keys: ["Escape"], keyLabel: "Esc" },
+    ]);
+    expect(piModalOnScreen(lines)).toBe(true);
+    expect(piAdapter.composerReady?.(lines)).toBe(false);
+    const blocks = piAdapter.buildBlocks(lines);
+    expect(blocks.map((b) => b.kind)).toEqual(["raw", "prompt-select"]);
+    const card = blocks[1]!;
+    if (card.kind !== "prompt-select") throw new Error("not a prompt-select");
+    expect(lineText(card.lines[0]!).trimEnd()).toBe("Review consent");
+  });
+
+  it.each(CASES)("%s walks from the pointer on option 2 (%s)", (name) => {
+    const pointedRow = raw(name).split("\r\n").find((r) => r.includes("→ 1. Run the review now"))!;
+    const moved = raw(name)
+      .replace(pointedRow, pointedRow.replace("→ 1.", "  1."))
+      .replace("  2. Not now, just this once", "→ 2. Not now, just this once");
+    expect(moved).not.toBe(raw(name));
+    const model = prompt(linesOf(moved));
+    expect(model.options.map((o) => o.keys)).toEqual([["Up", "Enter"], ["Enter"], ["Down", "Enter"], ["Escape"]]);
+    const before = prompt(load(name));
+    expect(before.signature).not.toBe(model.signature);
+    expect(before.coreSignature).toBe(model.coreSignature);
+  });
+
+  it.each(CASES.filter(([name]) => !name.includes("rail-tall")))("%s keeps the status row out of the signature (%s)", (name) => {
+    const lines = load(name);
+    const texts = lines.map((l) => lineText(l).trimEnd());
+    const model = prompt(lines);
+    expect(model.signature.endsWith(FOOTER)).toBe(true);
+    expect(texts.at(-1)).not.toBe(FOOTER);
+  });
+
+  it("wraps the Effect paragraph under its label and reads the continuation rows as the note", () => {
+    const text = raw("pi--v150-gentle-review-consent--w119.txt");
+    expect(text).toContain("        high-risk candidate asks again.");
+    // A continuation indented by any other width is not the hanging indent.
+    const off = text.replace("        high-risk candidate", "      high-risk candidate");
+    expect(off).not.toBe(text);
+    expect(detectPiQuestion(linesOf(off))).toBeNull();
+    // Nor is an indented row with no label above it.
+    const noLabel = text.replace("Effect: Reviews this exact", "Reviews this exact");
+    expect(noLabel).not.toBe(text);
+    expect(detectPiQuestion(linesOf(noLabel))).toBeNull();
+    // Four rows is over the cap.
+    const rows = text.split("\r\n");
+    const at = rows.findIndex((r) => r.includes("        high-risk"));
+    const long = [...rows.slice(0, at + 1), rows[at]!, rows[at]!, ...rows.slice(at + 1)].join("\r\n");
+    expect(detectPiQuestion(linesOf(long))).toBeNull();
+  });
+
+  const paintedRow = (t: string) => `\x1b[0m\x1b[38;2;157;157;157m${t}\x1b[0m`;
+  const base = raw("pi--v150-gentle-review-consent--w119.txt").split("\r\n");
+  const statusAt = base.findLastIndex((r) => r.includes("~/proj"));
+  const withTail = (tail: string[]) => linesOf([...base.slice(0, statusAt), ...tail].join("\r\n"));
+
+  it.each([
+    ["a second status row after one", ["", paintedRow("~/proj  master"), paintedRow("ctx  0%  usage")]],
+    ["two blank rows before the status row", ["", "", paintedRow("~/proj  master")]],
+    ["a plain row under the footer", ["alice@box:~/project"]],
+    ["a painted shell prompt under a blank row", ["", paintedRow("alice  ~/project$")]],
+    ["a rule under a blank row", ["", paintedRow("─".repeat(40))]],
+  ])("stays raw with %s under the footer", (_name, tail) => {
+    expect(detectPiQuestion(withTail(tail))).toBeNull();
+    expect(piAdapter.buildBlocks(withTail(tail)).every((b) => b.kind === "raw")).toBe(true);
+  });
+
+  it("lifts with the status row, and with one blank row before it", () => {
+    expect(detectPiQuestion(withTail([paintedRow("~/proj  master")]))?.kind).toBe("prompt-select");
+    expect(detectPiQuestion(withTail(["", paintedRow("~/proj  master")]))?.kind).toBe("prompt-select");
+  });
+
+  it("stays paint-only on a read with no styling", () => {
+    expect(detectPiQuestion(linesOf(stripSgr(raw("pi--v150-gentle-review-consent--w119.txt"))))).toBeNull();
+  });
+
+  // Gentle Shell's side rail (issue 710): the dialog's rows stand beside the rail's boxes, so they do not
+  // read as column-0 rows. Raw until 710 reads the rail; the Escape card is still the way out.
+  it("stays raw while the dialog stands beside the side rail, until issue 710 reads the rail", () => {
+    const lines = load("pi--v150-gentle-review-consent-rail-beside--w198.txt");
+    expect(piAdapter.buildBlocks(lines).every((b) => b.kind === "raw")).toBe(true);
+    expect(detectPiQuestion(lines)).toBeNull();
   });
 });

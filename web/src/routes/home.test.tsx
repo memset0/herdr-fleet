@@ -1,12 +1,13 @@
-import { cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
+import { act, cleanup, fireEvent, render, screen, waitFor, within } from "@testing-library/react";
 import userEvent from "@testing-library/user-event";
 import { http, HttpResponse } from "msw";
 import { createMemoryRouter, RouterProvider } from "react-router";
-import { vi } from "vitest";
+import { afterEach, beforeEach, vi } from "vitest";
 
 import { CrewProvider } from "@/components/crew-provider";
 import { ROOT_ROUTE_ID, type HomeData } from "@/lib/loaders";
 import { setPinned } from "@/lib/pins";
+import { __resetBundleFocus, BUNDLE_FOCUS_TTL_MS, bundleFocusPending, requestBundleFocus } from "@/lib/bundle-apply";
 import {
   fixtureAgents,
   fixtureCrewAgents,
@@ -20,6 +21,7 @@ import {
   fixtureTabs,
   fixtureWorkspaces,
 } from "@/test/handlers";
+import type { StartLaunchBody } from "@/lib/api";
 import type { SnapshotResponse } from "@/lib/types";
 import { withHeaderHost } from "@/test/header-host";
 import { server } from "@/test/setup";
@@ -80,23 +82,19 @@ function renderHome(data: HomeData, initialPath?: string) {
   return router;
 }
 
-/** Wait for the herd list to be on screen. The workspace select (components/agent-list.tsx) is the one
+/** Wait for the herd list to be on screen. The workspace filter (components/agent-list.tsx) is the one
  *  control every render with at least one pane produces — there is no "Needs you" heading to wait
  *  on any more, since a pane no longer moves to a section of its own. */
-const settled = () => screen.findByRole("combobox", { name: "Workspace" });
+const settled = () => screen.findByRole("button", { name: /^Workspace / });
 
-/** The `<section>` a workspace heading owns, scoped away from the workspace select's own options,
+/** The `<section>` a workspace heading owns, scoped away from the workspace filter's own rows,
  *  which carry the same workspace name a heading does (agent-list.tsx). */
 const groupSection = (label: string) => screen.getByRole("heading", { name: label }).closest("section")!;
-
-/** DOWNSTREAM PORT (FORK.toml native-agent-favorites-port): an agent row carries a favorite control
- *  beside it, a pressed/unpressed toggle in the same list; a row is never that control. */
-const agentRows = (buttons: HTMLElement[]) => buttons.filter((b) => !b.hasAttribute("aria-pressed"));
 
 /** A workspace group's pane rows: the buttons in its list, never the "+" at the end of its heading
  *  (M40/03), which is a button of the same section. */
 const rowsOf = (section: HTMLElement) =>
-  agentRows(within(section.querySelector<HTMLElement>('[data-slot="list-group"]')!).getAllByRole("button"));
+  within(section.querySelector<HTMLElement>('[data-slot="list-group"]')!).getAllByRole("button");
 
 const url = (router: ReturnType<typeof renderHome>) =>
   router.state.location.pathname + router.state.location.search;
@@ -364,17 +362,41 @@ describe("the dashboard across sessions", () => {
   });
 });
 
-describe("the dashboard fills the route column", () => {
-  it("caps neither its content nor its header at a reading column", async () => {
-    // The shell puts the rails beside this column, so the column IS the bound. A 640px cap inside it
-    // would centre the herd in the middle third of a desktop and leave the header's rule short of
-    // its own content — the two halves are removed together, here and in the route's header claim.
-    renderHome(homeData({ agents: fixtureAgents, workspaces: fixtureWorkspaces, tabs: fixtureTabs }));
+// The installed app's icon (lib/app-badge.ts). The service worker sums every session's slot, so the page
+// writes the count only when it shows the whole herd: one session of several would write a smaller number.
+describe("the app icon's count from the open dashboard", () => {
+  const setAppBadge = vi.fn(async () => undefined);
+  const clearAppBadge = vi.fn(async () => undefined);
+  beforeEach(() => {
+    setAppBadge.mockClear();
+    clearAppBadge.mockClear();
+    Object.defineProperty(navigator, "setAppBadge", { value: setAppBadge, configurable: true });
+    Object.defineProperty(navigator, "clearAppBadge", { value: clearAppBadge, configurable: true });
+  });
+  afterEach(() => {
+    Reflect.deleteProperty(navigator, "setAppBadge");
+    Reflect.deleteProperty(navigator, "clearAppBadge");
+  });
+
+  // fixtureAgents holds one blocked pane, and the default prefs notify for blocked ones.
+  it("writes nothing on one session of several, and leaves the worker's sum standing", async () => {
+    renderHome(solo());
     await settled();
-    const heading = screen.getAllByRole("heading", { name: "webapp" })[0];
-    expect(heading?.closest(".max-w-screen-sm")).toBeNull();
-    expect(document.querySelector("header")?.className).not.toContain("max-w-screen-sm");
-    expect(document.querySelector("header")?.className).not.toContain("mx-auto");
+    await new Promise((r) => setTimeout(r, 50));
+    expect(setAppBadge).not.toHaveBeenCalled();
+    expect(clearAppBadge).not.toHaveBeenCalled();
+  });
+
+  it("writes its count when the view is all sessions", async () => {
+    renderHome({ ...solo(), viewAll: true });
+    await settled();
+    await waitFor(() => expect(setAppBadge).toHaveBeenCalledWith(1));
+  });
+
+  it("writes its count on a solo machine with a single session", async () => {
+    renderHome(homeData({ agents: fixtureAgents, shellPanes: fixtureShellPanes, sessions: fixtureSessions.slice(0, 1) }));
+    await settled();
+    await waitFor(() => expect(setAppBadge).toHaveBeenCalledWith(1));
   });
 });
 
@@ -434,14 +456,14 @@ describe("the dashboard's footer (ADR 0066, ADR 0085)", () => {
     renderHome(data);
     await settled();
     // The Dashboard has all three, so the absence below is the tab's doing and not the fixture's.
-    expect(screen.getByRole("combobox", { name: "Workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Workspace / })).toBeInTheDocument();
     expect(screen.getByRole("combobox", { name: "Pane order" })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Pinned" })).toBeInTheDocument();
     expect(screen.getByRole("button", { name: /need you/i })).toBeInTheDocument();
 
     await userEvent.click(tab(/^Crew$/));
     expect(screen.getByTestId("crew-tab")).toBeInTheDocument();
-    expect(screen.queryByRole("combobox", { name: "Workspace" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /^Workspace / })).not.toBeInTheDocument();
     expect(screen.queryByRole("combobox", { name: "Pane order" })).not.toBeInTheDocument();
     expect(screen.queryByRole("region", { name: "Pinned" })).not.toBeInTheDocument();
     expect(screen.queryByRole("button", { name: /need you/i })).not.toBeInTheDocument();
@@ -450,7 +472,7 @@ describe("the dashboard's footer (ADR 0066, ADR 0085)", () => {
 
     // Back on the Dashboard the chrome is as it was left.
     await userEvent.click(tab(/^Dashboard/));
-    expect(screen.getByRole("combobox", { name: "Workspace" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Workspace / })).toBeInTheDocument();
     expect(screen.getByRole("region", { name: "Pinned" })).toBeInTheDocument();
   });
 
@@ -544,9 +566,10 @@ describe("the dashboard's footer (ADR 0066, ADR 0085)", () => {
     expect(needsSwitch()).toHaveAttribute("aria-pressed", "true");
     expect(screen.getByRole("heading", { name: "webapp" })).toBeInTheDocument();
     expect(screen.queryByRole("heading", { name: "collie" })).not.toBeInTheDocument();
-    // The select still offers every workspace: the filter removes rows, never places.
-    const select = screen.getByRole("combobox", { name: "Workspace" });
-    expect(within(select).getByRole("option", { name: /^collie/ })).toBeInTheDocument();
+    // The filter still offers every workspace: the switch removes rows, never places.
+    await userEvent.click(await settled());
+    expect(within(screen.getByRole("dialog", { name: "Workspaces" })).getByRole("checkbox", { name: /^collie/ })).toBeInTheDocument();
+    await userEvent.click(within(screen.getByRole("dialog", { name: "Workspaces" })).getByRole("button", { name: "Close" }));
     expect(stored().needsYouOnly).toBe(true);
     // A new mount reads it back.
     cleanup();
@@ -578,28 +601,306 @@ describe("the dashboard's footer (ADR 0066, ADR 0085)", () => {
     expect(screen.getByRole("combobox", { name: "Pane order" })).toBeInTheDocument();
   });
 
-  it("the workspace select shows one workspace alone, and the choice is remembered", async () => {
+  it("the workspace filter shows chosen workspaces alone, and the choice is remembered", async () => {
     renderHome(solo());
-    const select = await settled();
-    expect(select).toHaveValue("all");
-    expect(within(select).getAllByRole("option").map((o) => o.textContent)).toEqual([
+    await userEvent.click(await settled());
+    const sheet = () => screen.getByRole("dialog", { name: "Workspaces" });
+    expect(within(sheet()).getByRole("checkbox", { name: "All workspaces" })).toBeChecked();
+    expect(within(sheet()).getAllByRole("checkbox").map((o) => o.textContent)).toEqual([
       "All workspaces",
       expect.stringMatching(/^webapp/),
       expect.stringMatching(/^collie/),
     ]);
-    await userEvent.selectOptions(select, within(select).getByRole("option", { name: /^collie/ }));
+    await userEvent.click(within(sheet()).getByRole("checkbox", { name: /^collie/ }));
     expect(screen.queryByRole("heading", { name: "webapp" })).not.toBeInTheDocument();
     expect(screen.getByRole("heading", { name: "collie" })).toBeInTheDocument();
-    expect(stored().isolatedSpace).toEqual(expect.stringContaining("collie"));
+    expect(stored().isolatedSpaces).toEqual([expect.stringContaining("collie")]);
+    // A second workspace joins the first; the dashboard shows both.
+    await userEvent.click(within(sheet()).getByRole("checkbox", { name: /^webapp/ }));
+    expect(screen.getByRole("heading", { name: "webapp" })).toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "collie" })).toBeInTheDocument();
+    expect(stored().isolatedSpaces).toHaveLength(2);
+    await userEvent.click(within(sheet()).getByRole("checkbox", { name: /^webapp/ }));
     // A new mount reads it back, and "All workspaces" clears it.
     cleanup();
     renderHome(solo());
-    const again = await settled();
-    expect(within(again).getByRole("option", { name: /^collie/ })).toHaveProperty("selected", true);
+    await userEvent.click(await settled());
+    expect(within(sheet()).getByRole("checkbox", { name: /^collie/ })).toBeChecked();
     expect(screen.queryByRole("heading", { name: "webapp" })).not.toBeInTheDocument();
-    await userEvent.selectOptions(again, "all");
+    await userEvent.click(within(sheet()).getByRole("checkbox", { name: "All workspaces" }));
     expect(screen.getByRole("heading", { name: "webapp" })).toBeInTheDocument();
-    expect(stored().isolatedSpace).toBeNull();
+    expect(stored().isolatedSpaces).toEqual([]);
+  });
+
+  it("folds linked worktrees under their open root workspace in the filter and pane list (issue #587)", async () => {
+    const repo = "/home/you/membero";
+    const data = homeData({
+      agents: [
+        {
+          ...fixtureAgents[0]!,
+          paneId: "w1:p1",
+          workspaceId: "w1",
+          workspaceLabel: "membero",
+          workspaceNumber: 1,
+          tabId: "w1:t1",
+          tabLabel: "1",
+          sessionName: "root-agent",
+          status: "idle",
+        },
+        {
+          ...fixtureAgents[0]!,
+          paneId: "w2:p1",
+          workspaceId: "w2",
+          workspaceLabel: "lucky-meadow-d1ec",
+          workspaceNumber: 2,
+          tabId: "w2:t1",
+          tabLabel: "1",
+          sessionName: "worktree-agent",
+          status: "blocked",
+        },
+        {
+          ...fixtureAgents[1]!,
+          paneId: "w3:p1",
+          workspaceId: "w3",
+          workspaceLabel: "collie",
+          workspaceNumber: 3,
+          tabId: "w3:t1",
+          tabLabel: "code",
+          sessionName: "other-agent",
+          status: "idle",
+        },
+      ],
+      shellPanes: [],
+      workspaces: [
+        { workspaceId: "w1", number: 1, label: "membero", focused: true, activeTabId: "w1:t1", tabCount: 1, paneCount: 1, repoRoot: repo, isWorktree: false },
+        { workspaceId: "w2", number: 2, label: "lucky-meadow-d1ec", focused: false, activeTabId: "w2:t1", tabCount: 1, paneCount: 1, repoRoot: repo, isWorktree: true },
+        { workspaceId: "w3", number: 3, label: "collie", focused: false, activeTabId: "w3:t1", tabCount: 1, paneCount: 1 },
+      ],
+      tabs: [
+        { tabId: "w1:t1", workspaceId: "w1", number: 1, label: "1", focused: true, paneCount: 1 },
+        { tabId: "w2:t1", workspaceId: "w2", number: 1, label: "1", focused: false, paneCount: 1 },
+        { tabId: "w3:t1", workspaceId: "w3", number: 1, label: "code", focused: false, paneCount: 1 },
+      ],
+    });
+    renderHome(data);
+    await userEvent.click(await settled());
+    const sheet = () => screen.getByRole("dialog", { name: "Workspaces" });
+    // Only the root workspace and the unrelated workspace are listed in the filter sheet;
+    // the root's state word reflects its blocked worktree pane.
+    expect(within(sheet()).getAllByRole("checkbox").map((o) => o.textContent)).toEqual([
+      "All workspaces",
+      "membero · needs you",
+      "collie",
+    ]);
+    await userEvent.click(within(sheet()).getByRole("checkbox", { name: /^membero/ }));
+    expect(screen.queryByRole("heading", { name: "collie" })).not.toBeInTheDocument();
+    expect(screen.queryByRole("heading", { name: "lucky-meadow-d1ec" })).not.toBeInTheDocument();
+    const section = groupSection("membero");
+    const rows = rowsOf(section);
+    expect(rows).toHaveLength(2);
+    expect(rows[0]).toHaveTextContent("root-agent");
+    expect(rows[1]).toHaveTextContent("worktree-agent");
+    // The worktree pane shows its worktree name on line 2 so it can be told apart from the root's pane.
+    expect(rows[1]!.querySelector('[data-slot="agent-row-detail"]')).toHaveTextContent("lucky-meadow-d1ec");
+    // On the Files tab, both the root checkout and its linked worktree keep their own change rows.
+    await userEvent.click(within(sheet()).getByRole("button", { name: "Close" }));
+    await userEvent.click(tab(/^Files$/));
+    const changesList = await screen.findByRole("list", { name: "Changes by workspace" });
+    expect(within(changesList).getAllByRole("button").map((r) => r.textContent)).toEqual([
+      expect.stringMatching(/^membero/),
+      expect.stringMatching(/^lucky-meadow-d1ec/),
+    ]);
+  });
+
+  it("promotes an isolated orphan worktree to its root workspace when the root opens, and creates new tabs in the root (#587)", async () => {
+    const repo = "/home/you/membero";
+    const wtPane = {
+      ...fixtureAgents[0]!,
+      paneId: "w2:p1",
+      workspaceId: "w2",
+      workspaceLabel: "lucky-meadow-d1ec",
+      workspaceNumber: 2,
+      tabId: "w2:t1",
+      tabLabel: "1",
+      sessionName: "worktree-agent",
+      status: "working" as const,
+    };
+    const otherPane = {
+      ...fixtureAgents[1]!,
+      paneId: "w3:p1",
+      workspaceId: "w3",
+      workspaceLabel: "collie",
+      workspaceNumber: 3,
+      tabId: "w3:t1",
+      tabLabel: "code",
+      sessionName: "other-agent",
+      status: "idle" as const,
+    };
+    const wtSpace = {
+      workspaceId: "w2",
+      number: 2,
+      label: "lucky-meadow-d1ec",
+      focused: true,
+      activeTabId: "w2:t1",
+      tabCount: 1,
+      paneCount: 1,
+      repoRoot: repo,
+      isWorktree: true,
+    };
+    const rootSpace = {
+      workspaceId: "w1",
+      number: 1,
+      label: "membero",
+      focused: false,
+      activeTabId: "w1:t1",
+      tabCount: 1,
+      paneCount: 0,
+      repoRoot: repo,
+      isWorktree: false,
+    };
+    const otherSpace = {
+      workspaceId: "w3",
+      number: 3,
+      label: "collie",
+      focused: false,
+      activeTabId: "w3:t1",
+      tabCount: 1,
+      paneCount: 1,
+    };
+    // 1. Start with the worktree open as an orphan and isolate it in the filter.
+    localStorage.setItem(
+      "collie:dash-prefs:v1",
+      JSON.stringify({ isolatedSpaces: ["\u0000\u0000lucky-meadow-d1ec"] }),
+    );
+    let createdTabBody = "";
+    server.use(
+      http.post("/api/tab", async ({ request }) => {
+        createdTabBody = await request.text();
+        return HttpResponse.json({
+          tabId: "w1:t2",
+          workspaceId: "w1",
+          pane: { ...wtPane, paneId: "w1:p2", workspaceId: "w1", tabId: "w1:t2" },
+        });
+      }),
+    );
+    // 2. Render after the root workspace `membero` has been opened (even with 0 own panes).
+    renderHome(
+      homeData({
+        agents: [wtPane, otherPane],
+        shellPanes: [],
+        workspaces: [rootSpace, wtSpace, otherSpace],
+        tabs: [
+          { tabId: "w2:t1", workspaceId: "w2", number: 1, label: "1", focused: true, paneCount: 1 },
+          { tabId: "w3:t1", workspaceId: "w3", number: 1, label: "code", focused: false, paneCount: 1 },
+        ],
+      }),
+    );
+    const filterButton = await settled();
+    // Both the pane list and Spaces keep isolating the membero project rather than dropping the filter as stale.
+    expect(filterButton).toHaveTextContent("membero");
+    expect(screen.queryByRole("heading", { name: "collie" })).not.toBeInTheDocument();
+    const section = groupSection("membero");
+    expect(rowsOf(section)).toHaveLength(1);
+    expect(rowsOf(section)[0]).toHaveTextContent("worktree-agent");
+    // Clicking "+" on the root heading opens a tab in the root workspace (`w1`), not the worktree (`w2`).
+    await userEvent.click(screen.getByRole("button", { name: "New tab in membero" }));
+    await waitFor(() => expect(createdTabBody).toBe(JSON.stringify({ workspaceId: "w1" })));
+    // Spaces below also shows both membero and lucky-meadow-d1ec, not lucky-meadow-d1ec alone.
+    expect(screen.getByRole("button", { name: /membero.*0 panes/i })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /lucky-meadow-d1ec.*1 pane/i })).toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: /collie.*1 pane/i })).not.toBeInTheDocument();
+  });
+
+  it("folds a peer machine's linked worktree under its root workspace when loaded through rootLoader on a crew (#587)", async () => {
+    const repo = "/home/peer/audiolink";
+    server.use(
+      http.get("/api/snapshot", () =>
+        HttpResponse.json({
+          bridge: "connected",
+          servers: [
+            { id: "lodge", name: "lodge", isLead: true, reachable: true, lastSeenAt: 1_000 },
+            { id: "attic", name: "attic", isLead: false, reachable: true, lastSeenAt: 1_000 },
+          ],
+          agents: [
+            {
+              ...fixtureAgents[0]!,
+              host: "lodge",
+              paneId: "w1:p1",
+              workspaceId: "w1",
+              workspaceLabel: "collie",
+              workspaceNumber: 1,
+              tabId: "w1:t1",
+              tabLabel: "main",
+              sessionName: "lead-agent",
+              status: "idle",
+            },
+            {
+              ...fixtureAgents[0]!,
+              host: "attic",
+              paneId: "w1:p1",
+              workspaceId: "w1",
+              workspaceLabel: "audiolink",
+              workspaceNumber: 1,
+              tabId: "w1:t1",
+              tabLabel: "main",
+              sessionName: "peer-root-agent",
+              status: "idle",
+            },
+            {
+              ...fixtureAgents[1]!,
+              host: "attic",
+              paneId: "w2:p1",
+              workspaceId: "w2",
+              workspaceLabel: "lucky-forest-e65c",
+              workspaceNumber: 2,
+              tabId: "w2:t1",
+              tabLabel: "work",
+              sessionName: "peer-wt-agent",
+              status: "working",
+            },
+          ],
+          shellPanes: [],
+          workspaces: [
+            { host: "lodge", workspaceId: "w1", number: 1, label: "collie", focused: true, activeTabId: "w1:t1", tabCount: 1, paneCount: 1 },
+            { host: "attic", workspaceId: "w1", number: 1, label: "audiolink", focused: true, activeTabId: "w1:t1", tabCount: 1, paneCount: 1, repoRoot: repo, isWorktree: false },
+            { host: "attic", workspaceId: "w2", number: 2, label: "lucky-forest-e65c", focused: false, activeTabId: "w2:t1", tabCount: 1, paneCount: 1, repoRoot: repo, isWorktree: true },
+          ],
+          tabs: [
+            { host: "lodge", tabId: "w1:t1", workspaceId: "w1", number: 1, label: "main", focused: true, paneCount: 1 },
+            { host: "attic", tabId: "w1:t1", workspaceId: "w1", number: 1, label: "main", focused: true, paneCount: 1 },
+            { host: "attic", tabId: "w2:t1", workspaceId: "w2", number: 1, label: "work", focused: false, paneCount: 1 },
+          ],
+        }),
+      ),
+    );
+    const { rootLoader } = await import("@/lib/loaders");
+    const data = await rootLoader({ request: new Request("http://localhost/") });
+    renderHome(data);
+    await userEvent.click(await settled());
+    const sheet = () => screen.getByRole("dialog", { name: "Workspaces" });
+    expect(within(sheet()).getAllByRole("checkbox").map((o) => o.textContent)).toEqual([
+      "All workspaces",
+      "collie",
+      "audiolink · working",
+    ]);
+  });
+
+
+  it("a device that stored the single-workspace choice keeps its old filter", async () => {
+    // Learn the key the collie workspace is remembered by from a first visit.
+    renderHome(solo());
+    await userEvent.click(await settled());
+    await userEvent.click(within(screen.getByRole("dialog", { name: "Workspaces" })).getByRole("checkbox", { name: /^collie/ }));
+    const key: unknown = stored().isolatedSpaces[0];
+    expect(key).toEqual(expect.stringContaining("collie"));
+    cleanup();
+    localStorage.clear();
+    localStorage.setItem("collie:dash-prefs:v1", JSON.stringify({ isolatedSpace: key }));
+    renderHome(solo());
+    await settled();
+    expect(screen.queryByRole("heading", { name: "webapp" })).not.toBeInTheDocument();
+    expect(screen.getByRole("heading", { name: "collie" })).toBeInTheDocument();
+    expect(screen.getByRole("button", { name: /^Workspace / })).toHaveAccessibleName("Workspace collie");
   });
 
   it("the order select changes the list to one ranked list, and the choice is remembered", async () => {
@@ -624,7 +925,7 @@ describe("the dashboard's footer (ADR 0066, ADR 0085)", () => {
     const order = screen.getByRole("combobox", { name: "Pane order" });
     // One row holds the line and the switch; one row holds both selects, workspace first.
     expect(summary.parentElement).toContainElement(needsSwitch());
-    const selectRow = workspace.closest('[data-slot="select"]')!.parentElement!;
+    const selectRow = workspace.closest("div.relative")!.parentElement!;
     expect(selectRow).toContainElement(order);
     expect(selectRow).not.toContainElement(summary);
     expect(summary.compareDocumentPosition(workspace) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
@@ -714,5 +1015,159 @@ describe("the dashboard on a saved copy", () => {
     await userEvent.click(screen.getByRole("button", { name: "New tab in webapp" }));
     expect(await screen.findByText(REFUSAL)).toBeInTheDocument();
     expect(created).toEqual([]);
+  });
+});
+
+// THE HEADING "+" OFFERS THE MACHINE'S AGENTS (M91 spec 02). With a row to offer, the "+" opens the
+// New tab sheet for that workspace; a tap starts the row as a tab beside the workspace's pane and steps
+// into it. With nothing beyond the shell it makes the shell at once, which the default world above
+// (no `items`) already pins for every other heading test in this file.
+describe("the dashboard heading's '+' and the New tab sheet", () => {
+  const items = [
+    { key: "harness:claude", start: { harness: "claude" }, group: "agents", label: "Claude Code", harness: "claude", source: "builtin", noPrompts: false, branch: true, available: true },
+    { key: "shell", start: { shell: true }, group: "commands", label: "Shell", source: "builtin", noPrompts: false, branch: true, available: true },
+  ];
+  const first = fixtureAgents.find((a) => a.workspaceLabel === "webapp")!;
+  const created = (paneId: string) => ({
+    ok: true,
+    pane: { paneId, workspaceId: first.workspaceId, workspaceLabel: first.workspaceLabel, tabId: `${first.workspaceId}:t9`, cwd: first.cwd },
+  });
+
+  function world() {
+    const sent = { launch: new Array<StartLaunchBody>(), tab: new Array<string>() };
+    server.use(
+      http.get("/api/launchers", () => HttpResponse.json({ launchers: [], home: "/home/you", harnesses: [], items })),
+      http.post("/api/launch", async ({ request }) => {
+        // SAFETY: the body is the app's own: `lib/api.ts`'s `startLaunch` is the only caller and it posts a `StartLaunchBody`.
+        sent.launch.push((await request.json()) as StartLaunchBody);
+        return HttpResponse.json(created("w1:p7"));
+      }),
+      http.post("/api/tab", async ({ request }) => {
+        sent.tab.push(await request.text());
+        return HttpResponse.json(created("w1:p8"));
+      }),
+    );
+    return sent;
+  }
+
+  it("opens the sheet for that workspace, and an agent starts as a tab beside its pane", async () => {
+    const sent = world();
+    const router = renderHome(solo());
+    await settled();
+    await userEvent.click(screen.getByRole("button", { name: "New tab in webapp" }));
+    const sheet = within(await screen.findByRole("dialog", { name: "New tab in webapp" }));
+    await userEvent.click(await sheet.findByRole("button", { name: /Claude Code/ }));
+    await waitFor(() => expect(url(router)).toBe("/pane/w1%3Ap7"));
+    expect(sent.launch).toHaveLength(1);
+    expect(sent.launch[0]).toMatchObject({ harness: "claude", paneId: first.paneId });
+    expect(sent.launch[0]!.requestId).toEqual(expect.any(String));
+    expect(sent.tab).toEqual([]);
+  });
+
+  it("Just a shell sends the create the '+' always sent", async () => {
+    const sent = world();
+    const router = renderHome(solo());
+    await settled();
+    await userEvent.click(screen.getByRole("button", { name: "New tab in webapp" }));
+    const sheet = within(await screen.findByRole("dialog", { name: "New tab in webapp" }));
+    await userEvent.click(sheet.getByRole("button", { name: "Just a shell" }));
+    await waitFor(() => expect(url(router)).toBe("/pane/w1%3Ap8"));
+    expect(sent.tab).toEqual([JSON.stringify({ workspaceId: first.workspaceId })]);
+    expect(sent.launch).toEqual([]);
+  });
+
+  it("mounts one sheet for the list: another heading's '+' retitles it", async () => {
+    world();
+    renderHome(solo());
+    await settled();
+    const headings = fixtureWorkspaces.filter((w) => fixtureAgents.some((a) => a.workspaceId === w.workspaceId));
+    expect(headings.length).toBeGreaterThan(1);
+    await userEvent.click(screen.getByRole("button", { name: `New tab in ${headings[0]!.label}` }));
+    await screen.findByRole("dialog", { name: `New tab in ${headings[0]!.label}` });
+    await userEvent.keyboard("{Escape}");
+    await waitFor(() => expect(screen.queryByRole("dialog")).toBeNull());
+    await userEvent.click(screen.getByRole("button", { name: `New tab in ${headings[1]!.label}` }));
+    await screen.findByRole("dialog", { name: `New tab in ${headings[1]!.label}` });
+    expect(screen.getAllByRole("dialog")).toHaveLength(1);
+  });
+
+  it("on a saved copy refuses on the tap, before any sheet", async () => {
+    const sent = world();
+    renderHome({ ...solo(), stale: true });
+    await settled();
+    await userEvent.click(screen.getByRole("button", { name: "New tab in webapp" }));
+    expect(await screen.findByText("Saved copy. Reconnect to make changes.")).toBeInTheDocument();
+    expect(screen.queryByRole("dialog", { name: "New tab in webapp" })).toBeNull();
+    expect(sent.launch).toEqual([]);
+    expect(sent.tab).toEqual([]);
+  });
+});
+
+// ── THE UPDATE LINE, BROUGHT INTO VIEW ONCE (2026-11-06) ─────────────────────────────────────────
+//
+// A tap on the header mark while the app updates asks for the dashboard's update line
+// (`lib/bundle-apply.ts`). The dashboard scrolls it into view once: on arrival, or in place when the
+// tap was made here. A plain visit never scrolls.
+describe("the dashboard's update line after a tap on the updating mark", () => {
+  const withRelease = () => ({
+    ...solo(),
+    update: {
+      current: "1.4.0",
+      latest: "1.5.0",
+      latestUrl: null,
+      releaseAvailable: true,
+      majorAvailable: null,
+      majorUrl: null,
+      bridgeStale: false,
+      checkedAt: null,
+    },
+  });
+  /** The scrolls that landed on the update line, by the element they were called on. */
+  const lineScrolls = (spy: { mock: { contexts: unknown[] } }) =>
+    spy.mock.contexts.filter((el) => el instanceof Element && (el.textContent ?? "").includes("Collie 1.5.0 available"));
+
+  let spy: ReturnType<typeof vi.fn<Element["scrollIntoView"]>>;
+  beforeEach(() => {
+    __resetBundleFocus();
+    spy = vi.fn<Element["scrollIntoView"]>();
+    vi.spyOn(Element.prototype, "scrollIntoView").mockImplementation(spy);
+  });
+  afterEach(() => {
+    vi.restoreAllMocks();
+    __resetBundleFocus();
+  });
+
+  it("scrolls the line into view once on arrival, centred, and takes the request", async () => {
+    requestBundleFocus();
+    renderHome(withRelease());
+    await screen.findByText("Collie 1.5.0 available");
+    await waitFor(() => expect(lineScrolls(spy)).toHaveLength(1));
+    expect(spy.mock.calls.at(-1)?.[0]).toEqual({ block: "center" });
+    expect(bundleFocusPending()).toBe(false);
+  });
+
+  it("scrolls in place when the tap is made on the dashboard itself", async () => {
+    renderHome(withRelease());
+    await screen.findByText("Collie 1.5.0 available");
+    expect(lineScrolls(spy)).toHaveLength(0);
+    act(() => requestBundleFocus());
+    await waitFor(() => expect(lineScrolls(spy)).toHaveLength(1));
+  });
+
+  it("does not scroll on a plain visit", async () => {
+    renderHome(withRelease());
+    await screen.findByText("Collie 1.5.0 available");
+    await settled();
+    expect(lineScrolls(spy)).toHaveLength(0);
+  });
+
+  it("does not scroll for a request that went stale before the dashboard arrived", async () => {
+    requestBundleFocus(Date.now() - BUNDLE_FOCUS_TTL_MS - 1);
+    renderHome(withRelease());
+    await screen.findByText("Collie 1.5.0 available");
+    await settled();
+    expect(lineScrolls(spy)).toHaveLength(0);
+    // And the stale request is gone, so a later plain visit cannot find it either.
+    expect(bundleFocusPending()).toBe(false);
   });
 });

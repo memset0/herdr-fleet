@@ -93,3 +93,85 @@ export class RefusalCounter {
     return { since: this.state.since, counts: Object.fromEntries(this.state.counts) };
   }
 }
+
+// ── The refusals of a workspace scope (M75 spec 02) ─────────────────────────────────────────────
+// Each reason opens with a fixed key before its first `:`, so the counter keeps one line per kind
+// (`reasonKey`), never one per folder or member. What follows names the word and the way out.
+
+/** A bare word that is a member id, or `local`: its panes are `<word>/all`, never a folder. */
+export function scopeIsMember(word: string): string {
+  return `member word: \`${word}\` is a member; write \`${word}/all\` for its panes`;
+}
+
+/** No agent pane anywhere sits in the scope. */
+export function scopeEmpty(scope: string): string {
+  return `no panes in scope: none in \`${scope}\`, \`collie walky who\` shows the labels`;
+}
+
+/** More panes sit in the scope than one message may reach. */
+export function scopeTooWide(count: number, max: number): string {
+  return `scope too wide: ${String(count)} panes, the most is ${String(max)}`;
+}
+
+/** `here` from the phone, or from anyone with no pane. */
+export const HERE_FROM_PHONE = "here from a phone: a phone has no workspace, name the folder";
+
+/** `here` from a pane whose label names no folder (the bare pane id). */
+export function hereWithoutFolder(label: string): string {
+  return `here without a folder: the label \`${label}\` names no folder, name the folder`;
+}
+
+/** A member's own check of a scope delivery: the pane the lead named is not in the scope now. */
+export const OUT_OF_SCOPE = "out of scope: the pane's label is not in this scope";
+
+/** The line a scope send writes for a member the lead cannot reach: no delivery, no retry. */
+export const MEMBER_UNREACHABLE = "unreachable";
+
+// ── A request a bridge cannot read (added 2026-10-30) ───────────────────────────────────────────
+// Every refusal of an unread request opens with `bad request:` and names what failed, so an agent
+// never sees the bare word. The bare word is what a bridge before 2026-10-30 answers to anything it
+// cannot read, an address form newer than itself included; the CLI asks the next bridge then.
+
+/** What a bridge before 2026-10-30 answers to every request it cannot read, whatever the reason. */
+export const BARE_BAD_REQUEST = "bad request";
+
+/** A line that is not one JSON walky request of version 1. */
+export const BAD_REQUEST_LINE = "bad request: not one walky request line of version 1";
+
+/** The longest piece of the request a refusal quotes back. */
+const QUOTED_MAX = 64;
+
+function quoted(value: string): string {
+  return value.length > QUOTED_MAX ? `${value.slice(0, QUOTED_MAX)}...` : value;
+}
+
+/** An op this bridge does not know: a newer CLI than the bridge, or a typo. */
+export function unknownOp(op: string): string {
+  return `bad request: this bridge does not know the op \`${quoted(op)}\`, it may run an older Collie than this command`;
+}
+
+/** An address this bridge cannot read: a newer form than the bridge knows, or not an address. */
+export function unreadAddress(to: string): string {
+  return `bad request: this bridge cannot read the address \`${quoted(to)}\`, it may run an older Collie than this command`;
+}
+
+/** A message id, or a reply's id, that is not `wt_` and 12 characters. */
+export const BAD_MESSAGE_ID = "bad request: a message id is wt_ and 12 characters";
+
+/** A raw body past the socket's cap, before cleaning. */
+export function bodyOverRaw(max: number): string {
+  return `bad request: the text is longer than ${String(max)} characters`;
+}
+
+/** A send that names no address and replies to nothing. */
+export const NO_ADDRESS = "bad request: name an address, or the message id to reply to";
+
+/** An ack that names too many ids, or ids that are not a list. */
+export const BAD_ACK_IDS = "bad request: ack takes a list of at most 200 message ids";
+
+/**
+ * The CLI's word when a bridge on this machine answered the bare {@link BARE_BAD_REQUEST} and no other
+ * bridge took the request: that bridge runs an older Collie, or the request was wrong in a way it did
+ * not name. The CLI checked the address itself before it asked.
+ */
+export const UNREAD_BY_OLDER_BRIDGE = "bad request: a Collie bridge on this machine cannot read this request, it may run an older Collie than this command";

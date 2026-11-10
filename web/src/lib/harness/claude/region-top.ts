@@ -8,6 +8,7 @@
 //   * The MODAL EDGE. Claude Code 2.1.27x and later open every slash-command modal with a row of
 //     U+2594 (`▔`) across the pane, often with a label spliced in near its right end:
 //       `▔▔▔…▔ ● high · /effort ▔`, `▔▔▔ You've used 89% of your weekly limit · … ▔`.
+//     A notice longer than the box takes the whole row and leaves only a trailing `▔` (MODAL_EDGE).
 //     The labelled form is not a horizontal rule (isHorizontalRule wants rule glyphs only), and a tall
 //     modal (`/hooks`, `/config`) puts it 37 rows or more above its footer, past the window. On a live
 //     2.1.283 screen with no other rule in reach, both grammars declined and the phone showed the
@@ -18,6 +19,7 @@
 // MODAL_EDGE_WINDOW. A U+2500 box border beyond the rule window ends the search: it belongs to
 // something drawn before the modal (a box, a transcript separator), so a `▔` above it is not this
 // modal's edge.
+// A row of `╌` alone, a dashed frame drawn inside the modal, is neither: the scan steps over it.
 //
 // Pure functions over row texts.
 
@@ -32,13 +34,27 @@ export const REGION_SCAN_WINDOW = 30;
  *  locator also uses (MAX_TAIL_LINES in chrome.ts). The `/hooks` list puts its edge 37 rows up. */
 export const MODAL_EDGE_WINDOW = 60;
 
-// A modal edge: `▔` from column 0, optionally one label spliced in, closed by `▔` again. Nothing
-// else: an indented row, or a row that does not end in the glyph, is prose that happens to hold it.
-const MODAL_EDGE = /^▔+(?:\s+\S.*?\s+▔+)?$/u;
+// A modal edge, in two shapes.
+//   * `▔` from column 0, optionally one label spliced in, closed by `▔` again.
+//   * A NOTICE ROW that runs edge to edge: text, then whitespace, then `▔` at the very end, with no `▔`
+//     (and maybe a space) at the start. Claude Code 2.1.318 fills the whole edge with the weekly-limit
+//     notice when it is longer than the box: ` You've used 80% of your weekly limit · resets … · /usage-credits
+//     to keep using Claude Code ▔`, one trailing glyph and nothing before the text. The first form needs the
+//     glyph at column 0, so the picker read as no dialog for the seconds the notice stayed.
+// The notice form takes one to three closing glyphs: a longer run after prose is a bar, not a notice.
+// Nothing else: a row that does not end in the glyph, or holds it only in the middle, is prose. The
+// full-width test in isModalEdge keeps a short text row that ends in ` ▔` from passing as an edge.
+const MODAL_EDGE = /^(?:▔+(?:\s+\S.*?\s+▔+)?|\s*\S.*?\s+▔{1,3})$/u;
 
 // The shortest edge worth the name, in display cells. The same floor as a bare input-box border
 // (BARE_BORDER_MIN in markers.ts). Every real edge in the corpus spans the pane, 40 cells or more.
 const MODAL_EDGE_MIN_WIDTH = 8;
+
+// The top or bottom of a DASHED FRAME: a row of `╌` alone, Ink's `dashed` border. Claude Code draws it
+// INSIDE a modal (2.1.307+ frames the focused denial's shell command on `/permissions` › Recently
+// denied with it), so it never opens one. Taken as the region top, its bottom row two rows over the
+// footer left no title, and the dialog stayed raw. The scan steps over it to the rule or edge above.
+const DASHED_FRAME_ROW = /^\s*╌+\s*$/u;
 
 /**
  * Whether row `i` is a MODAL EDGE for a footer at `footerLine`: the `▔` row shape above, at least
@@ -67,12 +83,13 @@ export type RegionTopKind = "edge" | "rule" | "stop";
  *  - `edge`: a modal edge (isModalEdge), anywhere inside MODAL_EDGE_WINDOW;
  *  - `rule`: a rule or box border inside REGION_SCAN_WINDOW (the rule the scan always took);
  *  - `stop`: a U+2500 box border past REGION_SCAN_WINDOW, which ends the search with no top;
- *  - null: keep scanning.
+ *  - null: keep scanning, a dashed frame row (DASHED_FRAME_ROW) included.
  * The caller bounds its loop by MODAL_EDGE_WINDOW. Callers with rows of their own to step over (the
  * Effort slider's marker and track rows) test those first, then ask this.
  */
 export function regionTopAt(texts: string[], i: number, seen: number, footerLine: number): RegionTopKind | null {
   const t = texts[i]!;
+  if (DASHED_FRAME_ROW.test(t)) return null;
   if (isModalEdge(texts, i, footerLine)) return "edge";
   if (seen < REGION_SCAN_WINDOW) return isBoxBorder(t) || isHorizontalRule(t) ? "rule" : null;
   return isBoxBorder(t) ? "stop" : null;

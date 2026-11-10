@@ -1,5 +1,4 @@
-import { useEffect, useRef, useState } from "react";
-import { Check, Loader2, Send, Settings2 } from "lucide-react";
+import { useEffect, useRef, useState, type ReactNode } from "react";
 
 import { ActionsRow, type Hand } from "@/components/actions-row";
 import { useDurableBarItems } from "@/components/harness-bar";
@@ -35,6 +34,7 @@ import { setStatus } from "@/lib/status";
 import type { AgentStatus, Ask, PaneAction } from "@/lib/types";
 import { cn } from "@/lib/utils";
 import { mintRequestId } from "@/lib/worktree-name";
+import { Icon } from "@/components/icons/icon";
 
 // THE COMPOSER OF A PANE WITH NO SCREEN (ADR 0101).
 //
@@ -119,6 +119,8 @@ export interface DurableComposerProps {
   };
   changesPill?: { onClick: () => void; label: string };
   hand?: Hand;
+  /** Drawn directly above the belt: the joystick handle band of Settings → Pane navigation (ADR 0121). */
+  aboveBelt?: ReactNode;
   /** A send landed: snap the stream to its tail. */
   onSent: () => void;
   /** Scroll to the open question's card and focus its first button: the way on from a send an open question refused. */
@@ -149,6 +151,7 @@ export function DurableComposer({
   pullHandle,
   changesPill,
   hand = "right",
+  aboveBelt,
   onSent,
   onReload,
   onAnswerDialog,
@@ -351,11 +354,12 @@ export function DurableComposer({
         composing ? "pb-2" : "pb-[calc(env(safe-area-inset-bottom)_+_0.5rem)]",
       )}
     >
+      {aboveBelt}
       <ActionsRow
         general={[
           {
             id: "display",
-            icon: Settings2,
+            icon: "display-settings",
             label: t("composer.controls.displayAria"),
             word: t("composer.controls.display"),
             on: display.open,
@@ -427,7 +431,7 @@ export function DurableComposer({
           title={offline ? t("composer.send.reconnect") : undefined}
           onClick={() => void send()}
         >
-          {sending ? <Loader2 className="size-4 animate-spin" /> : justSent ? <Check className="size-4" /> : <Send className="size-4" />}
+          {sending ? <Icon name="busy" className="size-4 animate-spin" /> : justSent ? <Icon name="sent-ok" className="size-4" /> : <Icon name="send" className="size-4" />}
         </Button>
       </div>
     </div>

@@ -5,6 +5,9 @@ import { basename, dirname, isAbsolute, join, relative, resolve, sep } from "nod
 import type { ErrorCode } from "./error-codes.ts";
 import type { JsonObject, JsonValue } from "./json.ts";
 import { isValidWorktreeBranch } from "./worktree-branch.ts";
+// A cycle by name only: worktree-add.ts reads Herdr's default folder from here, and each side calls
+// the other inside a function body, never while the module loads.
+import { targetExistsDetail, worktreeMatchOf } from "./worktree-add.ts";
 
 // ── Where a new branch's folder goes (ADR 0093) ──────────────────────────────────────────────────
 //
@@ -25,6 +28,10 @@ import { isValidWorktreeBranch } from "./worktree-branch.ts";
 //      one it was cut from;
 //   7. the child (Herdr's slug of the branch) must not exist, checked with `lstat` so a dangling link
 //      counts as existing.
+//      The one exception is a child that already is the SAME worktree of this repo, finished, on the
+//      branch asked for, reached through no link: a half-done create left it, and the create then only
+//      opens it (M81). Any other entry git lists there is refused with a sentence naming its state,
+//      the same answer `addWorktree` gives for Herdr's default folder (`worktreeMatchOf`).
 //
 // Git and Herdr are only ever reached with argv (`bridge/mux/herdr/client.ts` sends JSON over the
 // socket), so the path is a value, never part of a shell line. The rule runs again inside the create,
@@ -54,7 +61,11 @@ export type FolderRefusal = Extract<
   | "worktree.invalid_branch"
 >;
 
-export type FolderOutcome = { ok: true; path: string } | { ok: false; code: FolderRefusal; path?: string };
+/**
+ * The folder, or the refusal. `detail` is one plain sentence, set only on a `worktree.target_exists`
+ * for a folder git lists as a worktree in another state ("that folder holds branch x").
+ */
+export type FolderOutcome = { ok: true; path: string } | { ok: false; code: FolderRefusal; path?: string; detail?: string };
 
 /**
  * Herdr's folder name for a branch: lower case, every run of characters that are not ASCII letters
@@ -167,10 +178,30 @@ export async function resolveParentTarget(req: ParentRequest): Promise<FolderOut
   // 6: not inside the repo it branches from.
   if (isWithin(real, req.repoRoot)) return { ok: false, code: "worktree.folder_in_repo" };
 
-  // 7: the child must not be there yet.
+  // 7: the child must not be there yet, unless it is the same worktree of THIS repo, finished, that a
+  // half-done create left behind (the checkout was made, the space did not open). That one is no
+  // link, git's own list names it on the branch asked for, and the create then only opens it
+  // (bridge/worktree-add.ts, `existed`).
   const target = join(real, slug);
-  if (await fs.exists(target)) return { ok: false, code: "worktree.target_exists", path: target };
+  if (await fs.exists(target)) return ownWorktreeVerdict(target, req.repoRoot, req.branch, fs);
   return { ok: true, path: target };
+}
+
+/**
+ * The verdict on a `target` that exists: accepted when it is the same finished worktree of `repoRoot`
+ * on `branch`, reached through no link; refused otherwise, with git's state named when it lists one.
+ */
+async function ownWorktreeVerdict(target: string, repoRoot: string, branch: string, fs: FolderFs): Promise<FolderOutcome> {
+  const refusal: FolderOutcome = { ok: false, code: "worktree.target_exists", path: target };
+  try {
+    if ((await fs.realpath(target)) !== target) return refusal;
+  } catch {
+    return refusal;
+  }
+  const match = await worktreeMatchOf(repoRoot, target, branch);
+  if (match === null || match.kind === "absent") return refusal;
+  if (match.kind === "same") return { ok: true, path: target };
+  return { ...refusal, detail: targetExistsDetail(match) };
 }
 
 /** Reads Herdr's `config.toml`, or `null` when there is none to read. Injected for the tests. */

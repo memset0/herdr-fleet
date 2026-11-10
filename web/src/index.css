@@ -1,6 +1,23 @@
 @import "tailwindcss";
 @import "tw-animate-css";
 
+/* Math (Settings → Appearance; lib/math/). Each engine's own stylesheet ships in its lazy chunk,
+   never here, so a device on Off downloads none of it. These two rules are the engine-neutral box.
+   Each formula pans within the reading column, including a long inline formula. */
+.math-inline {
+  display: inline-block;
+  max-width: 100%;
+  overflow-x: auto;
+  vertical-align: middle;
+  white-space: nowrap;
+}
+
+.math-display {
+  display: block;
+  max-width: 100%;
+  overflow-x: auto;
+}
+
 /* Codex paints submitted user messages onto a near-white terminal-width row. The mirror's light
    theme inversion turns that fill nearly black; on a narrow phone it reads as a heavy black bar
    rather than message emphasis. The codex adapter marks only that exact ANSI fill. Desktop keeps
@@ -223,14 +240,16 @@
      values are Tailwind 4.3.1's own (theme.css), so the default look is the one the app always had.
      The radius steps, the spacing step and the two weights need no such door: utilities read them
      through var() already. src/themes/themes.test.ts holds every default word equal to these. */
-  --surface-shadow: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
-  --surface-shadow-xs: 0 1px 2px 0 rgb(0 0 0 / 0.05);
-  --surface-shadow-sm: 0 1px 3px 0 rgb(0 0 0 / 0.1), 0 1px 2px -1px rgb(0 0 0 / 0.1);
-  --surface-shadow-md: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-  --surface-shadow-lg: 0 10px 15px -3px rgb(0 0 0 / 0.1), 0 4px 6px -4px rgb(0 0 0 / 0.1);
-  --surface-shadow-xl: 0 20px 25px -5px rgb(0 0 0 / 0.1), 0 8px 10px -6px rgb(0 0 0 / 0.1);
-  --surface-shadow-2xl: 0 25px 50px -12px rgb(0 0 0 / 0.25);
+  --surface-shadow: 0 0 #0000;
+  --surface-shadow-xs: 0 0 #0000;
+  --surface-shadow-sm: 0 0 #0000;
+  --surface-shadow-md: 0 0 #0000;
+  --surface-shadow-lg: 0 0 #0000;
+  --surface-shadow-xl: 0 0 #0000;
+  --surface-shadow-2xl: 0 0 #0000;
   --surface-border-width: 1px;
+  --font-weight-medium: 600;
+  --font-weight-semibold: 700;
   /* The offsets of the inset shadow that marks a selected or blocked row, used as
      `shadow-[var(--edge-accent)_<colour>]`. The radius word sets it: under square corners the mark is
      a 2px bar on the left edge, under soft or round corners a 2px ring on all four sides, because a
@@ -239,8 +258,10 @@
   --edge-accent: inset 2px 0 0 0;
   --edge-shadow: 0 0 #0000;
   /* THE SEVEN MORE A THEME MAY PICK (M57 spec 17, lib/theme/surface.ts). Each is the value the app
-     drew before, so the Collie theme sets none of them and looks the same:
-       ground  `--ground-image`, painted on `html` over the page colour (the html rule below);
+     draws by default, so the Collie theme sets none of them and looks the same:
+       ground  `--ground-image` and `--ground-size`, painted on `html` over the page colour (the
+               html rule below), and the six a pattern reads: `--ground-ink`, `--ground-scale` and
+               the four paints `--ground-line`, `--ground-dot`, `--ground-area`, `--ground-tint`;
        chrome  `--band-ground` and `--band-rule`, the fill and edge of the header, the tab bar and the
                bottom bar (`bg-band-ground`, `border-band-rule`), today the page colour and --rule;
        rows    the rows of a list group (the `[data-slot="list-group"]` rule below): `--row-gap`
@@ -255,9 +276,16 @@
      The mirror's own ink and ground are NOT declared here: lib/ansi.ts and components/mirror-space.ts
      read `var(--mirror-ink, #fafafa)` and `var(--mirror-ground, #0a0a0a)`, so only a theme's `ansi`
      block sets them. src/themes/themes.test.ts holds every default word equal to these. */
-  --ground-image: none;
-  --band-ground: var(--background);
-  --band-rule: var(--rule);
+  --ground-image: repeating-linear-gradient(45deg, var(--ground-line) 0 1px, transparent 1px calc(4px * var(--ground-scale))), repeating-linear-gradient(-45deg, var(--ground-line) 0 1px, transparent 1px calc(4px * var(--ground-scale)));
+  --ground-size: auto;
+  --ground-ink: var(--foreground);
+  --ground-scale: 1;
+  --ground-line: color-mix(in oklab, var(--background) 96%, var(--ground-ink));
+  --ground-dot: color-mix(in oklab, var(--background) 93%, var(--ground-ink));
+  --ground-area: color-mix(in oklab, var(--background) 97%, var(--ground-ink));
+  --ground-tint: color-mix(in oklab, var(--background) 88%, var(--ground-ink));
+  --band-ground: var(--secondary);
+  --band-rule: var(--border);
   --row-gap: 0px;
   --row-rule: var(--surface-border-width);
   --row-edge: 0px;
@@ -266,15 +294,15 @@
   --row-inset: 0px;
   --row-fill: transparent;
   --icon-stroke: 2;
-  --label-transform: uppercase;
-  --label-tracking: 0.025em;
-  --font-display: var(--font-sans);
-  /* The six shipped faces as stacks a theme's display face can name (`--font-display:
+  --label-transform: none;
+  --label-tracking: normal;
+  --font-display: var(--face-aldrich);
+  /* The seven shipped faces as stacks a theme's display face can name (`--font-display:
      var(--face-<id>)`). The same stacks as the `:root.font-*` blocks and the @theme default below,
      held equal by src/fonts.test.ts. A stack names a family; the browser fetches its file only when a
      drawn element asks for it, so a stack nobody uses costs no byte. */
   --face-system:
-    ui-sans-serif, var(--font-ui-cjk), system-ui, -apple-system, "Segoe UI", Roboto,
+    var(--font-ui-cjk), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, "Noto Sans", sans-serif;
   --face-grotesk:
     "Space Grotesk", "Space Grotesk Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui,
@@ -283,23 +311,26 @@
     "Aldrich", "Aldrich Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui, -apple-system,
     "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --face-plex:
-    "IBM Plex Sans", "IBM Plex Sans Fallback", ui-sans-serif, system-ui, var(--font-ui-cjk),
+    "IBM Plex Sans", "IBM Plex Sans Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui,
     -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --face-geist:
-    "Geist", "Geist Fallback", ui-sans-serif, system-ui, var(--font-ui-cjk),
+    "Geist", "Geist Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui,
     -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --face-atkinson:
-    "Atkinson Hyperlegible Next", "Atkinson Hyperlegible Next Fallback", ui-sans-serif,
-    system-ui, var(--font-ui-cjk), -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    "Atkinson Hyperlegible Next", "Atkinson Hyperlegible Next Fallback", var(--font-ui-cjk), ui-sans-serif,
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --face-nunito:
+    "Nunito", "Nunito Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   /* Light deviates from stock shadcn in two places, both measured rather than taste:
      --background is a step off white (stock has background == card == popover == pure white, so the
      entire dashboard hierarchy rests on one 1.26:1 hairline), and --muted-foreground is darkened
      for headroom (see below). oklch(0.97) rasterizes to rgb(245,245,245), which is exactly the
      terminal mirror's inverted background — so the mirror stops showing a seam against the page. */
-  --background: light-dark(oklch(0.97 0 0), oklch(0.145 0 0));
-  --foreground: light-dark(oklch(0.145 0 0), oklch(0.985 0 0));
-  --card: light-dark(oklch(1 0 0), oklch(0.205 0 0));
-  --card-foreground: light-dark(oklch(0.145 0 0), oklch(0.985 0 0));
+  --background: light-dark(oklch(0.955 0.003 80), oklch(0.17 0.003 80));
+  --foreground: light-dark(oklch(0.14 0 0), oklch(0.985 0 0));
+  --card: light-dark(oklch(1 0 0), oklch(0.235 0.003 80));
+  --card-foreground: light-dark(oklch(0.14 0 0), oklch(0.985 0 0));
   /* THE GROUND UNDER THE THUMB — the composer's chrome block, and nothing else. Chrome is normally
      the page colour separated by a rule (see --muted below), and that rule holds everywhere the
      chrome sits on the PAGE. It cannot hold here: this block sits on the terminal mirror, and in
@@ -311,7 +342,7 @@
      already had in light, where --card is pure white and would land 1.04:1 against the inverted
      mirror. One name, because it answers one question: what does chrome stand on when it cannot
      stand on the page. */
-  --chrome: light-dark(oklch(0.94 0 0), oklch(0.205 0 0));
+  --chrome: light-dark(oklch(0.915 0.004 80), oklch(0.28 0.003 80));
   /* Pinned to --card, not a value of its own. `bg-popover` / `text-popover-foreground` appear ZERO
      times in src/ — Collie's floating layer is the BottomSheet (ui/sheet.tsx), which is
      `bg-background` over a `bg-black/50` scrim. The pair is kept rather than deleted only so a
@@ -319,8 +350,8 @@
      stock white; it is an alias, and there is no third paper behind it. */
   --popover: var(--card);
   --popover-foreground: var(--card-foreground);
-  --primary: light-dark(oklch(0.205 0 0), oklch(0.922 0 0));
-  --primary-foreground: light-dark(oklch(0.985 0 0), oklch(0.205 0 0));
+  --primary: light-dark(oklch(0.2 0 0), oklch(0.96 0 0));
+  --primary-foreground: light-dark(oklch(0.985 0 0), oklch(0.17 0.003 80));
   /* The "this control is ON" tint — a very light sky. Its own token pair rather than reusing
      --secondary because the two say different things: secondary is a quieter surface, this is a
      STATE, and the row needs the difference legible at a glance (an open dock, an armed mode). Kept
@@ -331,13 +362,19 @@
      makes it visible is that it is the one saturated thing in a neutral row. Don't "fix" that number
      by darkening it into a mid blue. Text on the tint is what has to clear a contrast bar, and does:
      7.3:1 light, 9.2:1 dark. */
-  --control-on: light-dark(oklch(0.9 0.06 235), oklch(0.32 0.05 240));
-  --control-on-foreground: light-dark(
-    oklch(0.38 0.12 245),
-    oklch(0.89 0.06 235)
-  );
-  --secondary: light-dark(oklch(0.94 0 0), oklch(0.269 0 0));
-  --secondary-foreground: light-dark(oklch(0.205 0 0), oklch(0.985 0 0));
+  --control-on: light-dark(oklch(0.88 0.06 235), oklch(0.34 0.06 240));
+  --control-on-foreground: light-dark(oklch(0.32 0.12 245), oklch(0.92 0.06 235));
+  /* The frame of the pane you are working in on a large screen (ADR 0120): a sky-200 in the dark
+     half; a stronger blue in the light half, where a pale frame would vanish on white. */
+  --pane-active: light-dark(oklch(0.14 0 0), oklch(0.985 0 0));
+  /* The open folder tab's top edge and the open pane's ring (theme surface word `tabs: folder`,
+     lib/tab-look.ts). Drawn only under that word. The default is the foreground ink of each half
+     (the same two values as --foreground above), so a theme that sets the word and not the colour
+     draws its folder edge in ink. A pair and not var(--foreground), like --pane-active: the theme
+     file for `collie` holds every optional token, and a theme that sets one half is filled from it. */
+  --tab-active: light-dark(oklch(0.14 0 0), oklch(0.985 0 0));
+  --secondary: light-dark(oklch(0.915 0.004 80), oklch(0.28 0.003 80));
+  --secondary-foreground: light-dark(oklch(0.16 0 0), oklch(0.985 0 0));
   /* The INERT fill — a well, a disabled track, a quiet chip on a card. Value unchanged (rgb 235
      light / 38 dark), but its old job is gone: it used to be the chrome band behind the header,
      "a step BELOW --background so the band still reads as a distinct surface". The band existed
@@ -346,12 +383,12 @@
      properly, and chrome is now the page colour (app-header.tsx, settings.tsx, pack.tsx).
      Do NOT put --muted back behind chrome: on the pane screen it re-opens the seam --background's
      0.97 was chosen to close, and it is the worst ground a status chip has ever landed on. */
-  --muted: light-dark(oklch(0.94 0 0), oklch(0.269 0 0));
+  --muted: light-dark(oklch(0.915 0.004 80), oklch(0.28 0.003 80));
   /* Light was oklch(0.556) — 4.74:1 on white, i.e. zero headroom, so every /70, /80 and opacity-60
      derivative in the app fell under 3:1 while its dark counterpart passed. Darkened to buy that
      headroom back; the alpha modifiers on small text were dropped as well, since no token value
      rescues a /70. */
-  --muted-foreground: light-dark(oklch(0.48 0 0), oklch(0.708 0 0));
+  --muted-foreground: light-dark(oklch(0.40 0.004 80), oklch(0.80 0.004 80));
   /* Light --accent must be a real step off --background, not stock shadcn's 0.97. Stock is right
      only while background is pure white; 0.18.0 deliberately moved background to 0.97 (see above),
      which silently made accent === background — so every "this is the current one" highlight
@@ -359,15 +396,12 @@
      as nothing at all in light mode. It sits a step BELOW --muted (0.94), not between it and
      --background: the switcher needs three separable values — resting 0.97, hover (bg-muted/60)
      ~0.94, active 0.92 — and 0.94 would have collided the last two. */
-  --accent: light-dark(oklch(0.92 0 0), oklch(0.269 0 0));
-  --accent-foreground: light-dark(oklch(0.205 0 0), oklch(0.985 0 0));
-  --destructive: light-dark(
-    oklch(0.577 0.245 27.325),
-    oklch(0.704 0.191 22.216)
-  );
-  --destructive-foreground: light-dark(oklch(0.985 0 0), oklch(0.985 0 0));
-  --border: light-dark(oklch(0.922 0 0), oklch(1 0 0 / 12%));
-  --input: light-dark(oklch(0.922 0 0), oklch(1 0 0 / 15%));
+  --accent: light-dark(oklch(0.885 0.004 80), oklch(0.32 0.003 80));
+  --accent-foreground: light-dark(oklch(0.16 0 0), oklch(0.985 0 0));
+  --destructive: light-dark(oklch(0.5 0.21 27), oklch(0.72 0.19 22));
+  --destructive-foreground: light-dark(oklch(0.985 0 0), oklch(0.17 0.003 80));
+  --border: light-dark(oklch(0.82 0.004 80), oklch(0.42 0.003 80));
+  --input: light-dark(oklch(0.64 0.004 80), oklch(0.58 0.003 80));
   /* The STRUCTURAL line, and deliberately stronger than --border. --border draws one component's
      edge; --rule draws the cut between two regions of chrome — the header's bottom edge, a strip
      separator, the composer's top edge — where the whole job is to separate chrome from page
@@ -378,13 +412,13 @@
        --rule            1.34:1 light  ·  2.06:1 dark
      rgb(214) on rgb(245) light; white 24% over rgb(10) = rgb(69) dark. At 3x DPR on a phone that
      is a crisp 1px cut, which is the mark's own vocabulary — a cut, not a wash. */
-  --rule: light-dark(oklch(0.875 0 0), oklch(1 0 0 / 24%));
+  --rule: light-dark(oklch(0.72 0.004 80), oklch(0.52 0.003 80));
   /* Light is darkened off stock shadcn (0.708 → 0.62): at 0.708 the focus ring measures 2.58:1 on
      white, under the 3:1 WCAG 1.4.11 floor for a non-text indicator — and components draw it at
      `ring-ring/50`, which halves that again. On an app whose buttons type into a live shell, a focus
      ring you can't locate is a real problem. Still worth an on-device look: even at 0.62 the /50
      variant is marginal. */
-  --ring: light-dark(oklch(0.62 0 0), oklch(0.556 0 0));
+  --ring: light-dark(oklch(0.5 0 0), oklch(0.76 0 0));
 
   /* Agent lifecycle status palette — the app's primary at-a-glance signal, so both halves are
      tuned against their own ground rather than one set being reused. The dark values glow on
@@ -430,9 +464,9 @@
          in --primary (session-switcher.tsx, server-switcher.tsx), so the pills land on the sheet's
          --background at 5.23 / 5.28 light and 5.59 / 8.67 dark.
      A chip belongs on --background or --card and on nothing else. */
-  --status-blocked: light-dark(oklch(0.46 0.2 25), oklch(0.7 0.2 24));
-  --status-working: light-dark(oklch(0.46 0.12 72), oklch(0.82 0.15 82));
-  --status-done: light-dark(oklch(0.45 0.14 152), oklch(0.74 0.16 152));
+  --status-blocked: light-dark(oklch(0.43 0.2 25), oklch(0.8 0.15 24));
+  --status-working: light-dark(oklch(0.43 0.12 72), oklch(0.84 0.15 82));
+  --status-done: light-dark(oklch(0.41 0.14 152), oklch(0.77 0.16 152));
   /* The two quiet ends of the palette, and the only pair in it tuned as a PAIR. Light halves are
      untouched (chip on --background: idle 5.47, unknown 5.88).
 
@@ -455,8 +489,8 @@
 
      Dark chips, --background / --card:  idle 6.79 / 5.89   unknown 5.75 / 5.01. New rgb values are
      idle 154,170,186 and unknown 139,154,171. */
-  --status-idle: light-dark(oklch(0.45 0.02 250), oklch(0.73 0.03 250));
-  --status-unknown: light-dark(oklch(0.43 0.02 250), oklch(0.68 0.03 250));
+  --status-idle: light-dark(oklch(0.42 0.02 250), oklch(0.78 0.03 250));
+  --status-unknown: light-dark(oklch(0.38 0.02 250), oklch(0.75 0.03 250));
 
   /* Calm-info sky blue — same shape as the lifecycle palette above (dark brighter to glow on
      near-black). It is the palette's tightest light value: on the old rgb(235) header band its chip
@@ -467,7 +501,7 @@
      amber "needs attention" signal. Used by
      surfaces that are informational, not a status: currently just the prerelease strip
      (alpha-bar.tsx). */
-  --status-info: light-dark(oklch(0.46 0.14 230), oklch(0.8 0.15 230));
+  --status-info: light-dark(oklch(0.42 0.14 230), oklch(0.82 0.15 230));
 
   /* Syntax colour for the Changes view's diff (components/changes-view.tsx, lib/diff-highlight.ts,
      ADR 0065 rule 7). Six inks, all colour and nothing else: no weight, no italic, so a coloured
@@ -487,12 +521,12 @@
        entity    light 6.55 7.15 5.47 5.23   dark 8.84 8.00 7.49 7.82
        comment   light 5.99 6.54 5.00 4.78   dark 7.63 6.91 6.47 6.75
      Every cell clears 4.5. The tightest is light on the deleted row; darken there, never lighten. */
-  --syntax-keyword: light-dark(oklch(0.5 0.2 350), oklch(0.76 0.15 350));
-  --syntax-string: light-dark(oklch(0.45 0.13 250), oklch(0.8 0.1 240));
-  --syntax-constant: light-dark(oklch(0.48 0.13 55), oklch(0.8 0.12 60));
-  --syntax-property: light-dark(oklch(0.46 0.09 200), oklch(0.8 0.09 195));
-  --syntax-entity: light-dark(oklch(0.48 0.18 300), oklch(0.76 0.13 300));
-  --syntax-comment: light-dark(oklch(0.48 0 0), oklch(0.708 0 0));
+  --syntax-keyword: light-dark(oklch(0.46 0.2 350), oklch(0.78 0.15 350));
+  --syntax-string: light-dark(oklch(0.43 0.13 250), oklch(0.82 0.1 240));
+  --syntax-constant: light-dark(oklch(0.44 0.13 55), oklch(0.82 0.12 60));
+  --syntax-property: light-dark(oklch(0.43 0.09 200), oklch(0.82 0.09 195));
+  --syntax-entity: light-dark(oklch(0.45 0.18 300), oklch(0.79 0.13 300));
+  --syntax-comment: light-dark(oklch(0.46 0.004 80), oklch(0.74 0.004 80));
 
   /* ── Per-host identity palette (components/host-chip.tsx, lib/hosts.ts) ──────────────────────
      Ten hues, `--host-0` … `--host-9`, handed to machines by lib/hosts.ts `hostSlot`. They are an
@@ -537,16 +571,16 @@
        slot 9 indigo  5.58/6.08          5.34/4.67   ← the palette's tightest cell
      Every cell clears 4.5 on both permitted grounds. `--muted` and `--accent` are not permitted
      grounds here either, for the reason the status block states. */
-  --host-0: light-dark(oklch(0.46 0.085 221), oklch(0.789 0.154 221));
-  --host-1: light-dark(oklch(0.46 0.143 41), oklch(0.75 0.183 41));
-  --host-2: light-dark(oklch(0.46 0.2 302), oklch(0.714 0.203 302));
-  --host-3: light-dark(oklch(0.46 0.129 132), oklch(0.841 0.238 132));
-  --host-4: light-dark(oklch(0.46 0.192 352), oklch(0.718 0.202 352));
-  --host-5: light-dark(oklch(0.46 0.082 185), oklch(0.777 0.152 185));
-  --host-6: light-dark(oklch(0.46 0.2 262), oklch(0.707 0.165 262));
-  --host-7: light-dark(oklch(0.46 0.2 325), oklch(0.74 0.238 325));
-  --host-8: light-dark(oklch(0.46 0.108 241), oklch(0.746 0.16 241));
-  --host-9: light-dark(oklch(0.46 0.2 280), oklch(0.673 0.182 280));
+  --host-0: light-dark(oklch(0.45 0.085 221), oklch(0.789 0.154 221));
+  --host-1: light-dark(oklch(0.45 0.143 41), oklch(0.75 0.183 41));
+  --host-2: light-dark(oklch(0.45 0.2 302), oklch(0.74 0.2 302));
+  --host-3: light-dark(oklch(0.45 0.129 132), oklch(0.841 0.238 132));
+  --host-4: light-dark(oklch(0.45 0.192 352), oklch(0.718 0.202 352));
+  --host-5: light-dark(oklch(0.45 0.082 185), oklch(0.777 0.152 185));
+  --host-6: light-dark(oklch(0.45 0.2 262), oklch(0.707 0.165 262));
+  --host-7: light-dark(oklch(0.45 0.2 325), oklch(0.74 0.238 325));
+  --host-8: light-dark(oklch(0.45 0.108 241), oklch(0.746 0.16 241));
+  --host-9: light-dark(oklch(0.45 0.2 280), oklch(0.7 0.18 280));
 
   /* ── Terminal palette ─────────────────────────────────────────────────────────────────────────
      The 16 indexed ANSI slots, emitted by lib/ansi.ts as var(--ansi-N).
@@ -557,21 +591,23 @@
      inverted into nonsense. These sit next to the truecolor an agent emits, which no palette can
      re-theme, so they must share its assumptions: authored for a dark ground. */
   --ansi-0: #000000;
-  --ansi-1: #cd3131;
-  --ansi-2: #0dbc79;
+  --ansi-1: #ea8885;
+  --ansi-2: #4dbb75;
   --ansi-3: #e5e510;
-  --ansi-4: #2472c8;
-  --ansi-5: #bc3fbc;
-  --ansi-6: #11a8cd;
+  --ansi-4: #57a7c7;
+  --ansi-5: #be85c6;
+  --ansi-6: #4cbbbb;
   --ansi-7: #e5e5e5;
-  --ansi-8: #666666;
-  --ansi-9: #f14c4c;
-  --ansi-10: #23d18b;
+  --ansi-8: #9a9a9a;
+  --ansi-9: #ffa6a3;
+  --ansi-10: #45d07e;
   --ansi-11: #f5f543;
-  --ansi-12: #3b8eea;
-  --ansi-13: #d670d6;
-  --ansi-14: #29b8db;
+  --ansi-12: #709aeb;
+  --ansi-13: #cf83d6;
+  --ansi-14: #65d0dc;
   --ansi-15: #ffffff;
+  --mirror-ink: #f2f1ef;
+  --mirror-ground: #100f0d;
 }
 
 /* Every shipped theme other than the default, one `:root[data-theme="<id>"]` block each, generated
@@ -648,6 +684,8 @@
   --color-primary-foreground: var(--primary-foreground);
   --color-control-on: var(--control-on);
   --color-control-on-foreground: var(--control-on-foreground);
+  --color-pane-active: var(--pane-active);
+  --color-tab-active: var(--tab-active);
   --color-secondary: var(--secondary);
   --color-secondary-foreground: var(--secondary-foreground);
   --color-muted: var(--muted);
@@ -696,9 +734,9 @@
   --color-host-9: var(--host-9);
 
   --font-mono:
-    "Nerd Font Symbols", "JetBrains Mono", "Cascadia Mono", "Cascadia Code",
-    "Roboto Mono", var(--font-cjk), ui-monospace, SFMono-Regular, "SF Mono",
-    Menlo, Consolas, "Liberation Mono", monospace;
+    "Nerd Font Symbols", "Terminal Symbols", "JetBrains Mono", "Cascadia Mono", "Cascadia Code",
+    "Roboto Mono", var(--font-cjk), ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas,
+    "Liberation Mono", monospace;
 
   /* The UI typeface — CHROME ONLY, and the DEFAULT one. Which face this actually is became a
      per-device setting in ADR 0033; this is the stack a device that has never touched the setting
@@ -706,15 +744,15 @@
      below hold the others. See the @font-face block for what "chrome only" means and why the
      stand-in family in the middle of the stack is not optional. */
   --font-sans:
-    "Aldrich", "Aldrich Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui,
-    -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    "Atkinson Hyperlegible Next", "Atkinson Hyperlegible Next Fallback", var(--font-ui-cjk), ui-sans-serif,
+    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
 
   /* The CONTENT stack: exactly what the app rendered in before the UI typeface arrived. Anything an
      agent or a machine authored wears this, so the custom face never dresses someone else's words
      (see the boundary note below). It is a plain system stack on purpose — it ships no bytes. */
   --font-content:
-    ui-sans-serif, var(--font-ui-cjk), system-ui, -apple-system, "Segoe UI",
-    Roboto, "Helvetica Neue", Arial, "Noto Sans", sans-serif;
+    var(--font-ui-cjk), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, "Noto Sans", sans-serif;
 }
 
 /* Nerd Font symbols, bundled — the only webfont Collie ships.
@@ -756,6 +794,25 @@
   src: url("/fonts/nerd-symbols-3.5.0-spua.woff2") format("woff2");
   font-display: swap;
   unicode-range: U+F0000-F1AFF;
+}
+
+/* Terminal Symbols: the agents' own chrome, which phones mostly have no glyph for. Claude Code
+ * prints ⎿ under every tool call, ⏺ before every message, ⏵⏵ in its mode line and ⧉ for an IDE
+ * selection, and each of those was a tofu box in the mirror. Lazy and out of the precache on the
+ * same terms as the Nerd Font faces above, and in the same position in `--font-mono`: the range
+ * leaves out U+0020, so it can never be the face that sets the line.
+ *
+ * A subset of JuliaMono v0.63.2 (OFL — public/fonts/LICENSE.txt), renamed as the licence
+ * requires, 19 KB, built by scripts/build-terminal-symbols.py. Unlike the Nerd Font faces it does
+ * override codepoints some platforms already draw, and on purpose: a monospace glyph fills one
+ * cell, where a phone's own ⏺ is often a colour emoji twice as wide. The range leaves out the
+ * block's two-cell codepoints (⌚⌛ 〈〉 ⏩-⏬ ⏰ ⏳); the script says why. */
+@font-face {
+  font-family: "Terminal Symbols";
+  src: url("/fonts/terminal-symbols-0.63.2.woff2") format("woff2");
+  font-display: swap;
+  unicode-range: U+2300-2319, U+231C-2328, U+232B-23E8, U+23ED-23EF, U+23F1-23F2, U+23F4-23FF,
+    U+2980-29FF;
 }
 
 /* The UI typefaces — Space Grotesk (the default) and Aldrich, both bundled. The app's own voice,
@@ -803,8 +860,8 @@
  * families below are the local system face re-declared with Space Grotesk's own metrics:
  * `size-adjust` matches the average advance width over the app's real charset, and the
  * ascent/descent overrides restore the line box after that scaling. A glyph changes shape at swap;
- * no box changes size. index.html preloads the DEFAULT face's file (Aldrich, since the default
- * moved there), so on a warm tailnet its swap usually never happens at all. Measured in Chrome by forcing the swap with an observer running: see the
+ * no box changes size. index.html preloads the DEFAULT face's file (Atkinson Hyperlegible Next,
+ * since 2026-11-06; Aldrich before), so on a warm tailnet its swap usually never happens at all. Measured in Chrome by forcing the swap with an observer running: see the
  * stand-in's own comment below for what it is matching and why one table covers every platform.
  *
  * Space Grotesk is SIL OFL 1.1, public/fonts/LICENSE-space-grotesk.txt. Every other face ships its
@@ -914,15 +971,15 @@
     U+20A0-20BF, U+2122, U+2190-21FF, U+2212, U+2264-2265, U+2699, U+2713-2714, U+25CF;
 }
 
-/* Atkinson Hyperlegible Next, the face of the theme `harbour` (M57) and a Typeface choice of its
- * own. Drawn for the Braille Institute for readers with low vision: open apertures, and letters
+/* Atkinson Hyperlegible Next, the DEFAULT face (since 2026-11-06), the face of the theme `harbour`
+ * (M57) and a Typeface choice of its own. Drawn for the Braille Institute for readers with low vision: open apertures, and letters
  * that are hard to mistake for each other (I, l and 1; 0 and O; rn and m). That is the reason it
  * sits beside a terminal palette, where a path or a hash is read one character at a time.
  *
  * REAL WEIGHTS. The upstream file is variable on wght 200-800; the subset is instanced to 400-700
  * like Space Grotesk, so the 500 and 600 the app asks for are drawn, not synthesised. 23 KB, cut by
- * the same scripts/build-ui-font.sh ranges and features (tnum kept). Not preloaded: it is fetched
- * when a reader or a theme picks it.
+ * the same scripts/build-ui-font.sh ranges and features (tnum kept). Preloaded by index.html, because
+ * it is the default.
  *
  * `unicode-range` is the subset's own Latin range, so Cyrillic and every other script skip this
  * face and its stand-in and fall to the system stack.
@@ -956,7 +1013,49 @@
     U+20A0-20BF, U+2122, U+2190-21FF, U+2212, U+2264-2265, U+2699, U+2713-2714, U+25CF;
 }
 
-/* Aldrich — the second SHIPPED face, and the one a reader picks deliberately. Built by the same
+/* Nunito, a rounded face a theme may name for its text or its titles, as the starter theme does for
+ * its titles. Rounded terminals on every stroke end, which is the whole reason it is here: a soft
+ * hand for a soft palette. Built by the same scripts/build-ui-font.sh run
+ * (UI_FONT_ONLY=nunito), subset to the same ranges, 30 KB, instanced to wght 400 to 700 like Space
+ * Grotesk, so the 500 and 600 the app asks for are drawn, not synthesised. Opt-in like every face
+ * but the default: fetched when a reader or a theme picks it, never preloaded, never precached.
+ *
+ * ONE COST, SAID OUT LOUD: Nunito carries no `tnum` feature, so `tabular-nums` has nothing to
+ * switch on and its figures stay proportional. The counts column does not align digit for digit.
+ *
+ * `unicode-range` is the subset's own Latin range, so Cyrillic and every other script skip this
+ * face and its stand-in and fall to the system stack.
+ *
+ * Nunito 3.602 is SIL OFL 1.1, from github.com/google/fonts at commit 8b0a1d0f (pinned, with its
+ * sha256, in scripts/build-ui-font.sh): public/fonts/LICENSE-nunito.txt. */
+@font-face {
+  font-family: "Nunito";
+  src: url("/fonts/ui-nunito-3.602-latin.woff2") format("woff2");
+  font-weight: 400 700;
+  font-style: normal;
+  font-display: swap;
+  unicode-range:
+    U+0000-00FF, U+0100-017F, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F,
+    U+20A0-20BF, U+2122, U+2190-21FF, U+2212, U+2264-2265, U+2699, U+2713-2714, U+25CF;
+}
+/* Its metric-matched stand-in, on the same terms as the faces above: `local()` only, the same one
+   metric family, Latin only, and every number printed by scripts/build-ui-font.sh. Do not
+   hand-edit. Keep in step with the same block in index.html. */
+@font-face {
+  font-family: "Nunito Fallback";
+  src:
+    local("Arial"), local("Helvetica Neue"), local("Helvetica"),
+    local("Liberation Sans"), local("Arimo"), local("Roboto");
+  size-adjust: 102.23%;
+  ascent-override: 98.9%;
+  descent-override: 34.53%;
+  line-gap-override: 0%;
+  unicode-range:
+    U+0000-00FF, U+0100-017F, U+0131, U+0152-0153, U+02BB-02BC, U+02C6, U+02DA, U+02DC, U+2000-206F,
+    U+20A0-20BF, U+2122, U+2190-21FF, U+2212, U+2264-2265, U+2699, U+2713-2714, U+25CF;
+}
+
+/* Aldrich — a SHIPPED face a reader picks deliberately (the default until 2026-11-06). Built by the same
  * scripts/build-ui-font.sh run, subset to the same ranges, 8 KB.
  *
  * ONE WEIGHT, AND NO FAKE SECOND ONE. Aldrich is drawn at 400 and upstream ships nothing else, so
@@ -1044,7 +1143,7 @@
  * a font list, sets a family, or writes a custom property — because a font stack in JavaScript is a
  * second source of truth for something this file already states, and the two would drift.
  *
- * The DEFAULT (Aldrich) is deliberately NOT a class: no class means the `--font-sans` in the
+ * The DEFAULT (Atkinson Hyperlegible Next, since 2026-11-06) is deliberately NOT a class: no class means the `--font-sans` in the
  * @theme block above, which is the stack index.html preloads and the boot splash re-declares. A
  * device that never opens the setting therefore has no JavaScript in its first-paint path at all.
  *
@@ -1054,65 +1153,43 @@
  *
  * Specificity, since it is load-bearing: `:root.font-*` is (0,2,0) and unlayered, and the @theme
  * block emits (0,1,0) inside Tailwind's `theme` layer. These win on both counts. */
-/* DOWNSTREAM PORT — the one hole every stack above and below leaves for a fallback face.
- *
- * A monospace face chosen for code is chosen on its Latin shapes and usually draws no CJK, so a
- * mirror that is a grid in English stops being one the moment a line has Chinese in it. Fleet names
- * a face for those codepoints AFTER the operator's own and BEFORE the system's, which is the only
- * position that adds coverage without changing anyone's choice.
- *
- * IT IS A NAME AND NEVER AN EMPTY VALUE. `var(--font-ui-cjk)` resolving to nothing would put two commas
- * side by side and invalidate the whole declaration, so "off" is spelled as a family name that
- * matches nothing and the browser simply steps over it — which is byte-for-byte the behaviour every
- * one of these stacks had before this line existed. `lib/fleet-webfonts.ts` writes the real name
- * onto the root when a face is chosen. */
-:root {
-  --font-cjk: "Herdr Fleet CJK Unset";
-  --font-ui-cjk: "Herdr Fleet CJK Unset";
-  /* THE DEFAULT FACE'S STACK, AGAIN, OUT HERE. Collie's index.html re-declares the default
-     --font-sans in an inline, UNLAYERED :root block (the boot splash's mirror), and an unlayered
-     declaration beats the @theme one above whatever its specificity, so the hole in the @theme stack
-     never reached a running page in the default face: CJK fell through to the system's CJK face.
-     This block is unlayered too and this stylesheet loads after that inline block, so it wins on
-     order. Every :root.font-* block below is (0,2,0) and still wins over it for its own choice.
-     Keep the faces in step with the @theme --font-sans above. */
-  --font-sans:
-    "Aldrich", "Aldrich Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui,
-    -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
-}
-
 :root.font-system {
   /* No webfont, no stand-in, no bytes: the phone's own interface face. This is the same stack
      --font-content uses, spelled out rather than aliased — the two are equal today by coincidence
      of both wanting "the system face", not because one is defined as the other. */
   --font-sans:
-    ui-sans-serif, var(--font-ui-cjk), system-ui, -apple-system, "Segoe UI", Roboto,
+    var(--font-ui-cjk), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, "Noto Sans", sans-serif;
   --default-font-family: var(--font-sans);
 }
 :root.font-grotesk {
   --font-sans:
-    "Space Grotesk", "Space Grotesk Fallback", var(--font-ui-cjk), ui-sans-serif,
-    system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial,
-    sans-serif;
+    "Space Grotesk", "Space Grotesk Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --default-font-family: var(--font-sans);
 }
 :root.font-plex {
   --font-sans:
-    "IBM Plex Sans", "IBM Plex Sans Fallback", ui-sans-serif, system-ui, var(--font-ui-cjk),
+    "IBM Plex Sans", "IBM Plex Sans Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui,
     -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --default-font-family: var(--font-sans);
 }
 :root.font-geist {
   --font-sans:
-    "Geist", "Geist Fallback", ui-sans-serif, system-ui, var(--font-ui-cjk),
+    "Geist", "Geist Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui,
     -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --default-font-family: var(--font-sans);
 }
-:root.font-atkinson {
+:root.font-nunito {
   --font-sans:
-    "Atkinson Hyperlegible Next", "Atkinson Hyperlegible Next Fallback", ui-sans-serif,
-    system-ui, var(--font-ui-cjk), -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    "Nunito", "Nunito Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui,
+    -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+  --default-font-family: var(--font-sans);
+}
+:root.font-aldrich {
+  --font-sans:
+    "Aldrich", "Aldrich Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui, -apple-system,
+    "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
   --default-font-family: var(--font-sans);
 }
 /* An operator's own face (theme.toml, ADR 0033). The FAMILY NAME is the one thing this file cannot
@@ -1131,8 +1208,8 @@
  * silently forget a choice it will be able to honour again in a minute. */
 :root.font-operator {
   --font-sans:
-    var(--font-operator-family, "Aldrich"), "Aldrich", "Aldrich Fallback",
-    ui-sans-serif, var(--font-ui-cjk), system-ui, -apple-system, "Segoe UI", Roboto,
+    var(--font-operator-family, "Atkinson Hyperlegible Next"), "Atkinson Hyperlegible Next",
+    "Atkinson Hyperlegible Next Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
   --default-font-family: var(--font-sans);
 }
@@ -1155,7 +1232,9 @@
  * screen plus the bar. A correct WebKit gives `100dvh` either way. iOS never resizes the layout
  * for the keyboard, so nothing here has to track it. Android keeps `dvh`, which is what tracks its
  * keyboard (`interactive-widget=resizes-content`). The expression is its own token so the e2e
- * tier can resolve it in WebKit, which cannot emulate a home-screen launch. */
+ * tier can resolve it in WebKit, which cannot emulate a home-screen launch. A page Android restores
+ * from the background can keep a stale, taller height; lib/viewport-pin.ts then sets `--app-h` inline
+ * to the visible height until the next resize. */
 :root {
   --app-h: 100dvh;
   --app-h-ios-standalone: min(100lvh, calc(100dvh + env(safe-area-inset-top, 0px)));
@@ -1164,6 +1243,62 @@
   @supports (-webkit-touch-callout: none) {
     :root {
       --app-h: var(--app-h-ios-standalone);
+    }
+  }
+}
+
+/* THE TOP EDGE OF A HOME-SCREEN APP, painted by the page (#597, after #203).
+ *
+ * iOS 26.1 and later draw a system blur over the top of an installed web app, and a page cannot
+ * switch it off. WebKit leaves it out when the page's own top edge is a solid, opaque element it can
+ * sample: a REAL element (a pseudo-element is ignored), `position: fixed`, within 4px of the top,
+ * at least 6px tall and at least 80% as wide as the viewport. Otherwise it falls back to the page
+ * colour and blurs the strip. These numbers are field reports (rexdotsh/kleis#97, WebKit bugs
+ * 295569 and 317153), not an Apple document, and there is no iPad in the workspace to prove them.
+ *
+ * #203 took the phone out of that fallback with `apple-mobile-web-app-status-bar-style: default`:
+ * the web view starts below an opaque bar, and the header (sticky, opaque, 100% wide below 640px)
+ * is the edge. An iPad is wider than the header. The column header stops at `max-w-screen-sm`
+ * (640px), 77% of a portrait iPad Pro 11 (834pt) and 54% of it in landscape, and on the wide layout
+ * the top edge is a 48px rail beside a tab row. Nothing at the top reaches 80% of the width, so the
+ * heuristic finds no edge and the blur washes over the mark and the first row (the reporter's
+ * report: the row under it, "SPACES", stays sharp).
+ *
+ * So the page states the edge itself: one element across the whole top, in the header's own colour
+ * (`--band-ground`, which follows the theme), as tall as the top inset. It is `pointer-events:
+ * none`, `position: fixed` and out of flow, so it moves nothing; the header already pads by the
+ * same inset. On a phone that starts below an opaque bar the inset is 0 and it has no height.
+ *
+ * THE FLOOR. Where the inset is 0 the strip has no height to sample, and an iPad may report 0 under
+ * `default`. From 768px wide it is therefore at least `--top-edge-floor` (6px, the smallest height
+ * the heuristic accepts). That covers 6px of page at the very top, where the header and the rail
+ * keep at least 2px of air above their 44px controls. A phone gets no floor, so nothing changes
+ * there.
+ *
+ * ONLY IN A STANDALONE iOS WEB VIEW: the same gate as `--app-h` above, so a browser tab, Android and
+ * desktop never paint it. z-index 25 is above the sticky header (20) and below the strip rung (30),
+ * the toasts (40) and the sheets (50). */
+[data-slot="top-edge"] {
+  display: none;
+}
+@media (display-mode: standalone) {
+  @supports (-webkit-touch-callout: none) {
+    :root {
+      --top-edge-floor: 0px;
+    }
+    @media (min-width: 768px) {
+      :root {
+        --top-edge-floor: 6px;
+      }
+    }
+    [data-slot="top-edge"] {
+      display: block;
+      position: fixed;
+      inset: 0 0 auto 0;
+      z-index: 25;
+      height: max(env(safe-area-inset-top, 0px), var(--top-edge-floor));
+      background: var(--band-ground);
+      pointer-events: none;
     }
   }
 }
@@ -1188,12 +1323,17 @@
   [data-slot="collie-mark"] {
     --spacing: 0.25rem;
   }
-  /* THE ICON STROKE (M57 spec 17). lucide-react puts the class `lucide` and the attribute
-     `stroke-width="2"` on every icon it draws; a CSS value beats a presentation attribute, and the
-     paths inherit it. The default is lucide's own 2. Hand-drawn svgs carry no `lucide` class and keep
-     their own widths. In the base layer, so a `stroke-*` utility on one icon still wins. */
-  svg.lucide {
+  /* THE ICON STROKE (M57 spec 17). Every glyph the app draws carries the class `icon`
+     (components/icons/icon.tsx) and lucide's attribute `stroke-width="2"`; a CSS value beats a
+     presentation attribute, and the paths inherit it. The default is lucide's own 2. A fill set
+     (Phosphor) draws no stroke, so the rule changes nothing there; Iconoir is drawn at 1.5 on the
+     same grid, so it takes three quarters of the width. Hand-drawn svgs carry no `icon` class and
+     keep their own widths. In the base layer, so a `stroke-*` utility on one icon still wins. */
+  svg.icon {
     stroke-width: var(--icon-stroke);
+  }
+  svg.icon[data-glyphs="iconoir"] {
+    stroke-width: calc(var(--icon-stroke) * 0.75);
   }
   /* THE DISPLAY FACE (M57 spec 17). The page titles and the header's brand line wear
      `--font-display`, which is the UI face unless a theme names another. Every `h1` and `h2` the app
@@ -1210,14 +1350,15 @@
     -webkit-tap-highlight-color: transparent;
     /* THE PAGE IS PAINTED HERE, not on body (M57 spec 17). The root's background is the canvas, so
        this is the colour every gap and every overscroll shows, as body's used to be. A theme's
-       `ground` word lays `--ground-image` over it: `none` for Collie, so the pixels are the ones
-       body drew. `min-height: 100%` makes a gradient span at least the viewport. No
+       `ground` word lays `--ground-image` over it: Collie's own word is `grain`, a faint crossed
+       grain of 4 percent of the foreground; `flat` is `none`. `min-height: 100%` makes a gradient span at least the viewport. No
        `background-attachment: fixed`: mobile WebKit ignores it and Android Chrome repaints the
        whole ground on every scroll frame. The browser-chrome colour is the flat top edge of the
        ground (use-theme.ts), which is where every gradient starts. */
     min-height: 100%;
     background-color: var(--background);
     background-image: var(--ground-image);
+    background-size: var(--ground-size);
   }
   body {
     /* No fill of its own: a body fill would cover the ground on html. The canvas under it is
@@ -1290,6 +1431,55 @@
   view-transition-name: none;
 }
 
+/*
+ * ── The name's suffix: grey at rest, the herd's three inks under a pointer ──
+ *
+ * "PWA" of the sidebar's ColliePWA rests in the muted ink, the same size as "Collie", as on the
+ * website (collie-website `components/wordmark.tsx`). Hover the logo row, or reach its mark with the
+ * keyboard, and the three letters take P `--status-done`, W `--status-working`, A `--status-blocked`,
+ * fading back over 240ms. Altan tried the inks at rest on 2026-10-24 and reverted it the same day.
+ *
+ * THE ONE RULE IT MUST NOT BREAK: this must never read as a live status. The trigger is the READER'S
+ * POINTER and nothing else; the colours are fixed per letter and NO APPLICATION STATE MAY EVER DRIVE
+ * THEM. Nothing here moves: no keyframes, no animation.
+ */
+.wordmark-ink {
+  color: var(--muted-foreground);
+  transition: color 240ms ease-out;
+}
+
+.wordmark-ink:nth-child(1) {
+  --wordmark-lit: var(--status-done);
+}
+
+.wordmark-ink:nth-child(2) {
+  --wordmark-lit: var(--status-working);
+}
+
+.wordmark-ink:nth-child(3) {
+  --wordmark-lit: var(--status-blocked);
+}
+
+.wordmark-lockup:hover .wordmark-ink,
+.wordmark-lockup:focus-within .wordmark-ink {
+  color: var(--wordmark-lit);
+}
+
+/* A HIDDEN PAGE RUNS NO ANIMATION (issue 748, ADR 0138). lib/page-hidden.ts puts the attribute on <html> while
+   `document.visibilityState` is hidden; this pauses every animation, pseudo-elements included, and a
+   paused animation resumes where it stopped. Important, because it must beat every rule that sets
+   an `animation` shorthand, and the shorthand resets the play state.
+   The second pair is the app under a veil (App.tsx, `data-app-covered`): the idle lock and the update
+   screen blur or dim the app behind them, and an animation under a veil keeps the veil redrawing. */
+:root[data-page-hidden] *,
+:root[data-page-hidden] *::before,
+:root[data-page-hidden] *::after,
+[data-app-covered] *,
+[data-app-covered] *::before,
+[data-app-covered] *::after {
+  animation-play-state: paused !important;
+}
+
 /* Submission progress bar — a slim indeterminate strip across the very top of the viewport while a
    mutation is in flight (components/busy-bar). The `appear` animation holds it fully invisible for
    120ms (delay + `both` fill), so an action that resolves and unmounts within that window never
@@ -1350,9 +1540,13 @@
    as a strobe, and the turn is visible in the silhouette at any size and to any eye. It REPLACED the
    opacity breathe this rule used to hold (issue 420): a fade is carried by hue and lightness, which
    is what the mark no longer depends on. Only the ONE mark the operator is watching carries the
-   class; every other mark is still. */
+   class; every other mark is still.
+   IN 24 STEPS, NOT LINEAR (issue 748): a linear turn asks the browser for a new frame 60 times a
+   second for as long as an agent works, and on one Android phone that frame rate, all day, drove
+   Chrome's GPU process past the system's file limit. 24 ticks of 15 degrees are about 13 frames a
+   second, and at the dot's size the turn still reads as smooth. */
 .status-turn {
-  animation: status-turn 1.8s linear infinite;
+  animation: status-turn 1.8s steps(24) infinite;
 }
 @keyframes status-turn {
   to {
@@ -1393,15 +1587,17 @@
 
 /* THE WORKING ROW OF A DURABLE THREAD (components/session-stream.tsx `WorkingRow`): three dots in the muted ink, each
    rising and falling a third of a cycle after the one before. Opacity only, so nothing moves and the row keeps its box.
-   Under reduced motion the dots stand still at a middling weight. */
+   Under reduced motion the dots stand still at a middling weight.
+   STEPPED, on one grid (issue 748): each rise and each fall is five steps of 96 ms, and the delays are two and four of
+   them, so all three dots change on the same ticks, about 10 frames a second instead of 60. */
 .working-dots > span {
-  animation: working-dot 1.2s ease-in-out infinite;
+  animation: working-dot 1.2s steps(5) infinite;
 }
 .working-dots > span:nth-child(2) {
-  animation-delay: 0.2s;
+  animation-delay: 0.192s;
 }
 .working-dots > span:nth-child(3) {
-  animation-delay: 0.4s;
+  animation-delay: 0.384s;
 }
 @keyframes working-dot {
   0%,
@@ -1467,6 +1663,58 @@
 @media (prefers-reduced-motion: reduce) {
   [data-holding] {
     animation-name: hold-tint;
+  }
+}
+
+/* A CHAT BLOCK ON A TOUCH SCREEN (components/stream-block.tsx, lib/block-select.ts). A pinnable block takes no text
+   selection and raises no callout at rest, so a phone's browser starts no selection at its own long-press mark and
+   cancels no pointer, and the block's 650ms hold opens its actions sheet every time. The sheet's Select text marks one
+   block `data-selectable`, which gives its text back to the native selection until a press outside it. A mouse and a
+   desk (`pointer: fine`) are untouched. */
+@media (pointer: coarse) {
+  [data-block][data-pinnable]:not([data-selectable]) {
+    -webkit-user-select: none;
+    user-select: none;
+    -webkit-touch-callout: none;
+  }
+}
+[data-block][data-selectable] {
+  -webkit-user-select: text;
+  user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/* A CHAT BLOCK'S TINT (components/stream-block.tsx). The hold in the making on a block is the tint ONLY: the 0.97
+   scale squeezed a message of text. It shows for a touch or pen press alone (the hook's `showHold: "touch"`). While
+   the actions sheet is open for the block, `data-active` holds the same tint at the strength the hold's fill ends on,
+   so one flows into the other with no flash. */
+[data-block][data-holding] {
+  animation-name: hold-tint;
+}
+[data-block][data-active] {
+  box-shadow: inset 0 0 0 100vmax color-mix(in oklab, currentColor 12%, transparent);
+}
+
+/* THE PANE NAVIGATION PAD'S STEP PULSE (components/pane-nav-overlay.tsx, ADR 0121). Each step of the
+   two-finger or joystick move rings the arrow it took once: a square of the arrow's own size grows and
+   fades in 350ms. Transform and opacity only, on a layer that takes no pointer and holds no space, so
+   nothing moves. Reduced motion: no pulse at all; the filled arrow alone says the step. */
+.pane-nav-pulse {
+  animation: pane-nav-pulse 350ms cubic-bezier(0, 0, 0.2, 1) 1 both;
+}
+@keyframes pane-nav-pulse {
+  from {
+    transform: scale(1);
+    opacity: 0.9;
+  }
+  to {
+    transform: scale(1.6);
+    opacity: 0;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .pane-nav-pulse {
+    display: none;
   }
 }
 
@@ -1614,6 +1862,93 @@
   --belt-rule: round(calc(1.25rem * var(--belt-scale)), 1px);
 }
 
-:root.fleet-terminal-cjk-only .font-mono {
-  font-family: var(--fleet-terminal-font);
+/* A LARGE SCREEN'S FOCUS MOVE (ADR 0120). Every column draws its belt, and only the focused one adds
+   the reply box under it. When a column takes the focus its box eases in from no height, so the belt
+   rises to its place over 200ms instead of jumping, and the transcript above, pinned to its bottom,
+   keeps its last line in sight the whole way. The clip lives only inside the keyframes, so the box's
+   attach menu, which opens above it, is never cut once the move ends. Reduced motion: no ease. */
+[data-strip-focus] [data-slot="composer-box"] {
+  animation: strip-reply-in 200ms ease-out backwards;
 }
+@keyframes strip-reply-in {
+  from {
+    max-height: 0;
+    opacity: 0;
+    overflow: clip;
+  }
+  to {
+    max-height: 16rem;
+    opacity: 1;
+    overflow: clip;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  [data-strip-focus] [data-slot="composer-box"] {
+    animation: none;
+  }
+}
+
+/* HALF-OPEN FOLDABLES (ADR 0120, "Folded postures"). The geometry comes from the Viewport Segments
+   environment variables only, each with a fallback, so a browser that answers the media query but
+   not the variable still lays out. Nothing straddles the fold: each region ends at its segment.
+
+   TABLETOP (two segments, one above the other). The pane screen ends at the top segment's bottom
+   edge, and the focused pane's chrome block (belt, then reply box) stands in the bottom segment,
+   anchored at its top edge, with the reply box filling the rest of it. */
+[data-slot="fold-frame"][data-fold="tabletop"] {
+  padding-bottom: calc(var(--app-h) - env(viewport-segment-bottom 0 0, 50dvh));
+}
+[data-fold="tabletop"] [data-segment="bottom"] {
+  position: fixed;
+  inset-inline: 0;
+  top: env(viewport-segment-top 0 1, 50dvh);
+  bottom: 0;
+  z-index: 10;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+[data-fold="tabletop"] [data-segment="bottom"] > :first-child {
+  display: flex;
+  flex: 1 1 auto;
+  flex-direction: column;
+  min-height: 0;
+}
+[data-fold="tabletop"] [data-segment="bottom"] [data-slot="composer-box"] {
+  flex: 1 1 auto;
+  align-items: stretch;
+}
+[data-fold="tabletop"] [data-segment="bottom"] [data-slot="composer-box"] textarea {
+  field-sizing: fixed;
+  max-height: none;
+}
+
+/* BOOK (two segments side by side), from 600px. Two columns, one per segment, with the fold's own
+   width between them as a gutter; the rail (3.5rem) stands at the left segment's start. One column
+   alone takes the right segment, beside the full sidebar in the left one. */
+[data-fold="book"] {
+  --fold-a: env(viewport-segment-right 0 0, 50vw);
+  --fold-b: env(viewport-segment-left 1 0, 50vw);
+}
+[data-fold="book"] .fold-gutter {
+  flex: 0 0 calc(var(--fold-b) - var(--fold-a));
+}
+[data-fold="book"] .fold-left-col {
+  flex: 0 0 calc(var(--fold-a) - 3.5rem);
+  width: calc(var(--fold-a) - 3.5rem);
+}
+[data-fold="book"] .fold-right-col {
+  flex: 1 1 0;
+  min-width: 0;
+}
+[data-fold="book"] .fold-left-full {
+  width: var(--fold-a);
+}
+
+/* Fleet role-specific fallback families; an unset face deliberately matches no font. */
+:root {
+  --font-cjk: "Herdr Fleet CJK Unset";
+  --font-ui-cjk: "Herdr Fleet CJK Unset";
+  --font-sans: "Atkinson Hyperlegible Next", "Atkinson Hyperlegible Next Fallback", var(--font-ui-cjk), ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+}
+:root.fleet-terminal-cjk-only .font-mono { font-family: var(--fleet-terminal-font); }

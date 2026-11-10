@@ -11,7 +11,7 @@ import {
   type ReactNode,
 } from "react";
 import { createPortal } from "react-dom";
-import { Settings } from "lucide-react";
+import { useLocation } from "react-router";
 
 import { isConnecting } from "@/lib/connection";
 import { useNav } from "@/hooks/use-nav";
@@ -22,7 +22,12 @@ import { useMuxLogoUrl, useMuxName } from "@/lib/mux-capability";
 import { useConnectionLost, useConnectionTrouble } from "@/hooks/use-connection-lost";
 import { useLoadingStalled } from "@/hooks/use-loading-stalled";
 import { useOnline } from "@/hooks/use-online";
-import { settingsPath } from "@/lib/nav";
+import { homePath, settingsPath } from "@/lib/nav";
+import { requestBundleFocus, useBundleApply } from "@/lib/bundle-apply";
+import { useReconnected } from "@/lib/reconnected";
+import { useScope } from "@/lib/session";
+import { useOptionalRootData } from "@/lib/route-data";
+import { releaseOffered } from "@/lib/update-ribbon";
 import { CollieHome } from "@/components/collie-home";
 import { FleetLostBadge } from "@/components/fleet-lost-badge";
 import { AlphaBar } from "@/components/alpha-bar";
@@ -30,6 +35,7 @@ import { Collapse } from "@/components/ui/collapse";
 import { SectionLabel } from "@/components/ui/section-label";
 import type { BridgeStatus } from "@/lib/types";
 import type { Scope } from "@/lib/scope";
+import { Icon } from "@/components/icons/icon";
 
 /** What a route claims about the SHAPE of the shared row, as opposed to the content it portals into
  *  it. These are the three things the shell itself has to draw differently, and every one of them is
@@ -110,6 +116,60 @@ interface HeaderSlots {
 
 const HeaderSlotContext = createContext<HeaderSlots | null>(null);
 
+/**
+ * WHERE THE ONE HEADER STANDS ON A LARGE SCREEN (ADR 0120). On the pane route at 600px and up the
+ * screen is a sidebar beside a strip of columns, and the header belongs to the FOCUSED column, not to
+ * the top of the window: the pane's identity, its status and its ⋮ sit over the pane they are about.
+ * The Collie mark moves to the sidebar's top row. A dock names the two places; while one is set the
+ * shell portals its `<header>` into `row` and the mark into `mark`, and adds a trailing host in the
+ * row (`trail`) for the column's own controls. Nothing else changes: the slots, the claim and the
+ * mark's one instance are the same as at the top of the window, and with no dock the shell draws
+ * exactly what it always drew.
+ */
+export interface HeaderDock {
+  /** The box at the top of the focused column the `<header>` is drawn in. */
+  row: HTMLElement | null;
+  /** The box the Collie mark is drawn in (the sidebar's top row, or the rail's). */
+  mark: HTMLElement | null;
+  /** The ground under the mark there, for its knockout (`var(--card)` on the sidebar). */
+  paper: string;
+  /** How large the mark is drawn there, in px. Absent is the header's own 40; its box stays 44 either way. */
+  markSize?: number;
+}
+
+interface HeaderDockApi {
+  dock: (owner: string, dock: HeaderDock) => void;
+  undock: (owner: string) => void;
+  /** The trailing host in the docked row, for the column's own controls; null while undocked. */
+  trail: HTMLElement | null;
+}
+
+const HeaderDockContext = createContext<HeaderDockApi | null>(null);
+
+/**
+ * Dock the one header into a large screen's focused column (see {@link HeaderDock}) for as long as
+ * the caller is mounted with a `row` set. Returns the trailing host the caller may portal its own
+ * controls into. Outside an `AppHeaderHost` (a unit test of a bare component) it docks nothing.
+ */
+export function useHeaderDock(dock: HeaderDock): HTMLElement | null {
+  const api = useContext(HeaderDockContext);
+  const owner = useId();
+  const { row, mark, paper, markSize } = dock;
+  useLayoutEffect(() => {
+    if (api === null) return;
+    if (row === null) {
+      api.undock(owner);
+      return;
+    }
+    const next: HeaderDock = { row, mark, paper };
+    if (markSize !== undefined) next.markSize = markSize;
+    api.dock(owner, next);
+  }, [api, owner, row, mark, paper, markSize]);
+  const undock = api?.undock;
+  useLayoutEffect(() => () => undock?.(owner), [undock, owner]);
+  return api?.trail ?? null;
+}
+
 interface AppHeaderHostProps {
   // Connection state — the inputs that drive the CollieHome dog. The dog blooms on sustained trouble
   // (≥4s not-live) and rests muted once lost (≥15s), both derived here from the SAME shared connection-
@@ -175,6 +235,16 @@ export function AppHeaderHost({ bridge, error, lastSeenAt, leading, children }: 
   // Which icon the lost badge on the mark wears: the phone's own offline flag, the same fact the
   // strip's sentence turns on. Read here, beside `lost`, so the mark stays a function of its props.
   const online = useOnline();
+  // A new app build being applied on this phone (`lib/bundle-apply.ts`). The mark carries it, which is
+  // the band's old download row moved onto the mark (2026-11-06), and it changes what a tap does.
+  const applying = useBundleApply() !== null;
+  // The link just came back after a bar the operator saw (`lib/reconnected.ts`): one green turn of
+  // the mark, which is the band's old "Connected" strip moved onto the mark (2026-11-07). The tap
+  // keeps its ordinary meaning.
+  const reconnected = useReconnected();
+  const nav = useNav();
+  const scope = useScope();
+  const { pathname } = useLocation();
   // What this collie drives, printed beside the wordmark. It ALWAYS describes the LOCAL collie and
   // never changes with the viewed scope: `/api/config`'s mux block is this bridge's own, and a peer's
   // is not fetched (the crew link carries runtime data, not a second config channel). So on `?h=peer`
@@ -212,8 +282,59 @@ export function AppHeaderHost({ bridge, error, lastSeenAt, leading, children }: 
     [center, right, overrideHost, claimRow, releaseRow],
   );
 
-  return (
-    <HeaderSlotContext.Provider value={slots}>
+  // The large screen's dock (see HeaderDock). One owner at a time, by the claim's own token rule.
+  const [docked, setDocked] = useState<HeaderDock | null>(null);
+  const dockOwner = useRef<string | null>(null);
+  const [trail, setTrail] = useState<HTMLElement | null>(null);
+  const dockRow = useCallback((id: string, next: HeaderDock) => {
+    dockOwner.current = id;
+    setDocked((prev) =>
+      prev !== null && prev.row === next.row && prev.mark === next.mark && prev.paper === next.paper && prev.markSize === next.markSize
+        ? prev
+        : next,
+    );
+  }, []);
+  const undockRow = useCallback((id: string) => {
+    if (dockOwner.current !== id) return;
+    dockOwner.current = null;
+    setDocked(null);
+  }, []);
+  const dockApi = useMemo<HeaderDockApi>(
+    () => ({ dock: dockRow, undock: undockRow, trail: docked === null ? null : trail }),
+    [dockRow, undockRow, docked, trail],
+  );
+  const dockedRow = docked?.row ?? null;
+  // THE MARK'S TAP. Normally the route's own (`RouteHeader`'s `onHome`, which may be up one level or
+  // nothing at all). While the app is updating it is the DASHBOARD, from every route, because that is
+  // where the update line says what is happening; the flag asks the dashboard to bring that line into
+  // view once. On the dashboard already there is nowhere to go, and the dashboard reacts to the flag
+  // in place. Up, not down: the dashboard is every route's ancestor (ADR 0067). `upTo`, the move to
+  // one NAMED parent, and not `up`: from a pane opened out of a space, `up` steps back to the space.
+  // Not while `lost`, when the mark does not show the update and the tap keeps its ordinary meaning.
+  const onHome = () => {
+    if (applying && !lost) {
+      requestBundleFocus();
+      if (pathname !== "/") nav.upTo(homePath(scope));
+      return;
+    }
+    home.current?.fn?.();
+  };
+  const homeMark = (paper?: string, markSize?: number) => (
+    <CollieHome
+      onHome={onHome}
+      trouble={trouble}
+      lost={lost}
+      applying={applying}
+      reconnected={reconnected}
+      online={online}
+      lastSeenAt={lastSeenAt}
+      {...(paper === undefined ? {} : { paper })}
+      {...(markSize === undefined ? {} : { markSize })}
+    />
+  );
+
+  const header = (
+    <>
       {/* A column, not a row: the sticky bar reserves the safe-area inset (see the class list), and
           stacks the (usually absent) prerelease strip above the header row
           proper, which keeps its original padding. On a stable
@@ -244,15 +365,22 @@ export function AppHeaderHost({ bridge, error, lastSeenAt, leading, children }: 
            * hand the inset to the band while a strip showed above it (a context flag and a 240ms
            * padding transition kept the two in step); moving the band below the bar on 2026-10-07
            * made that handover, and the jog of the whole page it caused, unnecessary.
+           *
+           * DOCKED, IT IS NOT AT THE TOP EDGE, so it reserves nothing. On the large screen the bar
+           * sits in the focused column, under the space's tab row, and the layout's two top rows
+           * (the sidebar and the tab row, wide-layout.tsx) take the inset instead. Padding here as
+           * well pushed the pane's title down by the inset while those rows sat under the status bar
+           * (a foldable's screen recording, 1.27.1).
            */
-          "[padding-top:env(safe-area-inset-top)]",
+          dockedRow === null && "[padding-top:env(safe-area-inset-top)]",
           // The rule is RECOLOURED, never removed — DESIGN.md §2's own technique, and the width stays
           // reserved in the base string above. While a route has the row hidden (zen) there are no
           // two regions left to cut apart, so the edge goes transparent; nothing moves by a pixel
           // when it comes back.
           claim.hidden ? "border-transparent" : "border-band-rule",
-          claim.width === "column" && "mx-auto w-full max-w-screen-sm",
-          claim.width === "wide" &&
+          dockedRow === null && claim.width === "column" && "mx-auto w-full max-w-screen-sm",
+          dockedRow === null &&
+            claim.width === "wide" &&
             "mx-auto w-full max-w-screen-md lg:max-w-screen-lg xl:max-w-screen-xl 2xl:max-w-[1400px]",
         )}
       >
@@ -302,19 +430,7 @@ export function AppHeaderHost({ bridge, error, lastSeenAt, leading, children }: 
                     can restart it. `onHome` is dispatched through the owner's ref, so the tap still does
                     the route's own thing (space → dashboard, pane → dashboard, history → the pane)
                     without the callback's identity re-rendering anything. */}
-                {claim.mark ? (
-                  <CollieHome
-                    onHome={() => home.current?.fn?.()}
-                    trouble={trouble}
-                    lost={lost}
-                    online={online}
-                    lastSeenAt={lastSeenAt}
-                  />
-                ) : (
-                  // DOWNSTREAM PORT (FORK.toml native-pane-chrome-port): a route that declines the
-                  // mark keeps what the mark would say while the connection is lost.
-                  lost && <FleetLostBadge online={online} lastSeenAt={lastSeenAt} />
-                )}
+                {claim.mark ? (dockedRow === null && homeMark()) : (lost && <FleetLostBadge online={online} lastSeenAt={lastSeenAt} />)}
                 {/* THE IDENTITY, STACKED: the brand over the multiplexer this collie drives, both
                     beside the mark. It was ONE 18px line — "Collie on <mux>" — and on a phone that
                     line ran out of room inside the multiplexer's NAME, the one word here the reader
@@ -447,10 +563,23 @@ export function AppHeaderHost({ bridge, error, lastSeenAt, leading, children }: 
                 mounted (a portal needs a live target in the same commit the route renders into it) and
                 contributes no box of its own when empty. */}
             <div data-slot="header-override" ref={setOverrideHost} style={{ display: "contents" }} />
+            {/* The focused column's own controls on a large screen (HeaderDock), at the row's end. */}
+            {dockedRow !== null && (
+              <div data-slot="header-dock-trail" ref={setTrail} className="flex shrink-0 items-center gap-1" />
+            )}
           </div>
         </Collapse>
       </header>
-      {children}
+    </>
+  );
+
+  return (
+    <HeaderSlotContext.Provider value={slots}>
+      <HeaderDockContext.Provider value={dockApi}>
+        {dockedRow === null ? header : createPortal(header, dockedRow)}
+        {docked !== null && docked.mark !== null ? createPortal(homeMark(docked.paper, docked.markSize), docked.mark) : null}
+        {children}
+      </HeaderDockContext.Provider>
     </HeaderSlotContext.Provider>
   );
 }
@@ -580,19 +709,31 @@ export function RouteHeader({
 export function SettingsGear({ scope }: { scope?: Scope }) {
   const nav = useNav();
   useLocale();
+  // The same reading the update band makes of "a release is on offer and not put down", so the dot
+  // and the band cannot disagree. Read off the snapshot, so closing the band on any device drops it.
+  const update = useOptionalRootData()?.update;
+  const offered = releaseOffered(update, update?.dismissedVersion);
   return (
     <button
       type="button"
       onClick={() => nav.down(settingsPath(scope))}
-      aria-label={t("nav.settings.aria")}
+      aria-label={t(offered ? "nav.settings.updateAvailable.aria" : "nav.settings.aria")}
       // A real 44px box, NOT padding pulled back by a negative margin. The negative-margin trick
       // keeps icons visually tight but lets adjacent boxes overlap (two -m-3 buttons pull 24px
       // against a 12px gap, so a neighbour steals 12px of this one's hit area) and drags the last
       // one past the header's padding into document overflow. Costs horizontal room, which the
       // breadcrumb absorbs — it already truncates by design.
-      className="grid size-11 shrink-0 place-items-center text-muted-foreground transition-colors hover:text-foreground"
+      className="relative grid size-11 shrink-0 place-items-center text-muted-foreground transition-colors hover:text-foreground"
     >
-      <Settings className="size-5" />
+      <Icon name="settings" className="size-5" />
+      {offered && (
+        // 6px, in the corner of the icon and inside the 44px box: a fact about the app, not a control.
+        <span
+          aria-hidden="true"
+          data-slot="update-dot"
+          className="absolute right-2.5 top-2.5 size-1.5 rounded-full bg-primary"
+        />
+      )}
     </button>
   );
 }

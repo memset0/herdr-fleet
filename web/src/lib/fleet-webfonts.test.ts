@@ -83,7 +83,8 @@ describe("the default UI stack a running page resolves", () => {
   const families = (stack: string) => stack.split(",").map((part) => part.trim()).filter(Boolean);
 
   it("carries the fallback position between the chosen face and the system tail", () => {
-    expect(families(unlayered).slice(0, 3)).toEqual(['"Aldrich"', '"Aldrich Fallback"', "var(--font-ui-cjk)"]);
+    const mirror = /:root \{\s*--font-sans:\s*([\s\S]*?);/.exec(html)?.[1] ?? "";
+    expect(families(unlayered).slice(0, 3)).toEqual([...families(mirror).slice(0, 2), "var(--font-ui-cjk)"]);
   });
 
   it("is Collie's own default stack with that one position added", () => {

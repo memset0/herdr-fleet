@@ -1,9 +1,12 @@
+import { execFileSync } from "node:child_process";
 import { createHash, randomBytes } from "node:crypto";
-import { isAbsolute, join } from "node:path";
+import { readFileSync } from "node:fs";
+import { isAbsolute, join, posix } from "node:path";
 
 import { BEACON_DIR_MODE, beaconFileName, beaconKey, beaconsDir, EDGE_FILE, EDGE_MAX_AGE_MS, EDGE_SPOOL_MAX, edgesDir } from "../bridge/beacon/paths.ts";
-import { HOOK_TARGET_FILE, HOOK_TARGETS_MAX, hookTargetsDir, parseHookTarget } from "../bridge/beacon/hook-targets.ts";
-import { parseProcStartTime, procStatPath } from "../bridge/beacon/liveness.ts";
+import { HOOK_TARGET_FILE, HOOK_TARGETS_MAX, hookTargetsDir, parseHookTarget, type HookTargetRecord } from "../bridge/beacon/hook-targets.ts";
+import { edgeModelOf } from "../bridge/beacon/parse.ts";
+import { procStatPath, startTimeProbe, type StartTimeCommand } from "../bridge/beacon/liveness.ts";
 import { HOST } from "../bridge/host.ts";
 import {
   BEACON_SCHEMA_VERSION,
@@ -13,15 +16,19 @@ import {
   type BeaconStatus,
   type EdgeRecord,
 } from "../bridge/beacon/types.ts";
-import { asJsonString } from "../web/src/lib/json.ts";
+import { asJsonNumber, asJsonString } from "../web/src/lib/json.ts";
 import { normalizePrompt } from "../web/src/lib/surface/edges.ts";
 import { holdInputHash, shownInput } from "../web/src/lib/surface/hold.ts";
 import { loadProfiles } from "../web/src/lib/surface/profile.ts";
+import { takeContextReading, takeSessionStart } from "./context-reading.ts";
 import { agentHolds, agentSettingsPath, managedSettingsPath, projectSettingsPaths } from "./hold-entry.ts";
 import type { JsonObject, JsonValue } from "../bridge/json.ts";
 import type { CliContext, Environment } from "./context.ts";
 import { EXIT } from "./io.ts";
+import { privateDir } from "./private-dir.ts";
 import type { Files } from "./sys.ts";
+
+export { privateDir };
 
 // `collie beacon emit` — the agent's own hook, telling Collie what only the agent knows.
 //
@@ -39,8 +46,9 @@ import type { Files } from "./sys.ts";
 // honestly; an emitter that can wedge the operator's agent is worse than no emitter at all.
 //
 // `SessionEnd` runs on a 1.5 s default budget, which sets the shape of the work: one environment
-// read, one parse, one `/proc` read for the pid's start time, one atomic write. No network, no
-// subprocess, and nothing that can block on another process.
+// read, one parse, one probe for the pid's start time, one atomic write. No network, and nothing that
+// can block on another process. The probe is a `/proc` read on Linux; on macOS, which has no `/proc`,
+// it is one `ps` run (about 20 ms) with a 1 s timeout (`bridge/beacon/liveness.ts`, M80 spec 11).
 //
 // ── THE PAYLOAD, AS CAPTURED (2026-08-20, `claude -p` under a throwaway CLAUDE_CONFIG_DIR) ─────────
 //
@@ -56,7 +64,9 @@ import type { Files } from "./sys.ts";
 // `notification_type`, `message`) were not reached by the headless probe — a `-p` run completes
 // without either, and `idle_prompt` fires ~60 s after a response in an INTERACTIVE session only.
 // Their field lists are the documented ones (code.claude.com/docs/en/hooks.md, read 2026-08-20), and
-// this verb reads neither: `hook_event_name` and `session_id` are the only fields it touches.
+// this verb reads neither: `hook_event_name` and `session_id` are the only fields it touches, plus the
+// context-reading fields below (`transcript_path`, `source`, `model`, `context_tokens`). `model` also
+// rides on the `SessionStart` edge, so the pane names its model before its first turn (below).
 // `agent_id` (present only for a SUBAGENT's events) was absent from every captured payload, which is
 // the case the gate below is for.
 //
@@ -64,9 +74,35 @@ import type { Files } from "./sys.ts";
 // process — no surviving shell in between, with or without a trailing comment in the command string —
 // so `process.ppid` is the agent, and the agent is what the reader's liveness check needs. The hook's
 // own pid is dead microseconds later and would make every beacon read expired.
+//
+// That probe ran on macOS, where `sh` replaces itself with the last command. Where `/bin/sh` is dash
+// (Ubuntu, Debian) the shell forks the command and waits, so `process.ppid` is the shell, which is
+// gone as soon as `collie` exits (issue 689). {@link agentPidOf} climbs past such a shell to the first
+// ancestor that is not one, and falls back to `process.ppid` whenever it cannot read a process.
+
+// ── THE CONTEXT READING (.adr/0115, amended 2026-10-24) ───────────────────────────────────────────
+//
+// Besides the beacon and the edge, this verb notes the session's context use for the dots above the
+// belt, with no statusLine (`cli/context-reading.ts` has the whole rule):
+//
+//  - `SessionStart` reads `source`, `model` and `context_tokens`: the window the model names, a context
+//    that is unknown after a compact or a clear, a context known at once after a resume or a fork.
+//  - `Stop` and the tool event (`PostToolUse`, registered by `--hold-permissions`) read the END of the
+//    transcript, `transcript_path` in the payload, for the token counts of the last assistant line.
+//    The path is a hint to check: an absolute `.jsonl` file under the Claude config root once every
+//    link is resolved. Unlike the session id below, it is never recorded in anything this verb writes.
+//
+// A refusal, a missing file and a full disk are all "no reading", and exit 0 as everywhere in this verb.
 
 /** The marker namespace of a Herdr pane, which is the Herdr adapter's registry key. */
 const HERDR_NAMESPACE = "herdr";
+
+/**
+ * The marker namespace of a herdr-core terminal, which is that adapter's registry key. A literal, not
+ * an import, because this verb runs on every hook event and must stay a handful of module loads;
+ * `cli/beacon.test.ts` pins it to the adapter's own constant.
+ */
+export const HERDR_CORE_NAMESPACE = "herdr-core";
 
 /**
  * Where a multiplexer's pane identity lives in the environment of a process running inside it.
@@ -122,6 +158,15 @@ const MUX_ENV_MARKERS: readonly MuxEnvMarker[] = [
     namespace: HERDR_NAMESPACE,
     paneVar: "HERDR_PANE_ID",
     scopeVar: "HERDR_SOCKET_PATH",
+    scopeOf: (raw) => raw,
+  },
+  {
+    // The new Herdr core exports the terminal's address and the socket of the core that owns it
+    // (M74 spec 04, probed 2026-10-29 on hc 0.1.14). A core terminal started from inside the Herdr
+    // TUI inherits that TUI's variables too, so a pane can carry both markers; each names only its own.
+    namespace: HERDR_CORE_NAMESPACE,
+    paneVar: "HC_TERMINAL_ID",
+    scopeVar: "HC_TERMINAL_SOCKET",
     scopeOf: (raw) => raw,
   },
 ];
@@ -251,26 +296,133 @@ export interface BeaconEmitDeps {
   readonly files: Files;
   /** The hook payload. A seam so the tests need no real stdin. */
   readStdin(): Promise<string>;
-  /** The agent's pid — `process.ppid` in production (see the header's probe note). */
+  /** The agent's pid — `agentPidOf(process.ppid, …)` in production (see the header's probe note). */
   readonly agentPid: number;
   /** Injected so a test can pin the heartbeat; production leaves it. */
   readonly now?: () => number;
   /** This process's uid: a spool or registry folder another user owns is not written into. Absent off POSIX. */
   readonly uid?: number | undefined;
+  /** How a pid's start time is read. Production leaves it; a test pins the platform and the `ps` run. */
+  readonly pidProbe?: PidProbeDeps | undefined;
+}
+
+/** The two seams of the start-time probe (M80 spec 11). */
+export interface PidProbeDeps {
+  /** Whose probe runs (`bridge/beacon/liveness.ts` {@link startTimeProbe}). Defaults to `HOST.platform`. */
+  readonly platform?: NodeJS.Platform;
+  /** Runs a probe command: its stdout, or null when it failed. Defaults to {@link runStartTimeCommand}. */
+  readonly run?: (command: StartTimeCommand, pid: number) => string | null;
 }
 
 /**
- * The pid's start time, from the ONE extra file read this verb allows itself.
+ * One probe command, synchronously: the hook has no event loop to spare. Its stderr is dropped, so a
+ * `ps` complaint can never reach the conversation, and every failure (no such pid, a timeout, no
+ * `ps`) is null.
+ */
+export function runStartTimeCommand(command: StartTimeCommand, pid: number): string | null {
+  try {
+    return execFileSync(command.file, [...command.args(pid)], {
+      encoding: "utf8",
+      env: { ...command.env },
+      timeout: command.timeoutMs,
+      stdio: ["ignore", "pipe", "ignore"],
+      windowsHide: true,
+    });
+  } catch {
+    return null;
+  }
+}
+
+/** The process facts the climb needs: its name (`comm`) and its parent. */
+export interface ProcessInfo {
+  readonly comm: string;
+  readonly ppid: number;
+}
+
+/** Names of the shells a hook command may run through (`comm`, so no path). */
+const SHELL_COMMS: ReadonlySet<string> = new Set(["sh", "dash", "bash", "zsh", "ksh", "ash", "busybox"]);
+
+/** How many shells {@link agentPidOf} climbs past. `sh -c` under a wrapper is two at most; the third is slack. */
+const SHELL_HOPS_MAX = 3;
+
+/**
+ * The agent's pid for a hook that started as `start` (`process.ppid`).
+ *
+ * bash and the macOS `sh` exec the hook's last command, so `start` is the agent. dash forks it and
+ * waits, so `start` is a shell that dies with the hook, and every beacon recorded against it reads
+ * expired (issue 689). While the process at the current pid is a shell this climbs to its parent, at
+ * most {@link SHELL_HOPS_MAX} times and never to pid 1 or below: a process whose parent is 0 or 1
+ * stays where it is. The first non-shell pid is the answer. A process that cannot be read keeps the
+ * pid already reached, so every failure ends at today's behaviour.
+ */
+export function agentPidOf(start: number, read: (pid: number) => ProcessInfo | null): number {
+  let pid = start;
+  for (let hop = 0; hop < SHELL_HOPS_MAX; hop += 1) {
+    const info = read(pid);
+    if (info === null || !SHELL_COMMS.has(info.comm)) return pid;
+    if (info.ppid <= 1) return pid;
+    pid = info.ppid;
+  }
+  return pid;
+}
+
+/**
+ * `/proc/<pid>/stat` as a {@link ProcessInfo}, or null when the text is not a stat line. Field 2 is
+ * the name in parentheses and may hold spaces and parentheses itself (`(my (odd) sh)`), so the line
+ * is split on the LAST `)`; field 4, the parent, is the second word after it (state comes first).
+ */
+export function parseProcStatProcess(text: string): ProcessInfo | null {
+  const open = text.indexOf("(");
+  const close = text.lastIndexOf(")");
+  if (open < 0 || close < open) return null;
+  const ppid = text.slice(close + 1).trim().split(/\s+/u)[1];
+  if (ppid === undefined || !/^\d+$/u.test(ppid)) return null;
+  return { comm: text.slice(open + 1, close), ppid: Number(ppid) };
+}
+
+/** One `ps -o ppid=,comm=` line (` 123 /bin/sh`) as a {@link ProcessInfo}; `comm` is the path's last part. */
+export function parsePsProcess(text: string): ProcessInfo | null {
+  const match = /^\s*(\d+)\s+(.+?)\s*$/u.exec(text);
+  if (match === null) return null;
+  const comm = posix.basename(match[2]!);
+  return comm === "" ? null : { comm, ppid: Number(match[1]) };
+}
+
+/** Linux and macOS' process reader; any other platform, and any failure, is null (no climb). */
+export function readProcessInfo(pid: number): ProcessInfo | null {
+  try {
+    if (HOST.platform === "linux") return parseProcStatProcess(readFileSync(procStatPath(pid), "utf8"));
+    if (HOST.platform !== "darwin") return null;
+    const text = execFileSync("/bin/ps", ["-o", "ppid=,comm=", "-p", String(pid)], {
+      encoding: "utf8",
+      env: { LC_ALL: "C" },
+      timeout: 1000,
+      stdio: ["ignore", "pipe", "ignore"],
+    });
+    return parsePsProcess(text);
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The pid's start time, from the platform's probe (`bridge/beacon/liveness.ts`): the stat file on
+ * Linux, one `ps -o lstart=` run on macOS (`darwin`), where there is no stat file (M80 spec 11,
+ * issue 647).
  *
  * It is not optional in the record (`BeaconRecord.pidStartTime`) and it must not be faked: a beacon
  * carrying a start time no probe will ever return reads as EXPIRED for its whole life, which would
  * present a working agent as a dead one. So an unreadable start time means NO BEACON — the reader's
- * honest answer to an absent file is already the right one. In practice that is every non-Linux host,
- * because the alternatives there are all subprocesses and `SessionEnd` has 1.5 s.
+ * honest answer to an absent file is already the right one. That is every host other than Linux and
+ * macOS (Windows among them), and any probe that failed.
  */
-export function readPidStartTime(files: Files, pid: number): number | null {
-  const text = files.read(procStatPath(pid));
-  return text === null ? null : parseProcStartTime(text);
+export function readPidStartTime(deps: Pick<BeaconEmitDeps, "files" | "pidProbe">, pid: number): number | null {
+  const probe = startTimeProbe(deps.pidProbe?.platform ?? HOST.platform);
+  const stat = deps.files.read(probe.stat.path(pid));
+  if (stat !== null) return probe.stat.parse(stat);
+  if (probe.command === null) return null;
+  const text = (deps.pidProbe?.run ?? runStartTimeCommand)(probe.command, pid);
+  return text === null ? null : probe.command.parse(text);
 }
 
 /**
@@ -280,8 +432,8 @@ export function readPidStartTime(files: Files, pid: number): number | null {
  * this one, never half of either. The temp name carries the pid so two hooks firing at once in two
  * panes cannot collide on it.
  */
-function writeBeacon(deps: BeaconEmitDeps, record: BeaconRecord): void {
-  const dir = beaconsDir(deps.ctx.stateDir);
+function writeBeacon(deps: BeaconEmitDeps, stateDir: string, record: BeaconRecord): void {
+  const dir = beaconsDir(stateDir);
   const key = beaconKey(record.markers);
   const temp = join(dir, `.${key}.${record.pid}.tmp`);
   deps.files.mkdirp(dir, BEACON_DIR_MODE);
@@ -325,18 +477,13 @@ function cwdOf(payload: JsonObject): string | null {
 const NOTIFICATION_TYPE = /^[a-z_]{1,64}$/u;
 
 /** What the registry walk needs: the emitter and the permission hold (`collie beacon hold`) share it. */
-export type EdgeTargetDeps = Pick<BeaconEmitDeps, "ctx" | "files" | "uid">;
+export type EdgeTargetDeps = Pick<BeaconEmitDeps, "ctx" | "files" | "uid" | "pidProbe">;
 
 /**
- * Whether a folder the emitter is about to write into is this user's own and private: a real folder,
- * not a link, owned by this uid, and writable by nobody else. A folder that fails is skipped.
+ * What {@link liveHookTargets} alone reads: where the registry is, the disk and the pid probe. Narrower
+ * than {@link EdgeTargetDeps}, so the bridge can walk the registry too (bridge/walky/siblings.ts).
  */
-export function privateDir(deps: EdgeTargetDeps, dir: string): boolean {
-  if (deps.files.entryType(dir) !== "directory") return false;
-  const mode = deps.files.mode(dir);
-  if (mode !== null && (mode & 0o022) !== 0) return false;
-  return deps.uid === undefined || deps.files.ownerUid(dir) === deps.uid;
-}
+export type HookTargetsDeps = Omit<EdgeTargetDeps, "ctx"> & { readonly ctx: Pick<CliContext, "env" | "home"> };
 
 /**
  * Write one edge file into a state dir's spool (M56 spec 11): a temp name, then a rename, so the
@@ -368,7 +515,11 @@ export function writeEdge(deps: BeaconEmitDeps, stateDir: string, record: EdgeRe
 /**
  * The prompt as Claude Code hands it, unwrapped. A collapsed paste arrives as
  * `\n\n<pasted_content id="f27a">\n<text>\n</pasted_content id="f27a">\n` (M56 spec 01 lab, Table 5),
- * so the wrapper is cut before the hash. Only this emitter knows that form.
+ * so the wrapper is cut before the hash. Only this emitter hashes that form.
+ *
+ * TWIN: `unwrapPastes` in bridge/journal/claude.ts takes the same wrapper off what the Chat and the
+ * queue row draw. It is stricter (hex ids, a tag at a line start, an unlabelled close allowed, ends
+ * trimmed); this one stays as it is because the hash it feeds must keep matching the send receipts.
  */
 export function unwrapPrompt(prompt: string): string {
   return prompt.replace(/<pasted_content id="[^"]*">\n?([\s\S]*?)\n?<\/pasted_content id="[^"]*">/gu, "$1");
@@ -395,28 +546,56 @@ export function promptHashOf(deps: BeaconEmitDeps, stateDir: string, payload: Js
  * the edge goes to this emitter's own state dir, as it did before the registry.
  */
 export function edgeStateDirs(deps: EdgeTargetDeps): string[] {
-  const dirs: string[] = [];
-  const registry = hookTargetsDir(deps.ctx.env, deps.ctx.home);
-  if (privateDir(deps, registry)) {
-    for (const name of deps.files.list(registry).filter((entry) => HOOK_TARGET_FILE.test(entry)).slice(0, HOOK_TARGETS_MAX)) {
-      const path = join(registry, name);
-      const target = parseHookTarget(deps.files.read(path) ?? "");
-      if (target === null) continue;
-      const start = readPidStartTime(deps.files, target.pid);
-      if (start === null || (target.pidStartTime !== null && start !== target.pidStartTime)) {
-        deps.files.remove(path);
-        continue;
-      }
-      dirs.push(target.stateDir);
-    }
-  }
+  const dirs = liveHookTargets(deps).map((target) => target.stateDir);
   if ((deps.ctx.env.COLLIE_STATE_DIR ?? "").trim() !== "" || dirs.length === 0) dirs.push(deps.ctx.stateDir);
   return [...new Set(dirs.map((dir) => deps.files.realpath(dir) ?? dir))];
+}
+
+/**
+ * The bridges in the hook target registry whose pid still runs as the same process, in file order. A
+ * dead or reused pid's file is deleted. Read by the emitter ({@link edgeStateDirs}) and by `collie
+ * mux list`, so both agree on what "live" means. A registry folder that is not private reads as empty.
+ */
+export function liveHookTargets(deps: HookTargetsDeps): HookTargetRecord[] {
+  const live: HookTargetRecord[] = [];
+  const registry = hookTargetsDir(deps.ctx.env, deps.ctx.home);
+  if (!privateDir(deps, registry)) return live;
+  for (const name of deps.files.list(registry).filter((entry) => HOOK_TARGET_FILE.test(entry)).slice(0, HOOK_TARGETS_MAX)) {
+    const path = join(registry, name);
+    const target = parseHookTarget(deps.files.read(path) ?? "");
+    if (target === null) continue;
+    const start = readPidStartTime(deps, target.pid);
+    if (start === null || (target.pidStartTime !== null && start !== target.pidStartTime)) {
+      deps.files.remove(path);
+      continue;
+    }
+    live.push(target);
+  }
+  return live;
 }
 
 /** True when every marker is a Herdr one: Herdr names its agents itself, so no beacon is written. */
 function herdrOnly(markers: readonly BeaconMarker[]): boolean {
   return markers.every((marker) => marker.namespace === HERDR_NAMESPACE);
+}
+
+/** The session's context use from its transcript, if the payload names a session and a transcript. Never throws. */
+function takeReading(deps: BeaconEmitDeps, payload: JsonObject, stateDirs: () => string[]): void {
+  const session = readField(payload, "session_id", SESSION_ID);
+  if (session === null) return;
+  takeContextReading(deps, { session, transcriptPath: asJsonString(payload.transcript_path), harness: BEACON_HARNESS }, stateDirs, (deps.now ?? Date.now)());
+}
+
+/** What a `SessionStart` says about the window and the context. Never throws. */
+function takeStart(deps: BeaconEmitDeps, payload: JsonObject, stateDirs: () => string[]): void {
+  const session = readField(payload, "session_id", SESSION_ID);
+  if (session === null) return;
+  takeSessionStart(
+    deps,
+    { session, harness: BEACON_HARNESS, source: asJsonString(payload.source), model: asJsonString(payload.model), contextTokens: asJsonNumber(payload.context_tokens) },
+    stateDirs,
+    (deps.now ?? Date.now)(),
+  );
 }
 
 /**
@@ -438,8 +617,13 @@ export async function cmdBeaconEmit(deps: BeaconEmitDeps): Promise<number> {
     // The tool edge (M56 spec 12): a tool finished. It ends a "Sent" card of a hook-held permission,
     // so it is written for a subagent too, with the subagent id and the tool name, and never a beacon.
     const hold = loadProfiles().get(BEACON_HARNESS)?.hold;
+    // The registry walk happens at most once per run, and only when something is to be written.
+    let targets: string[] | undefined;
+    const stateDirs = (): string[] => (targets ??= edgeStateDirs(deps));
     if (hold !== undefined && payload.hook_event_name === hold.toolEvent) {
-      const pidStartTime = readPidStartTime(deps.files, deps.agentPid);
+      // The context use, before the edge: it needs no pid. A subagent's tool call is not the session's turn.
+      if (payload.agent_id === undefined || payload.agent_id === null) takeReading(deps, payload, stateDirs);
+      const pidStartTime = readPidStartTime(deps, deps.agentPid);
       if (pidStartTime === null) return EXIT.OK;
       const tool = readField(payload, "tool_name", TOOL_FIELD);
       const agent = readField(payload, "agent_id", TOOL_FIELD);
@@ -459,7 +643,7 @@ export async function cmdBeaconEmit(deps: BeaconEmitDeps): Promise<number> {
       if (agent !== null) record = { ...record, agent };
       // The input shown, hashed as the hold hashed it: the bridge ends only the hold of this very call.
       if (tool !== null) record = { ...record, inputHash: holdInputHash(tool, shownInput(payload.tool_input, hold.inputShown, hold.inputDetails[tool])) };
-      for (const stateDir of edgeStateDirs(deps)) {
+      for (const stateDir of stateDirs()) {
         try {
           writeEdge(deps, stateDir, record);
         } catch {
@@ -482,16 +666,23 @@ export async function cmdBeaconEmit(deps: BeaconEmitDeps): Promise<number> {
     const status = registration.details === undefined ? registration.status : detail === null ? undefined : registration.details[detail];
     if (status === undefined) return EXIT.OK;
 
-    const pidStartTime = readPidStartTime(deps.files, deps.agentPid);
+    if (registration.event === "Stop") takeReading(deps, payload, stateDirs);
+    if (registration.event === "SessionStart") takeStart(deps, payload, stateDirs);
+
+    const pidStartTime = readPidStartTime(deps, deps.agentPid);
     if (pidStartTime === null) return EXIT.OK;
     const now = (deps.now ?? Date.now)();
 
     // The edges first, each in its own guard: a beacon that cannot be written must not cost an edge,
     // one target that cannot be written must not cost the others, and the other way round.
     const holds = hold === undefined ? false : holdsNow(deps, hold.event, cwdOf(payload));
-    for (const stateDir of edgeStateDirs(deps)) {
+    // The start's model rides on its edge, so the pane names its model before the transcript holds a
+    // turn: Claude Code writes no transcript until the first message or local command (seen on
+    // 2.1.310). Bounded and raw; a name that is not one adds no field and still writes the edge.
+    const model = registration.event === "SessionStart" ? edgeModelOf(payload.model) : null;
+    for (const stateDir of stateDirs()) {
       try {
-        writeEdge(deps, stateDir, {
+        const record: EdgeRecord = {
           schemaVersion: EDGE_SCHEMA_VERSION,
           harness: BEACON_HARNESS,
           event: registration.event,
@@ -502,7 +693,8 @@ export async function cmdBeaconEmit(deps: BeaconEmitDeps): Promise<number> {
           at: now,
           promptHash: promptHashOf(deps, stateDir, payload),
           holds,
-        });
+        };
+        writeEdge(deps, stateDir, model === null ? record : { ...record, model });
       } catch {
         // No edge for this target. The screen still reads the pane on its own poll.
       }
@@ -513,7 +705,9 @@ export async function cmdBeaconEmit(deps: BeaconEmitDeps): Promise<number> {
     const session = readField(payload, "session_id", SESSION_ID);
     if (session === null) return EXIT.OK;
 
-    writeBeacon(deps, {
+    // The beacon follows the edge: one per bridge that took the edge, so a bridge of another
+    // instance finds the session too. Each in its own guard, like the edges.
+    const beacon: BeaconRecord = {
       schemaVersion: BEACON_SCHEMA_VERSION,
       harness: BEACON_HARNESS,
       session: { kind: "id", value: session },
@@ -522,7 +716,14 @@ export async function cmdBeaconEmit(deps: BeaconEmitDeps): Promise<number> {
       pidStartTime,
       markers,
       heartbeatMs: now,
-    });
+    };
+    for (const stateDir of stateDirs()) {
+      try {
+        writeBeacon(deps, stateDir, beacon);
+      } catch {
+        // No beacon for this target. Its pane reads as having no session until the next event.
+      }
+    }
     return EXIT.OK;
   } catch {
     // Every failure is the same failure: there is no beacon for this pane right now.

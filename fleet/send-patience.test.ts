@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import { BOUNDS, LOCK_BOUND_MS, POLL_GAP_MAX_MS } from "../bridge/surface/protocol.ts";
 import { WRITE_BUDGET_MS } from "../bridge/crew/peer-client.ts";
 import { TOKEN_LIFETIME_MS } from "../bridge/surface/key-gate.ts";
-import { forwardWriteBudget, KEY_TOKEN_LIFETIME_MS, SEND_FORWARD_BUDGET_MS, SEND_REQUEST_TIMEOUT_MS } from "./send-patience.ts";
+import { forwardWriteBudget, FLEET_HTTP_IDLE_SECONDS, SEND_EXECUTION_MAX_MS, SEND_FORWARD_BUDGET_MS, SEND_REQUEST_TIMEOUT_MS } from "./send-patience.ts";
 
 describe("send patience", () => {
   test("every step's bound is ended by its time, not its read count, with the gap capped", () => {
@@ -20,8 +20,10 @@ describe("send patience", () => {
   });
 
   test("the phone outlasts the lead's forward, and the forward outlasts the member's lock", () => {
-    expect(SEND_FORWARD_BUDGET_MS).toBeGreaterThan(LOCK_BOUND_MS);
+    expect(SEND_FORWARD_BUDGET_MS).toBeGreaterThan(SEND_EXECUTION_MAX_MS);
+    expect(SEND_EXECUTION_MAX_MS).toBeGreaterThan(LOCK_BOUND_MS);
     expect(SEND_REQUEST_TIMEOUT_MS).toBeGreaterThan(SEND_FORWARD_BUDGET_MS);
+    expect(FLEET_HTTP_IDLE_SECONDS * 1000).toBeGreaterThan(SEND_REQUEST_TIMEOUT_MS);
   });
 
   test("only a pane's reply route takes the send budget", () => {
@@ -31,9 +33,8 @@ describe("send patience", () => {
     }
   });
 
-  test("a key token outlives a slow record write and stays inside the S1 bound", () => {
-    expect(TOKEN_LIFETIME_MS).toBe(KEY_TOKEN_LIFETIME_MS);
-    expect(TOKEN_LIFETIME_MS).toBeGreaterThanOrEqual(1000);
+  test("upstream's post-record token stays short and revision checked", () => {
+    expect(TOKEN_LIFETIME_MS).toBe(150);
     expect(TOKEN_LIFETIME_MS).toBeLessThan(BOUNDS.s1.ms);
   });
 });

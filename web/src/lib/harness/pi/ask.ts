@@ -30,7 +30,8 @@
 // (` → 1.`, OmO). The pointer glyph is `>` or `→`, the two the captures show; Claude's `❯` is not one.
 //
 // Unnumbered rows are read at column 1 only: ` → Label` and `   Label`, a description row one column
-// further in (`    Primeira opção`), and gentle-pi's `Other…` as the free-text row. That is pi's own
+// further in (`    Primeira opção`) and the rows a long description wraps onto, back at column 1
+// (issue 746), and gentle-pi's `Other…` as the free-text row. That is pi's own
 // selector behind `ctx.ui.confirm` and `ctx.ui.select` (ExtensionSelectorComponent) and gentle-pi's
 // ask_user_choice (pi--v130-gentle-choice.txt). Column 0 unnumbered (`→ name`) is pi's slash palette
 // and its pickers, never read here. Unnumbered rows lift by plan (a) only: there is no digit to send.
@@ -53,9 +54,24 @@
 // The free-text row is never a button. It is the `free-text` field of the model, read so the walk
 // knows the row is there; a screen whose pointer stands on it stays raw, and nothing here types.
 //
+// A READ WITH NO STYLING (herdr-core's `terminal.read`, M78 spec 07): every paint test above stands
+// for one text fact, and only when `readIsUnstyled` holds for the whole screen. Styled reads keep
+// every paint test.
+//   - the footer rows: their parse alone (the paint kept a key hint quoted in a draft out; on a plain
+//     read that draft has no option rows, so it still lifts nothing);
+//   - the status rows under the bottom rule: one of them carries pi's own session cost (`$0.000`,
+//     OmO's `$0.064 (sub)`), and the last does not end like a shell prompt (`textStatus`);
+//   - an open frame's title: its place, one space in under the top rule;
+//   - a tab strip's current chip: not on the screen at all. A question page of several questions
+//     lifts uncaptioned (its own question row names it), and a page with no option row under the
+//     strip is the Submit page.
+// A frameless dialog (no rules) and a picker stay paint-only: they decline on a plain read.
+//
 // Pure functions over StyledLine[], tail-anchored, fail closed.
 
 import { lineText, type StyledLine } from "../../blocks";
+import { readIsUnstyled } from "../../surface/frame";
+import { MAX_REGION_CHARS } from "../bound-region";
 import { pointerWalk } from "../menu-hints";
 import type { PromptFeedback, PromptModel, PromptOption } from "../prompt-model";
 import type { WizardAnswer, WizardModel, WizardStepChip } from "../wizard-model";
@@ -72,8 +88,6 @@ const MAX_FOOTER_ROWS = 3;
 const MAX_BODY_ROWS = 200;
 /** OmO's status line under its options (`Submit (0/1 answered) — Enter advances`). */
 const MAX_TRAILER_ROWS = 2;
-/** The bridge's cap on a bound region less a margin, as omp/ask.ts. */
-const MAX_REGION_CHARS = 32_000;
 const POINTERS = new Set([">", "→"]);
 /** The free-text row's label: `Type something.` (stock, PR 397), `Type your own answer...` (OmO). The
  *  `✎` follows it while its inline editor is open. */
@@ -82,12 +96,33 @@ const FREE_TEXT = /^Type\b.*(?:\.|…)(?: ✎)?$/;
 const OTHER = /^Other(?:…|\.\.\.)$/;
 /** A header row, one space in. */
 const HEADER_ROW = /^ \S/;
+/** A row at column 0: the footer and the header block of a frameless dialog. */
+const NO_INDENT = /^\S/;
+/** A frameless dialog's description paragraph, under the options, is at most this many rows. */
+const MAX_NOTE_ROWS = 3;
 /** An unnumbered option row at pointer column 1: the pointer or a space, a space, the label. */
 const UNNUMBERED_ROW = /^ ([→ ]) (\S.*)$/;
 /** A description row under an unnumbered option, four columns in. */
 const DESCRIPTION_ROW = /^ {4}(\S.*)$/;
+/** A description row wrapped back to the padding column, one column in. pi-tui's `Text` wraps the
+ *  `   description` line with no hanging indent, so every row after its first stands at column 1
+ *  (`readUnnumbered`). Read only under a description row, never straight under a label. */
+const WRAPPED_DESCRIPTION_ROW = /^ (\S.*)$/;
 /** A title row indented deeper than one space: the command pi's permission gate quotes (`unnumberedStart`). */
 const QUOTED_ROW = /^ {2,}\S/;
+/** pi's own footer prints the session's cost to three decimals: stock `$0.000`, OmO `$0.064 (sub)`. */
+const SESSION_COST = /(?:^|\s)\$\d+\.\d{3}(?=\s|$)/;
+/** pi's footer always prints the context usage, cost or not: `0.0%/272k (auto)`, `12.5%/1.0M`, or `?/272k`
+ *  before the first reply. The cost is printed only when the session spent something or the model runs on
+ *  a subscription (pi's footer.js), so a model without a price in `models.json` has this token and no `$`. */
+const CONTEXT_USAGE = /(?:^|\s)(?:\d+(?:\.\d+)?%|\?)\/\d+(?:\.\d+)?[kM]?(?: \(auto\))?(?=\s|$)/;
+/** The end of a shell prompt (`$ `, `# `, `> `, `❯ `): what stands under pi's rows once pi exited. */
+const SHELL_PROMPT_END = /[$#>❯]$/;
+/** The first status row opens with the working directory: `/tmp/…`, `~/project`, OmO's `…/work`. */
+const STATUS_PATH = /^(?:\/|~|…\/)/;
+/** pi's own status block on a plain read: stock pi prints two rows and an extension-status row, OmO
+ *  three (pi--omo-v5130-single-described.txt). Output under them makes the block longer. */
+const MAX_PLAIN_STATUS_ROWS = 3;
 
 /** The frame every pi question screen shares: the two rules and the footer between them. */
 export interface PiFrame {
@@ -96,6 +131,9 @@ export interface PiFrame {
   bottom: number;
   /** The bottom rule is off the screen: a dialog taller than the pane (see `openFrameTop`). */
   open: boolean;
+  /** No rules: a dialog drawn under the transcript with its footer as the screen's last row (see
+   *  `framelessFrame`). `top` is its title row and `bottom` its footer's last row. */
+  frameless?: true;
   /** First and last row of the footer (inclusive). */
   footerStart: number;
   footerEnd: number;
@@ -124,7 +162,7 @@ function ruleColor(line: StyledLine): string | undefined {
  * may be plain. A plain row straight under the frame is output written after it, such as the shell
  * prompt after pi exited (pi--prose-quoted-dialog-then-shell.txt).
  */
-function statusTailBottom(lines: StyledLine[], texts: string[], end: number): number | null {
+function statusTailBottom(lines: StyledLine[], texts: string[], end: number, plain: boolean): number | null {
   if (end >= 0 && RULE.test(texts[end]!)) {
     return ruleAbove(texts, end, texts[end]!.length, MAX_BODY_ROWS) >= 0 ? end : null;
   }
@@ -134,21 +172,72 @@ function statusTailBottom(lines: StyledLine[], texts: string[], end: number): nu
   for (let i = bottom + 1; i <= end; i++) {
     if (/^\s*─{3,}/.test(texts[i]!)) return null;
   }
-  return paintedStatus(lines.slice(bottom + 1, end + 1)) ? bottom : null;
+  const status = plain ? textStatus(texts.slice(bottom + 1, end + 1)) : paintedStatus(lines.slice(bottom + 1, end + 1));
+  return status ? bottom : null;
 }
 
-/** The footer ending at row `footerEnd`: one to three painted rows, one space in, that parse. */
-function footerAt(lines: StyledLine[], texts: string[], footerEnd: number): { start: number; footer: PiFooter } | null {
+/**
+ * `paintedStatus` on a read with no styling, by the shape of pi's own footer: one to three rows, the
+ * first opening with the working directory, the first or the second carrying the stats pi always prints:
+ * the context usage, or the session cost (stock pi: the path row, then the stats row,
+ * pi--v130-core-question--w120.txt; OmO: both on its first row), and the last not ending like a shell
+ * prompt. So output written under the status rows (two rows or
+ * more, the conformance suite's tail-anchoring case) and a dialog quoted in prose above a shell after
+ * pi exited (pi--prose-quoted-dialog-then-shell.txt, stripped, also with pi's status rows quoted) stay
+ * raw. One plain row under stock pi's two is an extension's status row on a styled read too, so one
+ * output row there is the limit the paint test has as well. A footer that prints neither (the PR 397
+ * footer's `⎇ main`) declines here; Gentle Shell's empty footer is the bare rule and needs none. The
+ * cost alone was the test until a pi whose model has no price in `models.json` printed no `$` and every
+ * dialog on a herdr-core read came back unreadable (pi--v150-core-permission-gate-no-cost--w200.txt).
+ */
+function textStatus(rows: string[]): boolean {
+  const filled = rows.map((row) => row.trim()).filter((row) => row !== "");
+  if (filled.length === 0 || filled.length > MAX_PLAIN_STATUS_ROWS || !STATUS_PATH.test(filled[0]!)) return false;
+  if (!filled.slice(0, 2).some((row) => SESSION_COST.test(row) || CONTEXT_USAGE.test(row))) return false;
+  return !SHELL_PROMPT_END.test(filled.at(-1)!);
+}
+
+/** The footer ending at row `footerEnd`: one to three painted rows, one space in (`indent`: or none at
+ *  all, on a frameless dialog), that parse. */
+function footerAt(
+  lines: StyledLine[],
+  texts: string[],
+  footerEnd: number,
+  plain: boolean,
+  indent: RegExp = HEADER_ROW,
+): { start: number; footer: PiFooter } | null {
   let best: { start: number; footer: PiFooter } | null = null;
   for (let k = 1; k <= MAX_FOOTER_ROWS; k++) {
     const start = footerEnd - k + 1;
     // A footer row is painted (dim or coloured) in every capture. A plain row is text someone typed,
-    // such as a key hint quoted in a draft (pi/ask.test.ts, "quoted key hints").
-    if (start <= 0 || !HEADER_ROW.test(texts[start]!) || !styledRow(lines[start]!)) break;
-    const footer = parsePiFooter(texts.slice(start, footerEnd + 1).map((t) => t.trim()).join(" "));
+    // such as a key hint quoted in a draft (pi/ask.test.ts, "quoted key hints"). A plain read has no
+    // paint anywhere, so the parse alone counts there (see the header).
+    if (start <= 0 || !indent.test(texts[start]!) || (!plain && !styledRow(lines[start]!))) break;
+    const rows = texts.slice(start, footerEnd + 1).map((t) => t.trim());
+    const footer = wrappedFooter(rows);
     if (footer !== null) best = { start, footer };
   }
   return best;
+}
+
+/**
+ * A footer read across the rows a narrow pane wrapped it onto. The terminal breaks a row between words,
+ * so the break is either inside one hint (`enter` / `select`) or between two (`… enter select` /
+ * `escape/ctrl+c cancel`). Joined with one space the second reads as one hint whose verb swallows the
+ * next key, and the Escape the footer names is lost. So both joins are read, and the one that parses
+ * into more hints wins: a hint split across the break does not parse as two, and falls back to one.
+ */
+function wrappedFooter(rows: string[]): PiFooter | null {
+  const joined = parsePiFooter(rows.join(" "));
+  if (rows.length < 2) return joined;
+  const apart = parsePiFooter(rows.join("  "));
+  if (apart === null) return joined;
+  if (joined === null) return apart;
+  return hintCount(apart.text) > hintCount(joined.text) ? apart : joined;
+}
+
+function hintCount(text: string): number {
+  return text.split(/\s+[•·]\s+|\s{2,}/).filter((s) => s.trim() !== "" && s.trim() !== "•").length;
 }
 
 /** Read the frame at the tail of `lines`, or null. Says nothing yet about what is inside it. A frame
@@ -160,12 +249,16 @@ export function readPiFrame(lines: StyledLine[]): PiFrame | null {
   while (end >= 0 && texts[end] === "") end--;
   if (end < 0) return null;
 
-  const bottom = statusTailBottom(lines, texts, end);
+  const plain = readIsUnstyled(lines);
+  const bottom = statusTailBottom(lines, texts, end, plain);
   if (bottom === null) {
+    // A frameless dialog is told from prose by its paint alone: none on a plain read.
+    const frameless = plain ? null : framelessFrame(lines, texts, end);
+    if (frameless !== null) return frameless;
     const top = openFrameTop(lines, texts, end);
     if (top === null) return null;
     // The footer ends at the screen's last row: the rows under it are what the pane cut off.
-    const best = footerAt(lines, texts, end);
+    const best = footerAt(lines, texts, end, plain);
     if (best === null || best.start <= top) return null;
     return { top, bottom: end, open: true, footerStart: best.start, footerEnd: end, footer: best.footer, texts };
   }
@@ -174,7 +267,7 @@ export function readPiFrame(lines: StyledLine[]): PiFrame | null {
   // The footer: OmO leaves one blank row above the rule, stock pi none.
   let footerEnd = bottom - 1;
   if (texts[footerEnd] === "") footerEnd--;
-  const best = footerAt(lines, texts, footerEnd);
+  const best = footerAt(lines, texts, footerEnd, plain);
   if (best === null) return null;
 
   // The top rule: the first full rule above, of the bottom rule's length and colour.
@@ -187,6 +280,64 @@ export function readPiFrame(lines: StyledLine[]): PiFrame | null {
   }
   if (top < 0 || texts[top] !== texts[bottom] || ruleColor(lines[top]!) !== ruleColor(lines[bottom]!)) return null;
   return { top, bottom, open: false, footerStart: best.start, footerEnd, footer: best.footer, texts };
+}
+
+/**
+ * A dialog with no rules at all: its footer is the last non-blank row of the screen, or the row above
+ * one status row (see `framelessFooter`), painted, at column 0, and above it stand the numbered
+ * options with one pointer and a header block of rows at column 0 whose first row is painted (the title). That is the Gentle AI review-consent screen
+ * (pi--v130-gentle-review-consent.txt, pi 1.3.0 with gentle-pi 4.2.0): the extension draws it
+ * under the transcript with no rule frame and no editor or status row under it. gentle-pi 4.6.0 draws
+ * a status row under the footer (pi--v150-gentle-review-consent-*.txt). Read by shape and footer,
+ * never by title or labels. Plain agent prose that quotes such rows never gets here, for
+ * three reasons: pi's real editor, with its rules, is the last thing on the screen while pi runs
+ * (so `statusTailBottom` takes it), the footer must be painted, and nothing may follow it but one
+ * painted status row.
+ * `top` is the title row, the first row of the block that holds the first option; null when no
+ * painted footer ends the screen or no `1.` option row with a header above it is found.
+ */
+function framelessFrame(lines: StyledLine[], texts: string[], end: number): PiFrame | null {
+  const found = framelessFooter(lines, texts, end);
+  if (found === null) return null;
+  const { best, footerEnd } = found;
+  let first = -1;
+  for (let r = best.start - 1; r >= 0 && best.start - r <= MAX_BODY_ROWS; r--) {
+    if (RULE.test(texts[r]!)) return null;
+    if (optionStart(texts[r]!) === 0) {
+      first = r;
+      break;
+    }
+  }
+  if (first < 1) return null;
+  let top = first;
+  // The header block is the rows at column 0 just above the options: an indented row stands outside
+  // it (a widget line gentle-pi draws straight over the title, pi--v150-gentle-review-consent-regular--w69.txt).
+  while (top > 0 && NO_INDENT.test(texts[top - 1]!) && !RULE.test(texts[top - 1]!)) top--;
+  if (top === first || !styledRow(lines[top]!)) return null;
+  return { top, bottom: footerEnd, open: false, frameless: true, footerStart: best.start, footerEnd, footer: best.footer, texts };
+}
+
+/**
+ * The footer of a frameless dialog and the row it ends on. Either the screen's last non-blank row, or
+ * the row above exactly one status row: painted as `paintedStatus` says, no rule, not ending like a
+ * shell prompt (what stands under pi once it exited), with at most one blank row between the footer
+ * and it. Anything else under the footer declines, so output written after a quoted dialog stays
+ * prose. The status row is the extension's, a shape and not a product: pi's own footer is the same
+ * one painted row under the editor (`statusTailBottom`).
+ */
+function framelessFooter(
+  lines: StyledLine[],
+  texts: string[],
+  end: number,
+): { best: { start: number; footer: PiFooter }; footerEnd: number } | null {
+  const last = footerAt(lines, texts, end, false, NO_INDENT);
+  if (last !== null) return { best: last, footerEnd: end };
+  const row = texts[end]!;
+  if (RULE.test(row) || SHELL_PROMPT_END.test(row) || !paintedStatus([lines[end]!])) return null;
+  const footerEnd = texts[end - 1] === "" ? end - 2 : end - 1;
+  if (footerEnd < 1 || texts[footerEnd] === "") return null;
+  const best = footerAt(lines, texts, footerEnd, false, NO_INDENT);
+  return best === null ? null : { best, footerEnd };
 }
 
 /**
@@ -208,7 +359,8 @@ export function readPiFrame(lines: StyledLine[]): PiFrame | null {
  * prompt is, so neither screen ends inside a frame.
  */
 export function openFrameTop(lines: StyledLine[], texts: string[], end: number): number | null {
-  if (end < 1 || tailRule(lines) !== null || statusTailBottom(lines, texts, end) !== null) return null;
+  const plain = readIsUnstyled(lines);
+  if (end < 1 || tailRule(lines) !== null || statusTailBottom(lines, texts, end, plain) !== null) return null;
   let top = end;
   while (top >= 0 && end - top <= MAX_BODY_ROWS && !RULE.test(texts[top]!)) {
     if (/^\s*─/.test(texts[top]!)) return null;
@@ -217,14 +369,14 @@ export function openFrameTop(lines: StyledLine[], texts: string[], end: number):
   if (top < 0 || !RULE.test(texts[top]!) || top === end) return null;
   const width = texts[top]!.length;
   for (let r = top + 1; r <= end; r++) if (texts[r]!.length > width) return null;
-  return openDialog(lines, texts, top, end) || openPicker(lines, texts, top, end) ? top : null;
+  return openDialog(lines, texts, top, end, plain) || openPicker(lines, texts, top, end) ? top : null;
 }
 
 /** Shape (a) of `openFrameTop`: a dialog's title under its top rule, then dialog rows to the end. */
-function openDialog(lines: StyledLine[], texts: string[], top: number, end: number): boolean {
+function openDialog(lines: StyledLine[], texts: string[], top: number, end: number, plain: boolean): boolean {
   let title = top + 1;
   if (texts[title] === "") title++;
-  if (title > end || !HEADER_ROW.test(texts[title]!) || !styledRow(lines[title]!)) return false;
+  if (title > end || !HEADER_ROW.test(texts[title]!) || (!plain && !styledRow(lines[title]!))) return false;
   let option = false;
   for (let r = title + 1; r <= end; r++) {
     const t = texts[r]!;
@@ -232,7 +384,7 @@ function openDialog(lines: StyledLine[], texts: string[], top: number, end: numb
     if (!t.startsWith(" ") && !/^[>→] /.test(t)) return false;
     if (optionStart(t) !== null) option = true;
   }
-  return option || footerAt(lines, texts, end) !== null;
+  return option || footerAt(lines, texts, end, plain) !== null;
 }
 
 /** Shape (b) of `openFrameTop`: a picker's key-hint row over its inner rule, no editor under it. */
@@ -311,7 +463,8 @@ function pickerOnScreen(lines: StyledLine[]): boolean {
   const texts = lines.map((l) => lineText(l).trimEnd());
   let end = texts.length - 1;
   while (end >= 0 && texts[end] === "") end--;
-  const bottom = statusTailBottom(lines, texts, end);
+  // A picker is told by its painted hint row alone, so the paint tests stand here on any read.
+  const bottom = statusTailBottom(lines, texts, end, false);
   if (bottom === null || bottom < 1) return false;
   const editor = locateComposer(lines);
   if (editor?.layout === "omo") return false;
@@ -368,26 +521,30 @@ export function detectPiQuestion(lines: StyledLine[]): PiQuestion | null {
   if (frame === null) return null;
   const { texts, top, bottom, footer } = frame;
   if (footer.escapeVerb === null) return null;
+  const plain = readIsUnstyled(lines);
 
-  // Header rows, then the options, then trailer rows; every body row must be one of these.
-  let at = top + 1;
+  // Header rows, then the options, then trailer rows; every body row must be one of these. A frameless
+  // dialog has no top rule: its title is the first row, and its rows sit at column 0.
+  const frameless = frame.frameless === true;
+  const headerRow = frameless ? NO_INDENT : HEADER_ROW;
+  let at = frameless ? top : top + 1;
   const bodyEnd = frame.footerStart; // exclusive
   let header: number[] = [];
   let pointerCol: 0 | 1 | null = null;
   while (at < bodyEnd) {
     pointerCol = optionStart(texts[at]!);
     if (pointerCol !== null) break;
-    if (texts[at] !== "" && !HEADER_ROW.test(texts[at]!)) break;
+    if (texts[at] !== "" && !headerRow.test(texts[at]!)) break;
     header.push(at);
     at++;
   }
 
-  let strip = readStrip(lines, header);
+  let strip = readStrip(lines, header, plain);
   if (strip === "invalid") return null;
   // No numbered option: the rows may be an unnumbered list (see the header). Never beside a tab strip,
   // whose OmO form (` → Color    Submit`) is the shape of a pointed unnumbered row.
   let numbered = true;
-  if (pointerCol === null && strip === null) {
+  if (pointerCol === null && strip === null && !frameless) {
     const start = unnumberedStart(texts, top + 1, bodyEnd);
     if (start !== null) {
       numbered = false;
@@ -395,11 +552,13 @@ export function detectPiQuestion(lines: StyledLine[]): PiQuestion | null {
       at = start;
       header = [];
       for (let r = top + 1; r < start; r++) header.push(r);
-      strip = readStrip(lines, header);
+      strip = readStrip(lines, header, plain);
       if (strip !== null) return null;
     }
   }
   if (pointerCol === null && at < bodyEnd) return null;
+  // Frameless: numbered rows with the pointer at column 0, no tab strip, nothing else.
+  if (frameless && (pointerCol !== 0 || strip !== null)) return null;
 
   const region = texts.slice(top, bottom + 1);
   const signature = region.join("\n");
@@ -407,7 +566,7 @@ export function detectPiQuestion(lines: StyledLine[]): PiQuestion | null {
 
   if (pointerCol === null) {
     // No options: only the Submit page of a tabbed dialog lifts.
-    return strip === null ? null : readSubmitPage(frame, header, strip, signature);
+    return strip === null ? null : readSubmitPage(frame, header, strip, signature, plain);
   }
 
   const options = numbered ? readOptions(texts, at, bodyEnd, pointerCol) : readUnnumbered(texts, at, bodyEnd);
@@ -417,7 +576,8 @@ export function detectPiQuestion(lines: StyledLine[]): PiQuestion | null {
   // column 1, so it declines.
   let trailers = 0;
   let counter: { answered: number; total: number } | null = null;
-  for (let i = options.end; i < bodyEnd; i++) {
+  if (frameless && !framelessNote(lines, texts, options.end, bodyEnd)) return null;
+  for (let i = frameless ? bodyEnd : options.end; i < bodyEnd; i++) {
     const t = texts[i]!;
     if (t === "") continue;
     if (!numbered || !HEADER_ROW.test(t) || /^ [─>]/.test(t) || ++trailers > MAX_TRAILER_ROWS) return null;
@@ -466,8 +626,11 @@ export function detectPiQuestion(lines: StyledLine[]): PiQuestion | null {
     // A page of several questions: (a) only, and the page must be named by its current chip.
     if (plan !== "walk") return null;
     const current = strip.chips.filter((c) => c.current);
-    if (current.length !== 1 || current[0]!.submit) return null;
-    caption = current[0]!.label;
+    // A plain read cannot tell the current chip (`readStrip`): the page lifts uncaptioned, named by
+    // its own question row.
+    const unmarked = plain && current.length === 0;
+    if (!unmarked && (current.length !== 1 || current[0]!.submit)) return null;
+    if (!unmarked) caption = current[0]!.label;
   }
 
   const glyph = texts[rows[pointed]!.row]![pointerCol]!;
@@ -486,7 +649,7 @@ export function detectPiQuestion(lines: StyledLine[]): PiQuestion | null {
     options: options_,
     family: "select",
     signature,
-    coreSignature: coreSignatureOf(texts, top, bottom, rows[pointed]!.row, pointerCol, header, strip),
+    coreSignature: coreSignatureOf(texts, top, bottom, rows[pointed]!.row, pointerCol, header, strip, frameless ? options.end : bodyEnd, bodyEnd),
   };
   if (caption !== undefined) model.caption = caption;
   if (free !== null) {
@@ -501,6 +664,34 @@ export function detectPiQuestion(lines: StyledLine[]): PiQuestion | null {
     model.feedback = feedback;
   }
   return { kind: "prompt-select", model, startLine: top };
+}
+
+/**
+ * What a frameless dialog may print between its options and its footer: one blank row, one painted
+ * description paragraph of at most `MAX_NOTE_ROWS` rows (the pointed option's effect, in the capture),
+ * one blank row; every part optional. The paragraph starts at column 0. A row it wraps onto may hang
+ * under its label: `Effect: …` continues eight spaces in, the label's width (gentle-pi 4.6.0,
+ * pi--v150-gentle-review-consent-*.txt), and every continuation row stands at exactly that indent.
+ * Anything else declines.
+ */
+function framelessNote(lines: StyledLine[], texts: string[], from: number, to: number): boolean {
+  let r = from;
+  if (r < to && texts[r] === "") r++;
+  const start = r;
+  const hang = hangingIndent(texts[start] ?? "");
+  while (r < to && texts[r] !== "") {
+    const indented = r > start && hang > 0 && texts[r]!.startsWith(" ".repeat(hang)) && /^\S/.test(texts[r]!.slice(hang));
+    if (!(r === start ? NO_INDENT.test(texts[r]!) : indented) || !styledRow(lines[r]!) || r - start >= MAX_NOTE_ROWS) return false;
+    r++;
+  }
+  if (r < to && texts[r] === "") r++;
+  return r === to;
+}
+
+/** The width of a paragraph's leading label, `Effect: ` for `Effect: Reviews …`: where its wrapped rows
+ *  hang. 0 when the row opens with no label. */
+function hangingIndent(row: string): number {
+  return /^\S+: (?=\S)/.exec(row)?.[0].length ?? 0;
 }
 
 /** The pointer column (0 or 1) when `text` is the first option row, `1.`, else null. */
@@ -591,7 +782,18 @@ function unnumberedStart(texts: string[], from: number, to: number): number | nu
   for (let r = from; r < to; r++) if (UNNUMBERED_ROW.exec(texts[r]!)?.[1] === "→") pointed.push(r);
   if (pointed.length !== 1) return null;
   let start = pointed[0]!;
-  while (start > from && (UNNUMBERED_ROW.test(texts[start - 1]!) || DESCRIPTION_ROW.test(texts[start - 1]!))) start--;
+  while (start > from) {
+    if (UNNUMBERED_ROW.test(texts[start - 1]!) || DESCRIPTION_ROW.test(texts[start - 1]!)) {
+      start--;
+      continue;
+    }
+    // A wrapped description above the pointer (the pointer walked past an option whose description
+    // wraps): a run of rows at column 1 counts only when a description row stands right over it.
+    let run = start - 1;
+    while (run > from && wrappedDescription(texts[run]!)) run--;
+    if (run === start - 1 || !DESCRIPTION_ROW.test(texts[run]!)) break;
+    start = run;
+  }
   if (!UNNUMBERED_ROW.test(texts[start]!)) return null;
   const separated = start > from && texts[start - 1] === "";
   let titled = false;
@@ -608,12 +810,16 @@ function unnumberedStart(texts: string[], from: number, to: number): number | nu
  * Unnumbered option rows from `start`, contiguous: ` → Label` or `   Label`, each with optional
  * description rows four columns in (gentle-pi's NativeChoiceList draws `\n   description` inside a
  * one-column padding), then an optional free-text row, `Other…` or `Type …`, last. Exactly one row
- * carries the pointer. A label wrapped back to column 1 ends the list here, and the caller declines
- * the row it stops at.
+ * carries the pointer. A description longer than the pane wraps, and pi-tui sets its later rows at
+ * column 1 (issue 746, gentle-pi 4.7.0 on pi 1.5.0): such a row joins the description it follows. A
+ * label wrapped back to column 1, straight under its option row, still ends the list here, and the
+ * caller declines the row it stops at.
  */
 function readUnnumbered(texts: string[], start: number, end: number): { rows: OptionRow[]; end: number } | null {
   const rows: OptionRow[] = [];
   let at = start;
+  // Whether the row above is a description row, so a row at column 1 under it is that description wrapped.
+  let inDescription = false;
   for (; at < end; at++) {
     const t = texts[at]!;
     if (t === "") break;
@@ -623,12 +829,14 @@ function readUnnumbered(texts: string[], start: number, end: number): { rows: Op
       const label = option[2]!;
       const freeText = OTHER.test(label) || FREE_TEXT.test(label);
       rows.push({ label, n: null, pointed: option[1] === "→", checkbox: false, freeText, row: at });
+      inDescription = false;
       continue;
     }
-    const desc = DESCRIPTION_ROW.exec(t);
     const owner = rows.at(-1);
+    const desc = DESCRIPTION_ROW.exec(t) ?? (inDescription ? WRAPPED_DESCRIPTION_ROW.exec(t) : null);
     if (desc !== null && owner !== undefined) {
       owner.description = owner.description === undefined ? desc[1]! : `${owner.description} ${desc[1]!}`;
+      inDescription = true;
       continue;
     }
     break;
@@ -638,6 +846,11 @@ function readUnnumbered(texts: string[], start: number, end: number): { rows: Op
   return { rows, end: at };
 }
 
+/** A row at column 1 that is not an option row: the shape of a description wrapped back to the padding. */
+function wrappedDescription(text: string): boolean {
+  return WRAPPED_DESCRIPTION_ROW.test(text) && !UNNUMBERED_ROW.test(text);
+}
+
 /**
  * A tab strip among the header rows, null when there is none, `"invalid"` when a row looks like one
  * and does not read whole. Two forms:
@@ -645,7 +858,7 @@ function readUnnumbered(texts: string[], start: number, end: number): { rows: Op
  *                                              is the one with a background colour
  *   `→ Color    Submit`                      OmO; the current chip carries the `→`
  */
-function readStrip(lines: StyledLine[], header: number[]): Strip | null | "invalid" {
+function readStrip(lines: StyledLine[], header: number[], plain: boolean): Strip | null | "invalid" {
   let found: Strip | null = null;
   for (const row of header) {
     const text = lineText(lines[row]!).trim();
@@ -653,7 +866,9 @@ function readStrip(lines: StyledLine[], header: number[]): Strip | null | "inval
       if (found !== null) return "invalid";
       const chips = boxedChips(text);
       if (chips === null) return "invalid";
-      if (!markCurrentByBackground(lines[row]!, chips)) return "invalid";
+      // The current chip is a background colour and nothing else, so a plain read leaves every chip
+      // unmarked and the reader names the page another way (`detectPiQuestion`, `readSubmitPage`).
+      if (!plain && !markCurrentByBackground(lines[row]!, chips)) return "invalid";
       found = { row, chips };
       continue;
     }
@@ -716,13 +931,16 @@ function markCurrentByBackground(line: StyledLine, chips: Chip[]): boolean {
 /**
  * The Submit page of a tabbed dialog, as a wizard review: the Submit chip is current, every question
  * chip has an answer row, and the screen names Enter as submit (the footer, or `Press Enter to submit`
- * / `Enter to submit` in the body). Anything else, an incomplete page included, stays raw.
+ * / `Enter to submit` in the body). Anything else, an incomplete page included, stays raw. On a plain
+ * read no chip is marked; the caller reaches here only for a page with no option row under the
+ * strip, and every question page draws its options, so that page is the Submit page.
  */
-function readSubmitPage(frame: PiFrame, header: number[], strip: Strip, signature: string): PiQuestion | null {
+function readSubmitPage(frame: PiFrame, header: number[], strip: Strip, signature: string, plain: boolean): PiQuestion | null {
   const { texts, footer } = frame;
   const chips = strip.chips;
   const submitChip = chips.at(-1)!;
-  if (!submitChip.current || chips.length < 3) return null;
+  const current = submitChip.current || (plain && chips.every((c) => !c.current));
+  if (!current || chips.length < 3) return null;
   const rows = header.filter((r) => r > strip.row && texts[r] !== "").map((r) => texts[r]!.trim());
   const namesSubmit = footer.enter === "submit" || rows.some((t) => /\bEnter to submit$/i.test(t));
   if (!namesSubmit || footer.enter === "other") return null;
@@ -766,7 +984,8 @@ function readAnswerRow(text: string, label: string, n: number): WizardAnswer | n
  * Plus one clock: OmO's title row counts down (` · 30m` → ` · 29m`, pi--omo-v5130-single-described.txt
  * against pi--omo-v5130-single-other-focused.txt), so a countdown token ending a title row above the
  * strip is blanked here, and only here; `signature` keeps it, so the entry guard still refuses a tap
- * on a screen whose clock moved.
+ * on a screen whose clock moved. A frameless dialog's note rows (what the pointed option does) are
+ * blanked too: they follow the pointer.
  */
 function coreSignatureOf(
   texts: string[],
@@ -776,12 +995,17 @@ function coreSignatureOf(
   col: 0 | 1,
   header: number[],
   strip: Strip | null,
+  noteFrom: number,
+  noteTo: number,
 ): string {
   const titleRows = new Set(strip === null ? [] : header.filter((r) => r < strip.row));
   const out: string[] = [];
   for (let r = top; r <= bottom; r++) {
     let t = texts[r]!;
     if (r === pointedRow) t = `${t.slice(0, col)} ${t.slice(col + 1)}`;
+    // A frameless dialog's description paragraph describes the pointed option, so it moves with the
+    // pointer (pi--v130-gentle-review-consent-moved.txt); its presence stays, its words do not.
+    if (r >= noteFrom && r < noteTo && t !== "") t = "~";
     if (titleRows.has(r)) t = t.replace(/ · (?:\d+m|\d{1,2}:\d{2})$/, " · ~");
     out.push(t);
   }

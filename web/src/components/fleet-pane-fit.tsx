@@ -75,6 +75,7 @@ async function requestFit(paneId: string, cols: number, scope: Scope | undefined
 }
 
 export interface FleetPaneFitInput {
+  readonly enabled?: boolean;
   readonly paneId: string;
   readonly scope: Scope | undefined;
   /** The page's own read-only verdict: the control is drawn disabled, as the terminal surface does. */
@@ -103,6 +104,7 @@ export function useFleetPaneFit(input: FleetPaneFitInput): FleetPaneFit {
   const [busy, setBusy] = useState(false);
   const busyRef = useRef(false);
   useEffect(() => {
+    if (input.enabled === false) return;
     let live = true;
     void (async () => {
       const answer = await loadPaneFitAvailability();
@@ -111,7 +113,7 @@ export function useFleetPaneFit(input: FleetPaneFitInput): FleetPaneFit {
     return () => {
       live = false;
     };
-  }, []);
+  }, [input.enabled]);
 
   const available = availability != null && hostCanFit(availability, input.scope);
   const usable = available && !input.readOnly && !input.hostBlocked;
@@ -168,7 +170,7 @@ export function useFleetPaneFit(input: FleetPaneFitInput): FleetPaneFit {
     ) : undefined;
   // The same slot, because spacing is the other half of the cell Text size sizes; only the real
   // terminal draws with it, so the mirror's sheet never offers it.
-  const spacing = surface === "terminal" ? <FleetTerminalSpacingControls /> : null;
+  const spacing = input.enabled !== false && surface === "terminal" ? <FleetTerminalSpacingControls /> : null;
   const row = fitRow === undefined && spacing === null ? undefined : <>{fitRow}{spacing}</>;
 
   return { row, fit };

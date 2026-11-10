@@ -36,6 +36,7 @@ interface CompiledCommandList {
   readonly inside: boolean;
   readonly pointerBold: boolean;
   readonly footer: { readonly pattern: RegExp; readonly maxRows: number } | null;
+  readonly notForText: RegExp | null;
 }
 
 const compiledLists = new WeakMap<CommandListRows, CompiledCommandList>();
@@ -55,9 +56,15 @@ function listPatterns(list: CommandListRows): CompiledCommandList {
     inside: sides.includes("inside"),
     pointerBold: list.pointerBold === true,
     footer: list.footer === undefined ? null : { pattern: new RegExp(list.footer.pattern, "u"), maxRows: list.footer.maxRows },
+    notForText: list.notForText === undefined ? null : new RegExp(list.notForText, "u"),
   };
   compiledLists.set(list, compiled);
   return compiled;
+}
+
+/** Whether the profile says the box's `text` opens no command list (`notForText`): another popup stands under it. */
+function opensNoList(patterns: CompiledCommandList, text: string | undefined): boolean {
+  return text !== undefined && patterns.notForText !== null && patterns.notForText.test(text);
 }
 
 function isBlank(text: string): boolean {
@@ -223,7 +230,8 @@ export function insideList(
  * description in a second column on the same row, or wrapped onto rows under it. A list under the
  * box with a pointer wins; else a list inside it with a pointer; else the list over it; else a list
  * inside it; else a list under it with no pointer. Null when the profile names no list or no side
- * holds one. `rows` carries the styled rows a `pointerBold` list's pointer is read from.
+ * holds one. `rows` carries the styled rows a `pointerBold` list's pointer is read from. `text` is the
+ * box's text: with the profile's `notForText` it names a text that opens another popup, and no list is read.
  */
 export function commandListNear(
   texts: readonly string[],
@@ -232,9 +240,11 @@ export function commandListNear(
   list: CommandListRows | undefined,
   rows?: readonly FrameRow[],
   prompt?: number,
+  text?: string,
 ): CommandListRead | null {
   if (list === undefined) return null;
   const patterns = listPatterns(list);
+  if (opensNoList(patterns, text)) return null;
   const under = patterns.under ? listUnder(texts, bottom, patterns, rows) : null;
   if (under !== null && under.pointed !== null) return under;
   const inside = patterns.inside && prompt !== undefined ? listInside(texts, prompt, bottom, patterns, rows) : null;
@@ -255,11 +265,41 @@ export function pointsAt(read: CommandListRead, typed: string, list: CommandList
   if (read.pointed === null) return false;
   if (read.pointed === text) return true;
   if (list === undefined) return false;
+  if (pointsAtPathEnd(read, text, list)) return true;
+  if (list.argumentList === true && pointsAtArgument(read, text, list.lead ?? "")) return true;
   const patterns = listPatterns(list);
   if (patterns.namespaces.length === 0 || !text.startsWith(patterns.lead) || read.entries.includes(text)) return false;
   const bare = text.slice(patterns.lead.length);
   if (bare.length === 0) return false;
   return patterns.namespaces.some((namespace) => !bare.startsWith(namespace) && read.pointed === patterns.lead + namespace + bare);
+}
+
+/**
+ * Whether `text` is a path (`commandList.notForText`) and the pointer rests on the entry that completes
+ * its last word: the popup of the path's own file, where Enter takes the typed path as it stands
+ * (`/uploads/w2.png` with the pointer on `w2.png`). A pointer on any other entry is another command's
+ * row, and Enter would run that one: a list drawn for such a text is read apart from {@link commandListNear}'s
+ * text rule, which hides it from the cue and Surface reads only.
+ */
+function pointsAtPathEnd(read: CommandListRead, text: string, list: CommandListRows): boolean {
+  const patterns = listPatterns(list);
+  if (read.pointed === null || !opensNoList(patterns, text) || !read.pointed.startsWith(patterns.lead)) return false;
+  const entry = read.pointed.slice(patterns.lead.length);
+  return entry.length > 0 && text.endsWith(`/${entry}`);
+}
+
+/**
+ * Whether `text`, a command word and its argument, has the pointer on that very argument
+ * (`commandList.argumentList`): `/goal pause` with the pointer on `pause`. The list must not hold
+ * the command word itself (`/goal`), or it is the list of commands, and the argument is the rest of
+ * the text to the end, so a pointer on a longer or shorter name never stands for it.
+ */
+function pointsAtArgument(read: CommandListRead, text: string, lead: string): boolean {
+  const word = /^\S+/u.exec(text)?.[0];
+  if (word === undefined || !word.startsWith(lead) || read.entries.includes(word)) return false;
+  const argument = text.slice(word.length).trim();
+  if (argument.length === 0 || read.pointed === null || !read.pointed.startsWith(lead)) return false;
+  return read.pointed.slice(lead.length) === argument;
 }
 
 /**
@@ -270,9 +310,65 @@ export function pointsAt(read: CommandListRead, typed: string, list: CommandList
 export function ownListUnder(texts: readonly string[], bottom: number, text: string, list: CommandListRows | undefined): CommandListRead | null {
   if (list === undefined) return null;
   const patterns = listPatterns(list);
-  if (!patterns.under) return null;
+  if (!patterns.under || opensNoList(patterns, text)) return null;
   const read = listUnder(texts, bottom, patterns);
   return read !== null && pointsAt(read, text, list) ? read : null;
+}
+
+/**
+ * Whether `text`, the box's text, opened the list `read` on a profile with `leadOpens`: the text starts
+ * with the profile's lead and the list stands under the box. The harness draws a fuzzy list for a
+ * half-typed or unknown command (`/help` shows ten rows the pointer picks from), and that list belongs
+ * to the box all the same; whether Enter would run what is typed is {@link pointsAt}'s question, asked
+ * by the caller. False on a profile that does not name `leadOpens`.
+ */
+export function openedByText(read: CommandListRead, text: string, list: CommandListRows | undefined): boolean {
+  if (list === undefined || list.leadOpens !== true || read.side !== "under") return false;
+  const lead = list.lead ?? "";
+  return lead.length > 0 && text.trimStart().startsWith(lead);
+}
+
+/**
+ * The list under the box whose bottom edge (or open box's last row) is row `bottom`, when it is the
+ * list the box's text opened: its pointer rests on the text ({@link ownListUnder}), or the profile's
+ * `leadOpens` says the text opened it ({@link openedByText}) and the list has a pointer. Null
+ * otherwise, and on a profile whose list never stands under the box.
+ */
+export function openListUnder(texts: readonly string[], bottom: number, text: string, list: CommandListRows | undefined): CommandListRead | null {
+  if (list === undefined) return null;
+  const patterns = listPatterns(list);
+  if (!patterns.under || opensNoList(patterns, text)) return null;
+  const read = listUnder(texts, bottom, patterns);
+  if (read === null || read.pointed === null) return null;
+  return pointsAt(read, text, list) || openedByText(read, text, list) ? read : null;
+}
+
+/**
+ * The stale list under an empty box (`staleWhenEmpty`): the rows of a list under the bottom edge
+ * `bottom` when the box's text is empty, so the harness left them from a text that is gone. Null
+ * otherwise, and on a profile that does not name `staleWhenEmpty`.
+ */
+export function staleListUnder(texts: readonly string[], bottom: number, text: string, list: CommandListRows | undefined): CommandListRead | null {
+  if (list === undefined || list.staleWhenEmpty !== true || text.trim().length > 0) return null;
+  const patterns = listPatterns(list);
+  return patterns.under ? listUnder(texts, bottom, patterns) : null;
+}
+
+/**
+ * Whether any row from `first` to `last` is an entry or the pointed entry of the profile's list
+ * (a wrapped row alone is none: it means something only under an entry). False on a profile whose
+ * list never stands under the box. The frame module asks it of the rows under an open box before it
+ * passes them over as an extension's widget: a list is read as the typed command's own or not at all.
+ */
+export function anyListRow(texts: readonly string[], first: number, last: number, list: CommandListRows | undefined): boolean {
+  if (list === undefined) return false;
+  const patterns = listPatterns(list);
+  if (!patterns.under) return false;
+  for (let i = first; i <= last && i < texts.length; i++) {
+    const row = listRow(texts[i]!.trimEnd(), patterns);
+    if (row !== null && row.kind !== "wrapped") return true;
+  }
+  return false;
 }
 
 /**

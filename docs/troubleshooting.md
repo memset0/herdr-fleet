@@ -8,11 +8,13 @@ reboot** · **a pane is stuck narrow** · **Collie refuses to open a tmux window
 **`tmux list: output did not parse`** · **`herdr plugin list` shows the old version** ·
 **stale UI after a rebuild** · **I saved a machine in Herdr and the phone does not show it** ·
 **an update started from the phone stays at staging** · **a phone update on macOS leaves Collie
-unloaded** · **on macOS, `collie status` says "loaded, not running"** · **a pane shows no prompt-cache chip** · **a pane has no Chat or History** · **a new Codex pane says it has no history
-yet** · **the phone says Collie cannot read a screen the agent is not showing** · **an agent is greyed
+unloaded** · **on macOS, `collie status` says "loaded, not running"** · **a pane shows no prompt-cache chip** · **a Kiro pane's History opens empty** · **a pane has no Chat or History** · **`hc-socket` is red in `collie doctor`** · **the phone shows the Herdr TUI's panes, not herdr-app's** · **a new Codex pane says it has no history
+yet** · **the phone says Collie cannot read a screen the agent is not showing** · **sending failed 3 times
+and the phone offers a report** · **a send is refused and `⌁` shows in the box later** · **something looks wrong on a Herdr core (`herdr-core`) pane** ·
+**an agent is greyed
 out on the New page** · **Start says there is no folder, or says it could not confirm** ·
-**walky talky: send is refused, "run this inside a pane"** · **walky talky: the message sits in the
-inbox and was not typed** · **walky talky: "no log record on this machine"** · **walky talky: the
+**WalkyTalky: send is refused, "run this inside a pane"** · **WalkyTalky: the message sits in the
+inbox and was not typed** · **WalkyTalky: "no log record on this machine"** · **WalkyTalky: the
 skill is stale** · **a durable agent does not show up, or says Unreachable**.
 
 **`herdr plugin …` fails with `Error: Os { code: 2, kind: NotFound, message: "No such file or
@@ -159,6 +161,19 @@ not taken a turn yet, which is not a fault: nothing is shown before it is measur
 on the agent's first reply. A harness whose vendor publishes no cache lifetime shows nothing either,
 and `cache-claims` lists every rule this build does ship.
 
+**A Kiro pane's History opens empty.** Check that the pane's Kiro holds a session lock:
+
+```sh
+cat ~/.kiro/sessions/*/*/.lock
+```
+
+Herdr names no session for a Kiro pane, so Collie finds it by the lock the running Kiro holds. That
+works only on Herdr, the one multiplexer that lists a pane's foreground processes, and only when exactly one Kiro process runs there. Otherwise History says the pane has no agent session.
+
+Collie reads Kiro V3 sessions, started with `--v3` or `--agent-engine v3`, or with V3 set as the
+engine in Kiro's own settings, so start Kiro again that way in that pane. Kiro has no Herdr hook to
+install. If its sessions live somewhere else, set `kiro_root`, then run `collie restart`.
+
 **A pane shows the terminal where you expected Chat.** Chat is the default for an agent pane, so one
 of two things holds. This device chose the terminal earlier: open the pane's **⋮** menu and tap
 **Chat view**. Or the pane has no session or no log to read. A new pane shows Chat with "Send a
@@ -170,7 +185,8 @@ steps.
 the agent's session log, and Collie finds the log only when the agent reports its session through the
 multiplexer. On Herdr that report comes from the agent's own integration, so a missing or old one hides
 both with no other symptom. `collie doctor` names the pane under `agent-sessions` and the fix under
-`integration-<agent>`.
+`integration-<agent>`. On the Herdr core (`herdr-core`) the report comes from Claude's hook instead:
+run `collie hooks install claude`, then restart the Claude in that pane.
 
 1. Run `herdr integration status`. If the agent is `not installed` or `outdated`, run
    `herdr integration install <agent>`. Oh My Pi is `omp`, and pi is `pi`: each needs its own.
@@ -180,10 +196,11 @@ both with no other symptom. `collie doctor` names the pane under `agent-sessions
    started from a shell that another agent opened. Oh My Pi's hook stays silent when `OMPCODE=1` is
    inherited from the parent agent. Start it from a fresh terminal.
 
-On tmux, zellij and tern only Claude Code reports a session, through Collie's beacon hooks. Run
+On tmux, zellij and tern Claude Code reports a session through Collie's beacon hooks. Run
 `collie hooks install claude` ([Collie writes hooks into Claude's own
-settings](multiplexers.md#collie-writes-hooks-into-claudes-own-settings)). The other agents have no
-Chat or History there.
+settings](multiplexers.md#collie-writes-hooks-into-claudes-own-settings)). On tmux, zellij and the
+Herdr core, pi and Oh My Pi need no hook: Collie finds their log from the pane's folder, and a fresh
+pane shows an empty Chat until the agent's first reply. The other agents have no Chat or History there.
 
 **A new Codex pane says it has no history yet.** Expected until its first turn. Codex reports its
 session to Herdr only when the first prompt is sent, not when it starts, so a fresh pane has no
@@ -206,6 +223,47 @@ herdr pane read <pane-id> --source recent --lines 200 --format ansi > pane.txt
 while the phone still shows the problem, and attach `pane.txt` together with the agent's version
 (`claude --version`, `codex --version`, and so on). The file is the terminal's text, so read it
 first and remove anything private.
+
+**Sending failed 3 times and the phone offers a report.** Three sends in a row on one pane failed
+for a reason that points at Collie: it could not read or write the input box, the text went in and
+Enter did not follow, or it lost track of the send. A refusal that protects you (a draft in the box,
+a running turn, an open dialog) does not count. Tap **Report** on the card. The sheet shows the whole
+issue before anything leaves: the Collie and agent versions, the multiplexer, and each failed send's
+codes. The setup also lists Collie's own count of recent sends for that agent, the held sends and
+the screen problems, the same `sends-`, `holds-` and `screen-` rows `collie doctor` prints. It holds
+no text you typed and no screen unless you turn on **Include what I typed** or
+**Include the screen**. The screen is the pane's last 40 rows with known secret shapes masked; read
+it anyway, because the issue is public. **Open on GitHub** opens the filled-in form in your browser,
+under your own GitHub account, and **Copy report** copies the same text. Tap **Already reported?**
+first to find an issue with the same signature line. The pane menu and **Settings → System** open
+the same sheet at any time. The cross closes the card on that pane until a send works again. A
+crew member's pane does not offer a report yet; use the steps above.
+
+**A send is refused, and `⌁` shows in the box a few seconds later.** The agent was busy and showed the keys Collie typed late. Before Collie types a message, it types one probe character (`⌁`) and looks for it in the box. When the agent is not in a turn and the character does not show at once, Collie looks twice more over about 3 seconds. Claude Code with a subagent running (the agents footer under the box, `● main` and `◯ general-purpose`) can take longer than that, so the send is refused with "the probe character did not show in the box", and the character shows later. A send after that finds only those characters in the box. If the agent is still slow, the refusal says that the agent showed the keys late and to wait. Wait until the agent shows what you type at the desk without delay, then send again: Collie takes its own characters out of the box first, and then types your message. Nothing you typed is lost, and no Enter was pressed.
+
+**Every send to Claude Code is held, and the empty box shows a dim suggestion.** Claude Code with the
+next-steps plugin draws a dim suggestion in the empty box, with the cursor on its first letter.
+Collie read that letter as typed text and held every send. Fix: update Collie to 1.26.0 or newer. The box
+then reads empty again.
+
+**With Claude Code's verbose mode on, every send needs two taps.** A token count row, such as
+`230267 tokens`, shows under a "Heads up" notice. Collie did not know that row and read the box as
+not idle. Fix: update Collie to 1.26.0 or newer. The row is now part of the notice, and a send goes through.
+
+**Every send to a Hermes session is refused with "no-match", after the session got a title.** Hermes
+draws the title inside the top rule of its box (`── Session Title ─`). Collie knew only a bare rule.
+Fix: update Collie to 1.26.0 or newer. Chat for the same session also showed the box and the status bar
+again inside the mirror. That is fixed too.
+
+**Antigravity shows "Collie cannot read this dialog" while a sub-agent runs.** Antigravity lists a
+running sub-agent in a band between two rules under its box. Collie took the lower rule for the bottom
+of the box. Fix: update Collie to 1.26.0 or newer. The pane then reads as idle and takes a send. A
+row in that band that Collie does not know still blocks the send, and a send with a draft already in
+the box can still be refused while the sub-agent runs.
+
+**On Android the keyboard hides when you tap a word the spellchecker marked.** Chrome's suggestion
+menu took the focus away from the keyboard. Fix: update Collie to 1.26.0 or newer. The composer now
+turns the browser's spellchecker off. Gboard's own corrections are unchanged.
 
 **An update started from the phone stays at staging.** On Collie up to 1.6.0, an update tapped on
 the phone could stage the new version and then stop: the runner that performs the swap was never
@@ -268,8 +326,9 @@ login shell on that machine, run `bash -lc 'command -v claude'` (or the agent's 
 install the agent there, or fix the line in your shell's login file that adds it to the `PATH`, and
 reopen the page. On a crew, check the machine you picked: each member looks on its own disk.
 "this machine runs an older Collie" means update that member
-([Starting something on a machine](crew.md#starting-something-on-a-machine)). "needs Herdr" and
-"only on" a machine's name belong to the **New worktree** switch, not to an agent.
+([Starting something on a machine](crew.md#starting-something-on-a-machine)). A reason under the
+**New worktree** switch belongs to the switch, not to an agent: that machine has no git, or its
+multiplexer cannot open a space.
 
 **Start says "There is no folder … on this machine", or "could not confirm the start".** The first
 means the folder is not on the machine that runs the start, so nothing started. A name with no leading `/` or
@@ -278,10 +337,93 @@ Recent. The second means the phone lost the reply. Look at the dashboard first, 
 exist. **Try again** sends the same request and never opens a second pane
 ([Start an agent or a shell from the phone](claude-code-on-your-phone.md#start-an-agent-or-a-shell-from-the-phone)).
 
-## Walky talky
+**`collie doctor` shows `hc-socket` as an error.** The bridge shows the Herdr core's terminals, and
+everything it shows comes through the core's socket. The row dials the socket and shows the core's
+version and how many terminals it keeps. It reads as an error in two cases.
 
-Five symptoms of walky talky come up most. Each one has a command that shows the cause
-([Walky talky](walky-talky.md)).
+1. *No herdr-core socket at …* means no file is there. Start the core with `hc server start`, or
+   open herdr-app, which starts it. If the core runs in a named session, export the same
+   `HC_SESSION` (or `HC_SOCKET`) before `collie start`, so the unit carries it, then `collie restart`.
+2. *The socket file exists, but no core answers on it* means the core stopped and left its socket
+   file behind, or it is stuck. Run `hc server status`. If it answers, `collie restart`. If it does
+   not, start the core with `hc server start`.
+
+A core at another protocol generation reads as an error too, and the row names both numbers. Update
+Collie or the core so they match.
+
+**The phone shows the Herdr TUI's panes, not herdr-app's.** This Collie drives the Herdr TUI. The
+`mux` row of `collie status` names the multiplexer and, when nobody named it, why. A machine with the
+Herdr TUI installed never picks the core on its own, and an instance whose `.env` names `herdr`
+keeps it. To see both, run a second instance on the core:
+[Two Collies on one machine](multiplexers.md#two-collies-on-one-machine).
+
+## Herdr core
+
+These entries are for a pane on the Herdr core (`herdr-core`).
+[The core's notes](multiplexers.md#herdr-core-notes) say what looks different there on purpose.
+
+**A Claude permission card says "refused", and the detail says Collie did not find the top edge of the
+dialog.** The core sends no colour, and Collie used to need the dialog's bold title to find the card. A
+tap sent no key. Fix: update Collie to 1.25.2 or newer. Until then, answer on the screen or with the
+Keys tray.
+
+**A pi question shows only Escape, and the pane does not say it needs you.** The core reports pi as
+working while its question waits, and the card used to read pi's colours. Fix: update Collie to 1.25.2
+or newer. The card then lists the options, and the pane says it needs you.
+
+**An Oh My Pi (`omp`) pane reads as a shell, and a send to it is not checked.** The core names an agent
+from its own status report, and omp sends none. Fix: update Collie to 1.25.2 or newer. It then names
+omp from the program that runs.
+
+**A send to an empty Claude box is refused as "draft present", and the box shows a grey suggestion.**
+The core sends no colour, so the suggestion read as typed text. Fix: update Collie to 1.25.2 or newer.
+Collie then tells a suggestion from a draft with a one-key probe, and the send goes on.
+
+**A pane has no History and no Chat card.** For Claude, run `collie hooks install claude`, then restart
+the Claude in that pane. For pi and Oh My Pi, check the session directories in the bridge's environment:
+the bridge does not inherit a pane's project-local profile. Set `COLLIE_PI_ROOT` to include those
+`sessions` directories and the defaults used by other panes, then restart that Collie instance
+([Journal roots](configure.md#what-each-section-holds)). Two unnamed pi or Oh My Pi sessions in the
+same working directory are ambiguous; start each with its explicit session path or ID to resume it.
+
+**A dialog of a pi pane does not show on the phone.** On the core, a read of older lines can stall
+while pi shows a dialog, and Collie then reads the pane as unreadable after five seconds. This is
+known and waits for the core. Answer on the screen, or press the keys in the Keys tray.
+
+**A dialog of pi, opencode or Oh My Pi has no tappable options.** These dialogs mark the chosen row by
+colour alone, and the core sends no colour. Escape works. Answer with the Keys tray. This waits for a
+colour option in the core.
+
+**A multiline send arrives in pieces or times out.** Multiline insertion and Oh My Pi's follow-up
+submit key use direct input to avoid the core's three-second named-key quiet wait. Other named
+keys, such as navigation chords, can still wait while the terminal is receiving input. If a send's
+outcome is unknown, inspect the terminal before trying again: some text may already have arrived.
+
+**A pane is narrow on the phone after herdr-app showed it.** The last window that looked at the
+terminal sets its width. Look at the pane in herdr-app on a wider window, or close the herdr-app view.
+When no window looks at the terminal, its width goes back to 200 columns.
+
+**The key `G` in the Keys tray typed a lower case `g`.** The core read key names without regard to
+case. Fix: update Collie to 1.25.2 or newer.
+
+**`collie hooks install claude` wrote to `~/.claude/settings.json`, and Claude uses another folder.**
+Claude reads `$CLAUDE_CONFIG_DIR/settings.json` when that variable is set, and the install ignored it.
+Fix: update Collie to 1.25.2 or newer, then run `collie hooks install claude` again.
+
+**An empty Oh My Pi input shows "Draft in terminal" with a running-agent hint.** The core supplies
+plain text without the hint's colour or italic styling. Collie recognises the right-aligned
+agent-navigation and thinking-effort hints as empty-editor chrome; the same words typed at the
+start of the input remain a draft.
+
+**A send to an Oh My Pi pane ends "typed, not submitted", and the text stays in the box.** omp shows a
+grey completion after your last word, and the core sends it as plain text. Collie sees more text than
+it typed and does not press Enter. Clear the box with the Keys tray and send again, or press Enter
+on the screen. This is known.
+
+## WalkyTalky
+
+Six symptoms of WalkyTalky come up most. Each one has a command that shows the cause
+([WalkyTalky](walky-talky.md)).
 
 **`collie walky send` says "run this inside a pane, or send from the phone".** The command ran
 outside an agent's pane, in a plain terminal for example. Collie names the sender from the pane's
@@ -290,13 +432,23 @@ phone. In an agent pane, `collie walky who` marks your pane with `(you)`. The er
 this machine knows this pane" means another Collie owns the pane. The error "no running Collie bridge
 answers" means the bridge is down: run `collie status`.
 
+**The message says "held" and is not typed yet.** `collie walky status <id>` prints "held: draft
+present" or "held: turn running". The box holds a draft, or the agent is working. Collie types the
+message when the box clears or the turn ends, up to 60 minutes. Do not send it again. To let it in
+now, send or clear the draft in that pane. Under an older lead, "queued (outcome known on the lead)"
+also means wait.
+
+> **Note.** Known issue in 1.25.0: on a Herdr core (`herdr-core`) pane, Claude Code's grey hint in
+> an empty box can read as a draft, so a message stays held there. The fix is planned for 1.25.1.
+
 **The message sits in the inbox and was not typed.** `collie walky status <id>` prints "waiting in the
-inbox, not typed" and the reason. "held past 10 minutes" means the pane stayed busy, or a dialog
-stayed open, for the whole 10-minute hold: Collie never types into a dialog. "draft present" means the
-box holds your own text. "box not free" means Collie could not read a free input box. "pane busy"
-means an earlier message was still being typed there after 2 minutes. "no terminal" and "bridge
-restarted" are the other two. Run `collie walky inbox` in that pane, or open Messages in the pane's
-menu on the phone. Collie does not type the message again.
+inbox, not typed" and the reason. "held past 60 minutes" means a draft stayed in the box, the pane
+stayed busy, or a dialog stayed open, for the whole 60-minute hold: Collie never types into a draft or
+a dialog. "box not free" means Collie could not read a free input box. "pane busy" means an earlier
+message was still being typed there after 2 minutes. "pane replaced" means another session took the
+pane while the message waited. "no terminal" and "bridge restarted" are the other two. Run `collie
+walky inbox` in that pane, or open WalkyTalky in the pane's menu on the phone. Collie does not type the
+message again.
 
 **`collie walky send` says "not sent: pane replaced".** The address ends with a token, such as
 `#k3f9`, and the pane it named has closed. Another pane holds that pane id now, so Collie does not
@@ -304,7 +456,7 @@ type the message there. Run `collie walky who` and send to the new address. A re
 "not sent: sender gone" has the same cause: the pane that sent the message has closed, or another
 pane holds its id now.
 
-**A header in a pane shows "no log record on this machine".** The phone found a walky talky header in
+**A header in a pane shows "no log record on this machine".** The phone found a WalkyTalky header in
 the screen text, and this machine's log holds no message with that id. Someone or something typed
 the line, or the log dropped it after 7 days or 2,000 lines, or another Collie holds it. Run
 `collie walky status <id>`: "no record of <id> on this machine" confirms it. For a pane on a crew
