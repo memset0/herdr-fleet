@@ -74,9 +74,13 @@ switcher as the wide-layout Agent rail.
 - **WHEN** upstream's component suites or browser tier render the application
 - **THEN** they meet Collie's own root layout, with no rail, no hierarchy trigger and Collie's own Pane switcher
 
+#### Scenario: A Fleet Pane opens on a large screen
+- **WHEN** Fleet opens a Pane above the native large-screen threshold
+- **THEN** only Fleet navigation rails surround one Pane view, and the upstream large-screen layout control is absent
+
 ### Requirement: Wide layouts expose independent local sidebars
 On a wide viewport (from 80rem) Herdr Fleet SHALL display a local Host → Space → Tab → Pane hierarchy
-to the left of the native route column and a local Agent/Todoist rail to the right. Fleet MUST NOT offer a control that permanently hides a rail that stands at
+to the left of the native route column and a local Agent rail to the right. Fleet MUST NOT offer a control that permanently hides a rail that stands at
 the current width.
 
 Both rails and their separators SHALL appear together from 80rem at their independent preferred
@@ -100,7 +104,7 @@ Reduced-motion preference MUST remove non-essential sidebar and overlay animatio
 
 #### Scenario: The viewport is 80rem wide
 - **WHEN** the viewport is at least 80rem and below 96rem
-- **THEN** both rails and separators stand at their preferred widths, exposing Agents and Todoist without widening the viewport
+- **THEN** both rails and separators stand at their preferred widths, exposing Agents without widening the viewport
 
 #### Scenario: The viewport is 96rem wide
 - **WHEN** the viewport is at least 96rem
@@ -166,13 +170,7 @@ or issue an API request.
 
 A level that holds exactly one child SHALL be elided: the child is presented in its place, the
 child's icon wins, and the elided level MUST NOT contribute a row, a disclosure control, or an
-indentation step. The elided row SHALL be named by the name the operator chose — the Pane's own
-name when it has one, and otherwise the name of the Tab it replaced. A value the terminal or the
-Agent supplied is not such a name, because it repeats across sibling rows and names none of them;
-neither is a Pane label consisting only of digits, which is the multiplexer numbering a Pane nobody
-named. A Pane inside a Tab that survives keeps its existing name, which is what distinguishes it
-from its siblings. A row SHALL present a group icon only when it still groups more than one child
-after elision; a Space row SHALL present no icon of its own.
+indentation step. The row SHALL use the filtered pane name even when its Tab has an explicit name. Tab grouping, row targets and rename/close subjects SHALL remain unchanged. Name filtering SHALL follow the separate pane-name requirement below.
 
 Every level SHALL use the same disclosure control with the same size and hit area. A row that has no
 children SHALL draw no disclosure column, so the first thing inside its highlight is its own icon.
@@ -207,11 +205,11 @@ independent.
 
 #### Scenario: A level holds one child
 - **WHEN** a Space holds exactly one Tab, or a Tab holds exactly one Pane
-- **THEN** that level is not drawn as its own row and its single child appears at the elided level under the child's icon and under the operator's own name for it
+- **THEN** that level is not drawn as its own row and its single child appears at the elided level under the child's icon and under its filtered pane name
 
 #### Scenario: Neither the Pane nor its Tab was named by the operator
 - **WHEN** an elided Pane carries no name of its own
-- **THEN** the row is named by its Tab rather than by a terminal or Agent supplied value
+- **THEN** the row uses a meaningful filtered pane title or the program/directory fallback without promoting the Tab label
 
 #### Scenario: The multiplexer numbered the Pane
 - **WHEN** an elided Pane's only label is a run of digits
@@ -265,7 +263,7 @@ The row itself is fork-owned. It SHALL lead with one integrated 32px Agent mark,
 WHERE the work is before WHAT it is doing: the Space in a muted style, then the name the operator gave
 the work in the plain one at 12px and medium weight; beneath it,
 in 11px muted type, what the Pane is doing. A reserved third line SHALL lead with host/session metadata, followed by tags, with the row's age at the trailing right edge. The avatar SHALL span only the first two text lines. Tags MAY wrap onto additional lines, with the age right-aligned on the last line. The name SHALL follow the same rule the hierarchy uses —
-the operator's own Pane name, else the Tab's, never a number the multiplexer assigned. The row SHALL
+the filtered pane-name rule below, without promoting a Tab label or a positional pane number. The row SHALL
 present the Space, separator and work name as one single-line phrase, applying ellipsis only at the trailing end of that entire phrase when it does not fit. The Space MUST NOT be separately truncated or allocated a smaller fixed share. The integrated avatar cluster SHALL retain its own space beside both text lines, outside that phrase, and the phrase MUST NOT overlap the actions. The row SHALL
 omit any additional visible per-row unseen mark and its reserved slot, while retaining accessible unseen wording; group labels and summary counts SHALL continue to express unseen state. The row SHALL
 carry the `data-glide` part names Collie's own rows carry for the dot, the mark and the name.
@@ -996,20 +994,20 @@ The action SHALL respect device/pairing refusals, the selected Host's write refu
 - **WHEN** the selected Host stops accepting writes after the New page opened on it
 - **THEN** the page refuses the start with that Host's own refusal, and nothing is started on another Host unless the operator chooses it in the page's select
 
-### Requirement: Todoist shares the right navigation surface
-The right rail SHALL offer Agents and Todoist views without removing the existing Agent controls. Narrow layouts SHALL expose the same Todoist functionality through an accessible surface. The rail SHALL show the display scope selected in Settings or directly in the rail, identify each task's project and allow task view switching; All SHALL be the default available selection. Opening or closing the surface SHALL preserve native route and keyboard-focus behavior.
-
-#### Scenario: The operator switches the right rail
-- **WHEN** Todoist is selected beside a pane
-- **THEN** that pane remains open and its bound tasks appear alongside the selected task view
-
-#### Scenario: A narrow viewport is used
-- **WHEN** the persistent right rail is unavailable
-- **THEN** the operator can still open, operate and dismiss Todoist without losing the native composer
-
 ### Requirement: Expanded Pane strips have continuous chrome ground
 The native Pane's expanded Tab/Pane strip band SHALL paint its chrome background through its outer vertical padding and use balanced top/bottom insets. It SHALL NOT expose a page-ground bar below the tabs. Horizontal overflow, active-item reveal, tab and pane activation, folded summary behavior and existing touch target reach SHALL remain unchanged.
 
 #### Scenario: Tabs stand above the mirror
 - **WHEN** expanded strip rows are displayed on a Pane
 - **THEN** their outer top/bottom padding has the same width and chrome ground, with no separate dark band below the Tab row
+
+### Requirement: Fleet sidebar names describe panes rather than their tabs
+Hierarchy leaves and Agent rows SHALL prefer a meaningful pane label, session name or current terminal title over tab labels. Presentation SHALL strip leading non-letter/non-number decorations, remove Codex pipe-delimited directory suffixes and Action Required fragments, and reject positional labels, paths, user-at-host prompts and program-only names. Empty or stale titles SHALL fall back to program and final working-directory component. Filtering MUST NOT rename terminals or alter binding identity, targets or actions.
+
+#### Scenario: A named Tab contains one pane
+- **WHEN** the pane has a meaningful title different from the Tab name
+- **THEN** the elided hierarchy row and Agent row show the filtered pane title
+
+#### Scenario: A title supplies no work name
+- **WHEN** its candidate titles are generic, stale, paths or prompts
+- **THEN** the row shows the program and directory fallback rather than the Tab label
